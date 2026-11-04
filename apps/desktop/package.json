@@ -1,0 +1,31 @@
+{
+  "name": "@rka/desktop",
+  "productName": "Autonomous Research Assistant",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Electron shell: main process, preload bridge and Vue renderer.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "install-electron && electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "install-electron && electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@rka/agent-runtime": "workspace:*",
+    "@rka/model-provider": "workspace:*",
+    "@rka/shared": "workspace:*",
+    "@rka/storage": "workspace:*",
+    "@rka/tools": "workspace:*",
+    "@vitejs/plugin-vue": "6.0.10",
+    "electron": "44.10.1",
+    "electron-vite": "6.0.0",
+    "vite": "8.3.5",
+    "vue": "3.5.44",
+    "vue-tsc": "3.3.14",
+    "zod": "4.6.7"
+  }
+}

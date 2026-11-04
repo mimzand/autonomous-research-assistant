@@ -1,0 +1,21 @@
+{
+  "name": "@rka/storage",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Persistence boundary for tasks and step state. SQLite + Drizzle adapter added later.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rka/shared": "workspace:*"
+  }
+}

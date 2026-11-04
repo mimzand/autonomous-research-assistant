@@ -1,0 +1,27 @@
+{
+  "name": "@rka/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent runtime composition root. Electron-agnostic; runs in the main process (or a utility process later).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rka/model-provider": "workspace:*",
+    "@rka/shared": "workspace:*",
+    "@rka/storage": "workspace:*",
+    "@rka/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "4.6.7"
+  }
+}
