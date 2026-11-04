@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { type ChatApi } from './chat.js';
 import { type ModelHealth } from './model.js';
 
 /**
@@ -8,6 +9,13 @@ import { type ModelHealth } from './model.js';
 export const IpcChannels = {
   appGetInfo: 'app:get-info',
   modelGetHealth: 'model:get-health',
+  chatStart: 'chat:start',
+  chatStop: 'chat:stop',
+} as const;
+
+/** Main → renderer push channels (not invokable). */
+export const IpcEvents = {
+  chatEvent: 'chat:event',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -31,6 +39,7 @@ export type AppInfo = z.infer<typeof AppInfoSchema>;
 export interface RendererApi {
   getAppInfo(): Promise<AppInfo>;
   getModelHealth(): Promise<ModelHealth>;
+  readonly chat: ChatApi;
 }
 
 /** Name of the global the preload script exposes in the renderer. */

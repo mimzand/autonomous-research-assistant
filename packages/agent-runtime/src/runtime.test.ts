@@ -27,7 +27,9 @@ const modelProvider: ModelProvider = {
   checkHealth: vi.fn(async () => ({ ...health, capabilities: [...health.capabilities] })),
   checkModel: unused,
   generate: unused,
-  generateStream: unused,
+  generateStream: vi.fn(async function* () {
+    yield { type: 'delta' as const, content: 'Hi' };
+  }),
 };
 
 describe('createAgentRuntime', () => {
@@ -58,5 +60,26 @@ describe('createAgentRuntime', () => {
       tasks: createInMemoryTaskRepository(),
     });
     expect(runtime.listTools().map((t) => t.name)).toEqual(['noop']);
+  });
+
+  it('streams chat through the model provider with thinking off', async () => {
+    const runtime = createAgentRuntime({
+      modelProvider,
+      tools: createToolRegistry([]),
+      tasks: createInMemoryTaskRepository(),
+    });
+    const controller = new AbortController();
+    const chunks = [];
+    for await (const chunk of runtime.streamChat([{ role: 'user', content: 'Hello' }], {
+      signal: controller.signal,
+    })) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toEqual([{ type: 'delta', content: 'Hi' }]);
+    expect(runtime.model).toBe('qwen3:8b');
+    expect(modelProvider.generateStream).toHaveBeenCalledWith(
+      { messages: [{ role: 'user', content: 'Hello' }], think: false },
+      { signal: controller.signal },
+    );
   });
 });

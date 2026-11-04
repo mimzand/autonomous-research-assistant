@@ -8,6 +8,10 @@
   --ok: #1a7f37;
   --warn: #b35900;
   --error: #c62828;
+  --error-bg: #fdecea;
+  --accent: #2f5bd3;
+  --on-accent: #ffffff;
+  --bubble: #f3f4f6;
   font-family:
     'Segoe UI Variable',
     'Segoe UI',
@@ -27,6 +31,10 @@
     --ok: #4ac26b;
     --warn: #f0a24b;
     --error: #ff7b72;
+    --error-bg: #3a1f1f;
+    --accent: #4f7cf0;
+    --on-accent: #ffffff;
+    --bubble: #2b2b31;
   }
 }
 

@@ -124,6 +124,23 @@ Tests: unit tests (mocked fetch), integration tests (real HTTP against a local f
 Ollama server: streaming, cancellation, timeouts, connection refused), and live tests
 against your Ollama with `pnpm test:ollama`.
 
+## Chat playground
+
+The main window has a chat playground for testing the local model: streaming replies,
+Stop, Clear chat, and the conversation kept for the session (Enter sends, Shift+Enter
+adds a new line). The model status panel sits beside it.
+
+```text
+ChatPanel.vue → chat/session.ts → window.api.chat (preload)
+  → IPC chat:start / chat:stop (validated in main) → ChatController (main)
+  → runtime.streamChat() → OllamaProvider.generateStream()
+  ← chat:event (delta | done | error | cancelled), validated in the preload
+```
+
+- One generation at a time; closing the window cancels it.
+- Model output is rendered as plain text (no HTML).
+- Errors (Ollama down, model missing, timeout, generation failure) are shown with a fix.
+
 ## Security model
 
 - Renderer runs with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,

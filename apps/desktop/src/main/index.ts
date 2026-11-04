@@ -4,6 +4,7 @@ import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
 import { createInMemoryTaskRepository } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { ChatController } from './chat.js';
 import { loadDevEnvFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
 import { isAppUrl } from './security.js';
@@ -33,6 +34,7 @@ function bootstrap(): void {
 
   registerIpcHandlers(ipcMain, {
     runtime,
+    chat: new ChatController({ runtime }),
     isTrustedSender: (url) => isAppUrl(url, devServerUrl),
     getAppInfo: () => ({
       name: app.getName(),

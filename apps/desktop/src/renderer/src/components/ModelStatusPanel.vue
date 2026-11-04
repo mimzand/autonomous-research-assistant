@@ -1,38 +1,11 @@
 <script setup lang="ts">
-import { type ModelHealth } from '@rka/shared';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed } from 'vue';
+import { useModelHealth } from '../composables/useModelHealth';
 import { describeModelStatus } from '../model-status';
 
-/** Re-check periodically so the panel notices Ollama starting or stopping. */
-const POLL_INTERVAL_MS = 30_000;
-
-const health = ref<ModelHealth | null>(null);
-const checking = ref(false);
-const bridgeError = ref<string | null>(null);
-let timer: ReturnType<typeof setInterval> | undefined;
-
+// Shared with the chat header: one poller, one source of truth.
+const { health, checking, bridgeError, refresh } = useModelHealth();
 const view = computed(() => describeModelStatus(health.value));
-
-async function refresh(): Promise<void> {
-  if (checking.value) return;
-  checking.value = true;
-  try {
-    // Goes through the preload bridge to the main process. The renderer never calls Ollama.
-    health.value = await window.api.getModelHealth();
-    bridgeError.value = null;
-  } catch (error) {
-    bridgeError.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    checking.value = false;
-  }
-}
-
-onMounted(() => {
-  void refresh();
-  timer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
-});
-
-onBeforeUnmount(() => clearInterval(timer));
 </script>
 
 <template>
