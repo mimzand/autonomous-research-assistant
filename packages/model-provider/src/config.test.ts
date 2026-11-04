@@ -31,6 +31,8 @@ describe('loadOllamaConfig', () => {
       model: 'qwen3:8b',
       numCtx: 4096,
       requestTimeoutMs: 5000,
+      generateTimeoutMs: 300_000,
+      streamIdleTimeoutMs: 120_000,
     });
   });
 
@@ -40,12 +42,16 @@ describe('loadOllamaConfig', () => {
       OLLAMA_MODEL: 'qwen3:4b',
       OLLAMA_NUM_CTX: '8192',
       OLLAMA_REQUEST_TIMEOUT_MS: '1000',
+      OLLAMA_GENERATE_TIMEOUT_MS: '60000',
+      OLLAMA_STREAM_IDLE_TIMEOUT_MS: '30000',
     });
     expect(config).toMatchObject({
       baseUrl: 'http://127.0.0.1:12000',
       model: 'qwen3:4b',
       numCtx: 8192,
       requestTimeoutMs: 1000,
+      generateTimeoutMs: 60_000,
+      streamIdleTimeoutMs: 30_000,
     });
   });
 

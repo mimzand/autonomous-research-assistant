@@ -16,7 +16,11 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
         provider: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'qwen3:8b',
+        checkedAt: '2026-11-04T12:00:00.000Z',
         serverVersion: '0.40.14',
+        capabilities: ['completion', 'tools', 'thinking'],
+        contextLength: 40960,
+        structuredOutput: true,
       }) as Awaited<ReturnType<AgentRuntime['getModelHealth']>>,
     listTools: () => [],
   };

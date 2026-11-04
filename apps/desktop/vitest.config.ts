@@ -4,6 +4,7 @@ export default defineProject({
   test: {
     name: 'desktop',
     environment: 'node',
-    include: ['src/main/**/*.test.ts'],
+    // Renderer tests cover plain TypeScript only (no DOM needed).
+    include: ['src/main/**/*.test.ts', 'src/renderer/src/**/*.test.ts'],
   },
 });

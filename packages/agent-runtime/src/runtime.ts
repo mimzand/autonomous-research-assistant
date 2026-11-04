@@ -21,7 +21,7 @@ export interface AgentRuntime {
 
 export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
   return {
-    getModelHealth: (signal) => deps.modelProvider.checkHealth(signal),
+    getModelHealth: (signal) => deps.modelProvider.checkHealth({ signal }),
     listTools: () => deps.tools.list(),
   };
 }

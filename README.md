@@ -62,7 +62,7 @@ apps/
     src/renderer/         Vue 3 UI (browser code only)
 packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
-  model-provider/         @rka/model-provider Ollama config + provider (local only)
+  model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
   tools/                  @rka/tools          Tool contract + validated registry
   storage/                @rka/storage        Task repository contract (+ in-memory impl)
   agent-runtime/          @rka/agent-runtime  Composition root for the agent (no loop yet)
@@ -93,6 +93,36 @@ packages/
 
 These rules are enforced by `no-restricted-imports` in `eslint.config.js`, so
 `pnpm lint` fails on a boundary violation.
+
+## Model provider
+
+`@rka/model-provider` defines a provider-agnostic `ModelProvider` interface and one
+implementation, `OllamaProvider`, which talks to Ollama's local HTTP API
+(`/api/chat`, `/api/tags`, `/api/version`). No cloud providers exist in the codebase.
+
+```ts
+const ollama = createOllamaProvider(loadOllamaConfig(process.env));
+
+await ollama.checkHealth();                    // ready | model-missing | unreachable
+await ollama.checkModel('qwen3:8b');           // { available, model: { capabilities, … } }
+await ollama.generate({ messages }, { signal, timeoutMs });
+for await (const chunk of ollama.generateStream({ messages }, { signal })) { … }
+await generateObject(ollama, { messages }, zodSchema); // JSON-schema constrained + Zod-validated
+```
+
+- Requests, server responses (including every stream line) and structured output are
+  validated with Zod.
+- Every failure is a `ModelProviderError` with a `code`: `unavailable`, `model-not-found`,
+  `invalid-request`, `invalid-response`, `timeout`, `cancelled`, `http-error`, `unsupported`.
+- Cancellation: pass an `AbortSignal`, or stop iterating a stream; the HTTP request is
+  aborted either way. Timeouts are reported separately from cancellation.
+- Thinking is off by default (`think: false`) so tool and JSON calls stay clean.
+- Only the Electron main process uses the provider. The renderer sees health data via
+  IPC; a test enforces that renderer code has no network calls and CSP is `connect-src 'self'`.
+
+Tests: unit tests (mocked fetch), integration tests (real HTTP against a local fake
+Ollama server: streaming, cancellation, timeouts, connection refused), and live tests
+against your Ollama with `pnpm test:ollama`.
 
 ## Security model
 

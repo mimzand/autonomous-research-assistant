@@ -22,10 +22,23 @@ describe('Result helpers', () => {
 });
 
 describe('ModelHealthSchema', () => {
+  const base = {
+    provider: 'ollama',
+    baseUrl: 'http://127.0.0.1:11434',
+    model: 'qwen3:8b',
+    checkedAt: '2026-11-04T12:00:00.000Z',
+  };
+
   it('accepts each status variant', () => {
-    const base = { provider: 'ollama', baseUrl: 'http://127.0.0.1:11434', model: 'qwen3:8b' };
     expect(
-      ModelHealthSchema.parse({ ...base, status: 'ready', serverVersion: '0.40.14' }),
+      ModelHealthSchema.parse({
+        ...base,
+        status: 'ready',
+        serverVersion: '0.40.14',
+        capabilities: ['completion', 'tools'],
+        contextLength: 40960,
+        structuredOutput: true,
+      }),
     ).toBeTruthy();
     expect(
       ModelHealthSchema.parse({
@@ -36,19 +49,16 @@ describe('ModelHealthSchema', () => {
       }),
     ).toBeTruthy();
     expect(
-      ModelHealthSchema.parse({ ...base, status: 'unreachable', error: 'timeout' }),
+      ModelHealthSchema.parse({ ...base, status: 'unreachable', reason: 'timeout', error: 'slow' }),
     ).toBeTruthy();
   });
 
-  it('rejects unknown providers', () => {
-    const result = ModelHealthSchema.safeParse({
-      status: 'unreachable',
-      provider: 'openai',
-      baseUrl: 'x',
-      model: 'y',
-      error: 'z',
-    });
-    expect(result.success).toBe(false);
+  it('rejects unknown providers and reasons', () => {
+    const unreachable = { ...base, status: 'unreachable', reason: 'timeout', error: 'z' };
+    expect(ModelHealthSchema.safeParse({ ...unreachable, provider: 'openai' }).success).toBe(false);
+    expect(ModelHealthSchema.safeParse({ ...unreachable, reason: 'cosmic-rays' }).success).toBe(
+      false,
+    );
   });
 });
 

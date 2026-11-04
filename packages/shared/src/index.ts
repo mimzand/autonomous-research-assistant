@@ -1,5 +1,10 @@
 export { ok, err, toErrorMessage, type Result } from './result.js';
-export { ModelHealthSchema, type ModelHealth } from './model.js';
+export {
+  ModelHealthSchema,
+  ModelUnavailableReasonSchema,
+  type ModelHealth,
+  type ModelUnavailableReason,
+} from './model.js';
 export {
   TaskStatusSchema,
   TaskIdSchema,

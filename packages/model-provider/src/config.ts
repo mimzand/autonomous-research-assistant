@@ -9,7 +9,12 @@ export const OLLAMA_DEFAULT_PORT = 11434;
 export const OLLAMA_DEFAULT_BASE_URL = `http://127.0.0.1:${OLLAMA_DEFAULT_PORT}`;
 export const OLLAMA_DEFAULT_MODEL = 'qwen3:8b';
 export const OLLAMA_DEFAULT_NUM_CTX = 4096;
+/** Health checks and metadata calls. */
 export const OLLAMA_DEFAULT_TIMEOUT_MS = 5000;
+/** Single-shot generation deadline. Generous: the first call loads the model (~30 s on a 6 GB GPU). */
+export const OLLAMA_DEFAULT_GENERATE_TIMEOUT_MS = 300_000;
+/** Streams fail if no chunk arrives for this long (covers model load before the first token). */
+export const OLLAMA_DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '[::]', '::']);
 
@@ -52,6 +57,8 @@ export const OllamaConfigSchema = z.object({
   model: z.string().trim().min(1),
   numCtx: z.int().min(512).max(262_144),
   requestTimeoutMs: z.int().min(100).max(600_000),
+  generateTimeoutMs: z.int().min(1000).max(3_600_000),
+  streamIdleTimeoutMs: z.int().min(1000).max(3_600_000),
 });
 export type OllamaConfig = z.infer<typeof OllamaConfigSchema>;
 
@@ -61,6 +68,8 @@ export interface OllamaEnv {
   readonly OLLAMA_MODEL?: string | undefined;
   readonly OLLAMA_NUM_CTX?: string | undefined;
   readonly OLLAMA_REQUEST_TIMEOUT_MS?: string | undefined;
+  readonly OLLAMA_GENERATE_TIMEOUT_MS?: string | undefined;
+  readonly OLLAMA_STREAM_IDLE_TIMEOUT_MS?: string | undefined;
 }
 
 /** Builds and validates the Ollama config from environment variables. Throws on invalid values. */
@@ -70,6 +79,14 @@ export function loadOllamaConfig(env: OllamaEnv): OllamaConfig {
     model: env.OLLAMA_MODEL?.trim() || OLLAMA_DEFAULT_MODEL,
     numCtx: parseIntOr(env.OLLAMA_NUM_CTX, OLLAMA_DEFAULT_NUM_CTX),
     requestTimeoutMs: parseIntOr(env.OLLAMA_REQUEST_TIMEOUT_MS, OLLAMA_DEFAULT_TIMEOUT_MS),
+    generateTimeoutMs: parseIntOr(
+      env.OLLAMA_GENERATE_TIMEOUT_MS,
+      OLLAMA_DEFAULT_GENERATE_TIMEOUT_MS,
+    ),
+    streamIdleTimeoutMs: parseIntOr(
+      env.OLLAMA_STREAM_IDLE_TIMEOUT_MS,
+      OLLAMA_DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+    ),
   });
 }
 

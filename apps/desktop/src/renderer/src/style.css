@@ -7,6 +7,7 @@
   --border: #e2e2e6;
   --ok: #1a7f37;
   --warn: #b35900;
+  --error: #c62828;
   font-family:
     'Segoe UI Variable',
     'Segoe UI',
@@ -25,6 +26,7 @@
     --border: #34343a;
     --ok: #4ac26b;
     --warn: #f0a24b;
+    --error: #ff7b72;
   }
 }
 
