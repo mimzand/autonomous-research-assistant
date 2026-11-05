@@ -1,7 +1,10 @@
 export {
+  backoffDelay,
   createResearchAgent,
   isPausedTask,
   isResearchTask,
+  isSettled,
+  ResearchStartError,
   PAUSED_MESSAGE,
   ResearchStepError,
   type ResearchAgent,
@@ -26,3 +29,17 @@ export {
   type EvidenceItem,
 } from './grounding.js';
 export { SYSTEM_PROMPT } from './prompts.js';
+export {
+  classifyModelError,
+  classifySearchError,
+  formatStepError,
+  interruptionOf,
+  NON_FATAL_STEP_KINDS,
+  parseStepError,
+  StepFailure,
+  TRANSIENT_SOURCE_CODES,
+  waitingMessage,
+  type FailureKind,
+  type InterruptionKind,
+} from './failures.js';
+export { loadResearchConfig, type ResearchEnv } from './config.js';

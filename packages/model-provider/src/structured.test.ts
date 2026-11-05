@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { OllamaProvider } from './ollama/provider.js';
-import { generateObject, toModelJsonSchema } from './structured.js';
+import { extractJson, generateObject, toModelJsonSchema } from './structured.js';
 import { chatChunk, jsonResponse, routeFetch, testConfig } from './testing/fixtures.js';
 
 const Plan = z.object({
@@ -49,6 +49,33 @@ describe('generateObject', () => {
     await expect(generateObject(ollama, request, Plan)).rejects.toMatchObject({
       code: 'invalid-response',
       message: expect.stringContaining('subquestions'),
+    });
+  });
+});
+
+describe('extractJson (malformed model output)', () => {
+  it('recovers JSON wrapped in think blocks, code fences or chatter', async () => {
+    expect(extractJson('{"a":1}')).toEqual({ a: 1 });
+    expect(extractJson('<think>let me see {"x":0}</think>\n{"a":1}')).toEqual({ a: 1 });
+    expect(extractJson('```json\n{"a":[1,2]}\n```')).toEqual({ a: [1, 2] });
+    expect(extractJson('Here you go: {"a":1} Hope this helps!')).toEqual({ a: 1 });
+    expect(extractJson('[1,2]')).toEqual([1, 2]);
+    const { ollama } = providerReturning(
+      '```json\n{"topic":"Heat pumps","subquestions":["How?"]}\n```',
+    );
+    await expect(generateObject(ollama, request, Plan)).resolves.toMatchObject({
+      object: { topic: 'Heat pumps' },
+    });
+  });
+
+  it('gives up on truncated or non-JSON output and shows what came back', async () => {
+    expect(extractJson('{"a": [1, 2')).toBeUndefined();
+    expect(extractJson('')).toBeUndefined();
+    expect(extractJson('no json here')).toBeUndefined();
+    const { ollama } = providerReturning('{"topic": "Heat pu');
+    await expect(generateObject(ollama, request, Plan)).rejects.toMatchObject({
+      code: 'invalid-response',
+      message: expect.stringContaining('{\\"topic\\": \\"Heat pu'),
     });
   });
 });

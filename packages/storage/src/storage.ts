@@ -18,6 +18,7 @@ import { createModelUsageRepository } from './repositories/model-usage.js';
 import { createReportRepository } from './repositories/reports.js';
 import { createSettingsRepository, type SecretCipher } from './repositories/settings.js';
 import { createSourceRepository } from './repositories/sources.js';
+import { createTaskLogRepository } from './repositories/task-logs.js';
 import { createTaskStepRepository } from './repositories/task-steps.js';
 import { createTaskRepository } from './repositories/tasks.js';
 import { schema } from './schema.js';
@@ -41,6 +42,8 @@ export interface Repositories {
   readonly modelUsage: ReturnType<typeof createModelUsageRepository>;
   readonly settings: ReturnType<typeof createSettingsRepository>;
   readonly approvals: ReturnType<typeof createApprovalRepository>;
+  /** Append-only execution log per task. */
+  readonly logs: ReturnType<typeof createTaskLogRepository>;
   /**
    * Runs `fn` atomically: all writes commit together or none do. Nested
    * calls become savepoints. `fn` must be synchronous (better-sqlite3).
@@ -72,6 +75,7 @@ function bindRepositories(
     modelUsage: createModelUsageRepository(db, ctx),
     settings: createSettingsRepository(db, ctx, cipher),
     approvals: createApprovalRepository(db, ctx),
+    logs: createTaskLogRepository(db, ctx),
     transaction: (fn) => runInTransaction(db, (tx) => fn(bindRepositories(tx, ctx, cipher))),
   };
   return repos;

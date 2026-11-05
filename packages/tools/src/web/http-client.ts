@@ -21,7 +21,9 @@ export type WebErrorCode =
   | 'http-error'
   | 'network-error'
   | 'unsupported-content'
-  | 'extraction-failed';
+  | 'extraction-failed'
+  /** The search service answered but none of its engines could reach the internet. */
+  | 'engines-unreachable';
 
 export class WebError extends Error {
   override readonly name = 'WebError';

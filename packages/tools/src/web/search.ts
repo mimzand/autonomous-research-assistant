@@ -44,6 +44,8 @@ export interface SearxngConfig {
 }
 
 const SearxngResponseSchema = z.object({
+  /** [[engine, reason], ...] - engines that failed for this query. */
+  unresponsive_engines: z.array(z.array(z.unknown())).optional().default([]),
   results: z
     .array(
       z.looseObject({
@@ -147,6 +149,18 @@ export function createSearxngProvider(
         parsed = SearxngResponseSchema.parse(JSON.parse(body.toString('utf8')));
       } catch {
         throw new WebError('extraction-failed', 'SearXNG returned an unexpected response.');
+      }
+
+      if (parsed.results.length === 0 && parsed.unresponsive_engines.length > 0) {
+        // SearXNG itself is up, but every engine failed: usually no internet connection.
+        const engines = parsed.unresponsive_engines
+          .slice(0, 5)
+          .map((e) => e.map(String).join(': '))
+          .join(', ');
+        throw new WebError(
+          'engines-unreachable',
+          `SearXNG answered, but its search engines could not be reached (${engines}). The internet connection may be down.`,
+        );
       }
 
       const seen = new Set<string>();

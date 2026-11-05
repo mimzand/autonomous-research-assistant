@@ -193,6 +193,8 @@ export function draftParagraphs(
 
 export interface RenderInput {
   readonly goal: string;
+  /** Selected sources that could not be read or used, with the reason (listed, never hidden). */
+  readonly unusable?: readonly { readonly url: string; readonly reason: string }[];
   readonly title: string;
   readonly paragraphs: readonly DraftParagraph[];
   readonly verdicts: ReadonlyMap<string, { verdict: Verdict; note: string }>;
@@ -219,6 +221,7 @@ export interface RenderedReport {
     readonly contradictions: number;
     readonly gaps: number;
     readonly citedSources: number;
+    readonly unusableSources: number;
   };
 }
 
@@ -342,6 +345,9 @@ export function renderReport(input: RenderInput): RenderedReport {
   for (const p of removed) {
     lines.push(`- Removed (not supported by the sources): “${escapeInline(p.text)}”`);
   }
+  for (const u of input.unusable ?? []) {
+    lines.push(`- Source not used: ${escapeInline(u.url)} — ${escapeInline(u.reason)}`);
+  }
   lines.push('');
 
   lines.push('## Sources', '');
@@ -369,6 +375,7 @@ export function renderReport(input: RenderInput): RenderedReport {
       contradictions: contradictionLines.length,
       gaps: gaps.length + unanswered.length,
       citedSources: order.length,
+      unusableSources: input.unusable?.length ?? 0,
     },
   };
 }

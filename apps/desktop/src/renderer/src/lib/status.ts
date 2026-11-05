@@ -31,9 +31,17 @@ export const STEP_STATUS_META: Readonly<Record<StepStatus, StatusMeta>> = {
   pending: { label: 'Pending', tone: 'neutral', hint: 'Not started yet.' },
   running: { label: 'Running', tone: 'info', hint: 'Executing right now.' },
   completed: { label: 'Completed', tone: 'ok', hint: 'Done. Will never run again.' },
-  failed: { label: 'Failed', tone: 'error', hint: 'Stopped because of an error.' },
-  interrupted: { label: 'Interrupted', tone: 'warn', hint: 'Was running when the app stopped.' },
-  skipped: { label: 'Skipped', tone: 'neutral', hint: 'Not needed.' },
+  failed: {
+    label: 'Failed',
+    tone: 'error',
+    hint: 'Stopped because of an error (see its message).',
+  },
+  interrupted: {
+    label: 'Interrupted',
+    tone: 'warn',
+    hint: 'Stopped before it finished (paused, app closed, or a service was unavailable). Runs again on resume.',
+  },
+  skipped: { label: 'Skipped', tone: 'neutral', hint: 'Not run; the reason is shown on the step.' },
 };
 
 /** Stat cards on the Tasks dashboard, in display order. */

@@ -234,6 +234,35 @@ describe('SearXNG search provider', () => {
     ]);
   });
 
+  it('reports unreachable search engines (internet down) instead of "no results"', async () => {
+    const { http } = fakeHttp({});
+    const reply = (body: unknown) => async (url: string) => ({
+      requestedUrl: url,
+      finalUrl: url,
+      redirects: [],
+      status: 200,
+      headers: {},
+      contentType: 'application/json',
+      body: Buffer.from(JSON.stringify(body)),
+      remoteAddress: '127.0.0.1',
+    });
+    http.get = reply({
+      results: [],
+      unresponsive_engines: [
+        ['duckduckgo', 'timeout'],
+        ['brave', 'connection error'],
+      ],
+    });
+    const provider = createSearxngProvider({ baseUrl: 'http://127.0.0.1:8080' }, http);
+    await expect(provider.search({ query: 'q', limit: 5 })).rejects.toMatchObject({
+      code: 'engines-unreachable',
+      message: expect.stringContaining('duckduckgo: timeout, brave: connection error'),
+    });
+    // No results but no failing engines: a genuine empty result.
+    http.get = reply({ results: [], unresponsive_engines: [] });
+    await expect(provider.search({ query: 'q', limit: 5 })).resolves.toEqual([]);
+  });
+
   it('explains how to enable JSON output when SearXNG answers 403', async () => {
     const { http } = fakeHttp({});
     http.get = async () => {

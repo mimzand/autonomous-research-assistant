@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listAppliedMigrations, runMigrations } from './migrate.js';
@@ -17,6 +17,7 @@ const TABLES = [
   'settings',
   'source_contents',
   'sources',
+  'task_logs',
   'task_steps',
   'tasks',
 ];
@@ -56,6 +57,38 @@ describe('migrations', () => {
     const sqlite = new BetterSqlite3(dbPath);
     expect(listAppliedMigrations(sqlite)).toHaveLength(MIGRATIONS.length);
     sqlite.close();
+  });
+
+  it('upgrades a database created by the previous version (0000 → 0001) without data loss', () => {
+    const { dbPath, cleanup } = tempDir();
+    cleanups.push(cleanup);
+    // A database from the previous release: only the first migration, with data.
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const old = new BetterSqlite3(dbPath);
+    runMigrations(old, MIGRATIONS.slice(0, 1));
+    old
+      .prepare(
+        "insert into tasks (id, title, input, status, created_at, updated_at) values ('t1', 'Old task', '{}', 'completed', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+      )
+      .run();
+    expect(
+      old.prepare("select name from sqlite_master where name = 'task_logs'").get(),
+    ).toBeUndefined();
+    old.close();
+
+    const upgraded = openStorage({ path: dbPath });
+    cleanups.unshift(() => upgraded.close());
+    expect(upgraded.tasks.require('t1')).toMatchObject({ title: 'Old task', status: 'completed' });
+    upgraded.logs.append('t1', {
+      level: 'info',
+      event: 'task.note',
+      message: 'Logs work after upgrade',
+    });
+    expect(upgraded.logs.listByTask('t1')).toHaveLength(1);
+    expect(listAppliedMigrations(upgraded.sqlite).map((m) => m.tag)).toEqual([
+      '0000_initial',
+      '0001_task_logs',
+    ]);
   });
 
   it('refuses migrations that were edited after being applied', () => {

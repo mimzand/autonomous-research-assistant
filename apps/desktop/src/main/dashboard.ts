@@ -17,6 +17,8 @@ import {
   TaskIdRequestSchema,
   TaskListQuerySchema,
   TaskListResultSchema,
+  TaskLogListSchema,
+  TaskLogsRequestSchema,
   TaskStatusCountsSchema,
   type BackupResult,
   type IntegrityCheckResult,
@@ -28,6 +30,7 @@ import {
   type TaskActionResult,
   type TaskDetails,
   type TaskListResult,
+  type TaskLogList,
   type TaskStatusCounts,
 } from '@rka/shared';
 import { type Storage } from '@rka/storage';
@@ -88,10 +91,11 @@ export function createDashboardService({ storage, runtime, chooseBackupPath }: D
       }
     },
 
-    startResearch(payload: unknown): TaskActionResult {
+    /** Async: checks that Ollama and the model are ready before creating the task. */
+    async startResearch(payload: unknown): Promise<TaskActionResult> {
       const request = StartResearchRequestSchema.parse(payload);
       return actionResult(
-        runtime.tasks.startResearch({
+        await runtime.tasks.startResearch({
           goal: request.goal,
           limits: {
             ...(request.maxQuestions !== undefined && { maxQuestions: request.maxQuestions }),
@@ -111,6 +115,27 @@ export function createDashboardService({ storage, runtime, chooseBackupPath }: D
 
     cancelTask(payload: unknown): TaskActionResult {
       return actionResult(runtime.tasks.cancel(TaskIdRequestSchema.parse(payload).id));
+    },
+
+    /** Runs the failed step(s) of a failed research task again (never completed ones). */
+    retryTask(payload: unknown): TaskActionResult {
+      return actionResult(runtime.tasks.retry(TaskIdRequestSchema.parse(payload).id));
+    },
+
+    /** Execution log of a task, oldest first; `afterSeq` fetches only newer entries. */
+    taskLogs(payload: unknown): TaskLogList {
+      const { id, afterSeq } = TaskLogsRequestSchema.parse(payload);
+      const stepSeq = new Map(storage.steps.listByTask(id).map((s) => [s.id, s.seq]));
+      const items = storage.logs.listByTask(id, { afterSeq, limit: 500 }).map((l) => ({
+        seq: l.seq,
+        level: l.level,
+        event: l.event,
+        message: l.message,
+        stepSeq: l.stepId ? (stepSeq.get(l.stepId) ?? null) : null,
+        data: l.data ?? null,
+        createdAt: l.createdAt,
+      }));
+      return TaskLogListSchema.parse({ items, lastSeq: items.at(-1)?.seq ?? afterSeq });
     },
 
     listSources(payload: unknown): SourceListResult {

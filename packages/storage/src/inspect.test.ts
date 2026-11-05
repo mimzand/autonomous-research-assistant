@@ -257,7 +257,7 @@ describe('inspector: storage status, integrity and backup', () => {
       source_contents: 1,
       reports: 1,
     });
-    expect(status.migrations.map((m) => m.tag)).toEqual(['0000_initial']);
+    expect(status.migrations.map((m) => m.tag)).toEqual(['0000_initial', '0001_task_logs']);
     expect(status.lastIntegrityCheck).toBeNull();
   });
 

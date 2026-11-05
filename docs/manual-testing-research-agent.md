@@ -132,13 +132,36 @@ Start a task and click **Stop** during any step. Expected:
 
 ## 7. Failure handling
 
-| Scenario                                                | Expected                                                                                                                       |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `docker stop searxng`, then start a task                | The searches fail; **Choose sources** fails with "Web search returned no usable results. First error: …SearXNG… not reachable" |
-| Remove `SEARXNG_URL` from `.env` and restart            | **Start research** is refused: "Web search is not configured. Set SEARXNG_URL…"                                                |
-| Stop Ollama (quit it from the tray) during a model step | That step is retried once, then the task fails with "Local model failed (unavailable): …"                                      |
-| Goal shorter than 10 characters                         | The Start button stays disabled                                                                                                |
-| A page that blocks bots or returns 404                  | That source's step shows `ok: false` with the reason; the research continues with the others                                   |
+Background: [failure-recovery.md](failure-recovery.md). After each scenario, open
+**Execution log** on the task page. It should show the events named below.
+
+| Scenario                                                          | Expected                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quit Ollama (tray icon), then click **Start research**            | Refused: "Ollama is not reachable at http://127.0.0.1:11434 … Start Ollama and try again." No task is created.                                                                                                                        |
+| Set `OLLAMA_MODEL` to a model you have not pulled, restart, start | Refused: "The model … is not installed. Run "ollama pull …"".                                                                                                                                                                         |
+| Quit Ollama while a model step runs                               | After one retry the task shows **Waiting for Ollama** (status _Interrupted_), with the error and "Start Ollama…". Log: `model.retry`, `model.failed`, `task.waiting`. Start Ollama, click **Resume**: it completes.                   |
+| `docker stop searxng` while the searches run                      | **Waiting for SearXNG**. `docker start searxng`, then **Resume**: the search step runs again.                                                                                                                                         |
+| Disconnect the network (Wi-Fi off) while sources are read         | The first unreachable source is marked _Failed_, and its evidence step is _Skipped_ with the reason. The second one stops the task: **Waiting for the internet connection**. Reconnect, then **Resume**: both sources are read again. |
+| Remove `SEARXNG_URL` from `.env` and restart                      | **Start research** is refused: "Web search is not configured. Set SEARXNG_URL…".                                                                                                                                                      |
+| A page that blocks bots or returns 404                            | That fetch step is _Failed_ (`[http-error-4xx] …`) and its evidence step _Skipped_. The research continues, a yellow notice says how many steps failed, and the report's _Review notes_ list "Source not used: …".                    |
+| Set `RESEARCH_MODEL_RETRIES=abc` and restart                      | The app does not start: "Invalid RESEARCH_MODEL_RETRIES: …".                                                                                                                                                                          |
+| Goal shorter than 10 characters                                   | The Start button stays disabled.                                                                                                                                                                                                      |
+
+### Retry a failed task
+
+A simple way to make a task fail, then recover it:
+
+1. Start a task with **Sources** set to 1.
+2. Turn the network off while **Choose sources** is running, before the source is read.
+3. Expected:
+   - The single source fails, and the analysis has nothing to work with.
+   - The task is **Failed** with "None of the 1 selected source(s) could be read".
+   - The panel says "Retry runs the failed steps again", and a **Retry** button is shown.
+4. Turn the network on and click **Retry**.
+5. Expected:
+   - The source is fetched again and the task completes.
+   - Plan and search steps keep _Attempt: 1_.
+   - The log shows `task.failed`, then `task.retry`.
 
 ## 8. Where the data lives
 
@@ -146,8 +169,8 @@ Start a task and click **Stop** during any step. Expected:
   analysis, draft, review verdicts), attempts and timings.
 - **Knowledge Base:** the sources, with their extracted text.
 - **Reports:** the Markdown report, version 1.
-- **Storage:** row counts grow in `tasks`, `task_steps`, `sources`, `source_contents`,
-  `reports` and `model_usage`.
+- **Storage:** row counts grow in `tasks`, `task_steps`, `task_logs`, `sources`,
+  `source_contents`, `reports` and `model_usage`.
 
 Everything is in `%APPDATA%\Autonomous Research Assistant\data\research.db`. No cloud
 service is called. The only network traffic is SearXNG, the fetched web pages, and Ollama
@@ -155,17 +178,20 @@ on `127.0.0.1`.
 
 ## Results checklist
 
-| #   | Check                                                 | Result |
-| --- | ----------------------------------------------------- | ------ |
-| 1   | Research Tools search and fetch work                  |        |
-| 2   | A research task completes                             |        |
-| 3   | Every paragraph has citations that resolve to sources |        |
-| 4   | Spot-checked citations are correct                    |        |
-| 5   | Uncertainty and review notes are present              |        |
-| 6   | Pause → Resume continues without repeating steps      |        |
-| 7   | Crash → restart → Interrupted → Resume completes      |        |
-| 8   | Cancel works                                          |        |
-| 9   | SearXNG down / not configured gives clear errors      |        |
-| 10  | Ollama down gives a clear error after a retry         |        |
-| 11  | App stays responsive during a run                     |        |
-| 12  | Total run time with default limits: ____ min          |        |
+| #   | Check                                                   | Result |
+| --- | ------------------------------------------------------- | ------ |
+| 1   | Research Tools search and fetch work                    |        |
+| 2   | A research task completes                               |        |
+| 3   | Every paragraph has citations that resolve to sources   |        |
+| 4   | Spot-checked citations are correct                      |        |
+| 5   | Uncertainty and review notes are present                |        |
+| 6   | Pause → Resume continues without repeating steps        |        |
+| 7   | Crash → restart → Interrupted → Resume completes        |        |
+| 8   | Cancel works                                            |        |
+| 9   | SearXNG down / not configured: waits or refuses clearly |        |
+| 10  | Ollama down: start refused; mid-run waits, Resume works |        |
+| 10a | Network off: waits; Resume re-reads failed sources      |        |
+| 10b | Failed task: Retry runs only the failed steps           |        |
+| 10c | Execution log shows every transition                    |        |
+| 11  | App stays responsive during a run                       |        |
+| 12  | Total run time with default limits: ____ min            |        |

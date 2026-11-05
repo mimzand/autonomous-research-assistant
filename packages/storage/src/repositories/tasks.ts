@@ -14,7 +14,8 @@ export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]
   'awaiting-approval': ['running', 'cancelled', 'failed'],
   interrupted: ['running', 'cancelled', 'failed'],
   completed: [],
-  failed: [],
+  // Only an explicit user retry moves a failed task back to running.
+  failed: ['running'],
   cancelled: [],
 };
 
@@ -69,7 +70,7 @@ export function createTaskRepository(db: Executor, ctx: StorageContext) {
         updatedAt: now,
         ...(output !== undefined && { output }),
         ...(patch.error !== undefined && { error: patch.error }),
-        ...(to === 'running' && { error: null }),
+        ...(to === 'running' && { error: null, finishedAt: null }),
         ...(to === 'running' && !current.startedAt && { startedAt: now }),
         ...(TERMINAL.includes(to) && { finishedAt: now }),
       })

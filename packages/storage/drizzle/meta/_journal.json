@@ -8,6 +8,13 @@
       "when": 1793801278671,
       "tag": "0000_initial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793872445054,
+      "tag": "0001_task_logs",
+      "breakpoints": true
     }
   ]
 }

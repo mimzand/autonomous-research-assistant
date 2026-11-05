@@ -49,6 +49,7 @@ export const TABLE_NAMES = [
   'model_usage',
   'settings',
   'approvals',
+  'task_logs',
 ] as const;
 
 const INTEGRITY_KEY = 'storage.integrity.last';

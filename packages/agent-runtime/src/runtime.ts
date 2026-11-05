@@ -6,8 +6,10 @@ import { ZodError } from 'zod';
 import { createPersistenceCheck, isPersistenceCheck } from './persistence-check.js';
 import {
   createResearchAgent,
+  interruptionOf,
   isPausedTask,
   isResearchTask,
+  isSettled,
   type ResearchEvent,
   type ResearchLimits,
   type ResearchProgress,
@@ -33,8 +35,8 @@ export type TaskActionOutcome =
   | { readonly ok: false; readonly message: string };
 
 /**
- * Public surface of the agent runtime. The research agent loop is not
- * implemented yet; the only task executor is the persistence check.
+ * Public surface of the agent runtime: chat, the persistence check and the
+ * autonomous research workflow, with their task lifecycle actions.
  */
 export interface AgentRuntime {
   /** Model used for chat and (later) agent runs. */
@@ -50,8 +52,13 @@ export interface AgentRuntime {
   readonly tasks: {
     /** Creates and starts a persistence check task. */
     runPersistenceCheck(): TaskRecord;
-    /** Validates the goal, then creates and starts an autonomous research task. */
-    startResearch(request: ResearchRequest): TaskActionOutcome;
+    /**
+     * Validates the goal, checks that Ollama and the model are available, then
+     * creates and starts an autonomous research task.
+     */
+    startResearch(request: ResearchRequest): Promise<TaskActionOutcome>;
+    /** Runs the failed step(s) of a failed research task again. */
+    retry(taskId: string): TaskActionOutcome;
     /** Pauses a running research task; its current step is repeated on resume. */
     pause(taskId: string): TaskActionOutcome;
     /** Step progress of a research task, or null for other task types. */
@@ -86,7 +93,9 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
 
   function recoveryInfo(task: TaskRecord, steps: readonly TaskStepRecord[]): TaskRecoveryInfo {
     const done = steps.filter((s) => s.status === 'completed' || s.status === 'skipped');
-    const next = steps.find((s) => s.status !== 'completed' && s.status !== 'skipped');
+    const next = steps.find((s) =>
+      isResearchTask(task) ? !isSettled(s) : s.status !== 'completed' && s.status !== 'skipped',
+    );
     const hasExecutor = isPersistenceCheck(task) || isResearchTask(task);
     const executing = isExecuting(task.id);
     const paused = isPausedTask(task);
@@ -100,7 +109,14 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
       resumable: task.status === 'interrupted' && hasExecutor && !executing,
       reason,
       paused,
+      interruption: interruptionOf(task),
       pausable: task.status === 'running' && isResearchTask(task) && research.isRunning(task.id),
+      retryable:
+        task.status === 'failed' &&
+        isResearchTask(task) &&
+        !executing &&
+        steps.some((s) => s.status === 'failed'),
+      failedSteps: steps.filter((s) => s.status === 'failed').length,
       cancellable:
         ['pending', 'interrupted', 'awaiting-approval'].includes(task.status) ||
         (task.status === 'running' && executing),
@@ -123,11 +139,11 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     tasks: {
       runPersistenceCheck: () => persistenceCheck.start(),
 
-      startResearch(request) {
+      async startResearch(request) {
         const ready = research.readiness();
         if (!ready.ok) return { ok: false, message: ready.message };
         try {
-          return { ok: true, task: research.start(request) };
+          return { ok: true, task: await research.start(request) };
         } catch (error) {
           if (error instanceof ZodError) {
             return { ok: false, message: error.issues.map((i) => i.message).join(' ') };
@@ -143,6 +159,18 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
             return { ok: false, message: 'Only running research tasks can be paused.' };
           }
           return { ok: true, task: storage.tasks.require(taskId) };
+        } catch (error) {
+          return { ok: false, message: errorMessage(error) };
+        }
+      },
+
+      retry(taskId) {
+        try {
+          const task = storage.tasks.require(taskId);
+          if (!isResearchTask(task)) {
+            return { ok: false, message: 'Only research tasks can be retried.' };
+          }
+          return { ok: true, task: research.retry(taskId) };
         } catch (error) {
           return { ok: false, message: errorMessage(error) };
         }
@@ -175,7 +203,11 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
           if (persistenceCheck.cancel(taskId) || research.cancel(taskId)) {
             return { ok: true, task: storage.tasks.require(taskId) };
           }
-          return { ok: true, task: storage.tasks.cancel(taskId) };
+          const cancelled = storage.tasks.cancel(taskId);
+          if (isResearchTask(cancelled)) {
+            research.note(taskId, 'task.cancelled', 'Cancelled by the user while not running.');
+          }
+          return { ok: true, task: cancelled };
         } catch (error) {
           return { ok: false, message: errorMessage(error) };
         }

@@ -318,7 +318,18 @@ plan → search (per question) → choose sources → read source + extract evid
 - **Untrusted content:** web text only reaches the model inside fenced untrusted blocks,
   and hidden HTML text is dropped during extraction.
 - **UI:** the task page shows the goal, status, current step, progress (pushed by progress
-  events), discovered sources and the final report, with **Pause**, **Resume** and **Stop**.
+  events), discovered sources and the final report, with **Pause**, **Resume**, **Retry**
+  and **Stop**, plus the execution log.
+- **Reliability:**
+  - If Ollama, SearXNG or the internet connection is unavailable, the task waits as
+    _interrupted_ with a "Waiting for …" reason, and **Resume** continues it.
+  - A source that cannot be read is marked _failed_. The task continues, and the report
+    lists the source as not used.
+  - Fatal errors fail the task, and **Retry** runs only the failed steps.
+  - A task does not start if Ollama or the model is missing.
+  - Retry counts and backoff come from `RESEARCH_*` settings. Every transition is
+    written to an append-only execution log (`task_logs`).
+  - Details: [docs/failure-recovery.md](docs/failure-recovery.md).
 
 Manual test with a real model: [docs/manual-testing-research-agent.md](docs/manual-testing-research-agent.md).
 
@@ -351,8 +362,15 @@ precedence. See `.env.example`:
 | `WEB_FETCH_TIMEOUT_MS`      | `20000`           | Deadline per page download                  |
 | `WEB_SEARCH_TIMEOUT_MS`     | `15000`           | Deadline per search                         |
 | `WEB_MAX_DOWNLOAD_BYTES`    | `15728640`        | Larger downloads are refused                |
+| `RESEARCH_MODEL_RETRIES`    | `1`               | Extra attempts per model call (0–3)         |
+| `RESEARCH_TOOL_RETRIES`     | `1`               | Extra attempts per transient tool error     |
+| `RESEARCH_RETRY_BACKOFF_MS` | `1000`            | First retry delay; doubles, max 30 s        |
+| `RESEARCH_MODEL_TIMEOUT_MS` | `300000`          | Deadline for one research model call        |
+| `RESEARCH_MAX_QUESTIONS`    | `3`               | Default sub-questions per task (1–6)        |
+| `RESEARCH_MAX_SOURCES`      | `6`               | Default sources per task (1–12)             |
 
-No API keys are required or supported.
+No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
+startup with a message naming the variable.
 
 ## Troubleshooting
 

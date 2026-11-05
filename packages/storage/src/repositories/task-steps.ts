@@ -14,10 +14,11 @@ import { IdSchema, JsonValueSchema, parseInput } from '../validation.js';
 export const STEP_TRANSITIONS: Readonly<Record<StepStatus, readonly StepStatus[]>> = {
   pending: ['running', 'skipped'],
   running: ['completed', 'failed', 'interrupted'],
-  failed: ['running'],
+  // failed/skipped → pending: an explicit retry queues the step again.
+  failed: ['running', 'pending'],
   interrupted: ['running', 'skipped'],
   completed: [],
-  skipped: [],
+  skipped: ['pending'],
 };
 
 const AppendStepSchema = z.strictObject({
@@ -67,6 +68,7 @@ export function createTaskStepRepository(db: Executor, ctx: StorageContext) {
           error: null,
         }),
         ...(['completed', 'failed', 'skipped', 'interrupted'].includes(to) && { finishedAt: now }),
+        ...(to === 'pending' && { finishedAt: null }),
       })
       .where(and(eq(taskSteps.id, id), eq(taskSteps.status, current.status)))
       .returning()
@@ -133,7 +135,12 @@ export function createTaskStepRepository(db: Executor, ctx: StorageContext) {
       return transition(id, 'failed', { error: error.slice(0, 10_000) });
     },
 
-    skip: (id: string) => transition(id, 'skipped'),
+    /** pending | interrupted → skipped, with the reason (shown in the timeline). */
+    skip: (id: string, reason?: string) =>
+      transition(id, 'skipped', reason === undefined ? {} : { error: reason.slice(0, 10_000) }),
+
+    /** failed | skipped → pending (explicit retry). Completed steps can never be re-queued. */
+    requeue: (id: string) => transition(id, 'pending', { error: null }),
 
     /** running → interrupted (e.g. the user paused the task). The step runs again on resume. */
     interrupt(id: string, reason: string): TaskStepRecord {

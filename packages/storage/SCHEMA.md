@@ -167,6 +167,27 @@ Human decisions on write actions requested by the agent.
 
 Indexes: `status`, `task_id`.
 
+### `task_logs`
+
+Append-only execution log of a task (added by migration `0001_task_logs`). Written by the
+research workflow; never updated.
+
+| Column       | Type                                | Notes                                          |
+| ------------ | ----------------------------------- | ---------------------------------------------- |
+| `id`         | text PK                             |                                                |
+| `task_id`    | text FK → `tasks.id`                | cascade                                        |
+| `step_id`    | text FK → `task_steps.id`, nullable | set null                                       |
+| `seq`        | integer                             | 1, 2, 3… per task; unique with `task_id`       |
+| `level`      | text                                | `debug` \| `info` \| `warn` \| `error` (CHECK) |
+| `event`      | text                                | `^[a-z][a-z0-9.-]{0,59}$`, e.g. `step.started` |
+| `message`    | text                                | 1–2000 characters                              |
+| `data`       | JSON, nullable                      | At most 4000 characters serialized             |
+| `created_at` | text                                |                                                |
+
+`storage.logs.append()` assigns `seq` inside the write; `listByTask(taskId, { afterSeq,
+limit, levels })` returns entries in order. Event names are listed in
+[docs/failure-recovery.md](../../docs/failure-recovery.md#execution-log).
+
 ### `__migrations` (internal)
 
 Applied migrations: `tag`, `hash` (SHA-256 of the SQL), `applied_at`.
@@ -194,7 +215,11 @@ stateDiagram-v2
   interrupted --> running : resume
   interrupted --> cancelled
   interrupted --> failed
+  failed --> running : user retry
 ```
+
+`failed → running` is only used by an explicit user **Retry**; it clears `error` and
+`finished_at`.
 
 Task steps:
 
@@ -208,11 +233,15 @@ stateDiagram-v2
   running --> failed
   running --> interrupted : app stopped
   failed --> running : retry
+  failed --> pending : requeue
   interrupted --> running : retry
   interrupted --> skipped
+  skipped --> pending : requeue
 ```
 
-`completed` and `skipped` are final. Starting a completed step throws
+`completed` is final. `steps.requeue(id)` (failed or skipped → `pending`, error cleared) is
+how Retry and Resume queue a step again; `steps.skip(id, reason)` keeps the reason in
+`error`. Starting a completed step throws
 `StorageError('step-already-completed')`, so a completed step can never execute twice.
 
 ## Pausing

@@ -100,6 +100,24 @@ export const TaskRecoveryInfoSchema = z.object({
   paused: z.boolean(),
   /** A running research task that can be paused now. */
   pausable: z.boolean(),
+  /** Why an interrupted task is waiting (null unless interrupted). */
+  interruption: z
+    .object({
+      kind: z.enum([
+        'paused',
+        'app-closed',
+        'model-unavailable',
+        'search-unavailable',
+        'offline',
+        'other',
+      ]),
+      message: z.string(),
+    })
+    .nullable(),
+  /** A failed research task whose failed step(s) can run again. */
+  retryable: z.boolean(),
+  /** Steps that failed (per-source failures do not stop a research task). */
+  failedSteps: z.int().nonnegative(),
   cancellable: z.boolean(),
   completedSteps: z.int().nonnegative(),
   totalSteps: z.int().nonnegative(),
@@ -138,6 +156,30 @@ export const StartResearchRequestSchema = z.strictObject({
   maxSources: z.int().min(1).max(12).optional(),
 });
 export type StartResearchRequest = z.input<typeof StartResearchRequestSchema>;
+
+export const TaskLogsRequestSchema = z.strictObject({
+  id: Id,
+  /** Only entries after this sequence number (incremental loading). */
+  afterSeq: z.int().min(0).default(0),
+});
+export type TaskLogsRequest = z.input<typeof TaskLogsRequestSchema>;
+
+export const TaskLogEntrySchema = z.object({
+  seq: z.int().positive(),
+  level: z.enum(['debug', 'info', 'warn', 'error']),
+  event: z.string(),
+  message: z.string(),
+  stepSeq: z.int().positive().nullable(),
+  data: Json.nullable(),
+  createdAt: Timestamp,
+});
+export type TaskLogEntry = z.infer<typeof TaskLogEntrySchema>;
+
+export const TaskLogListSchema = z.object({
+  items: z.array(TaskLogEntrySchema),
+  lastSeq: z.int().min(0),
+});
+export type TaskLogList = z.infer<typeof TaskLogListSchema>;
 
 /** Pushed to the window while research tasks run (the UI also polls). */
 export const ResearchProgressEventSchema = z.object({

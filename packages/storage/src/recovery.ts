@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { type Executor, type StorageContext } from './context.js';
 import { StorageError } from './errors.js';
 import { createApprovalRepository } from './repositories/approvals.js';
+import { createTaskLogRepository } from './repositories/task-logs.js';
 import { createTaskStepRepository } from './repositories/task-steps.js';
 import { createTaskRepository } from './repositories/tasks.js';
 import {
@@ -63,6 +64,14 @@ export function createRecovery(
           })
           .where(eq(taskSteps.status, 'running'))
           .run();
+        const logs = createTaskLogRepository(tx, ctx);
+        for (const { id } of interrupted) {
+          logs.append(id, {
+            level: 'warn',
+            event: 'task.recovered',
+            message: `${INTERRUPTED_MESSAGE} Marked as interrupted at startup; it continues only when resumed.`,
+          });
+        }
         return {
           interruptedTaskIds: interrupted.map((t) => t.id),
           interruptedStepCount: steps.changes,

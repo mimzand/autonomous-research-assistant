@@ -27,11 +27,12 @@ export async function generateObject<Schema extends z.ZodType>(
     options,
   );
 
-  let json: unknown;
-  try {
-    json = JSON.parse(result.content);
-  } catch (cause) {
-    throw new ModelProviderError('invalid-response', 'Model did not return valid JSON.', { cause });
+  const json = extractJson(result.content);
+  if (json === undefined) {
+    throw new ModelProviderError(
+      'invalid-response',
+      `Model did not return valid JSON (got: ${JSON.stringify(result.content.slice(0, 200))}).`,
+    );
   }
 
   const parsed = schema.safeParse(json);
@@ -45,6 +46,32 @@ export async function generateObject<Schema extends z.ZodType>(
     );
   }
   return { object: parsed.data, result };
+}
+
+/**
+ * Parses the model's JSON, tolerating common wrappers small local models add
+ * even in JSON mode: a <think>…</think> block, Markdown code fences, or text
+ * before/after the object. Returns undefined when no JSON can be recovered.
+ * The result is still validated against the schema by the caller.
+ */
+export function extractJson(content: string): unknown {
+  const attempts: string[] = [];
+  const text = content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  attempts.push(text);
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  if (fenced?.[1]) attempts.push(fenced[1].trim());
+  const first = text.search(/[{[]/);
+  const last = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+  if (first >= 0 && last > first) attempts.push(text.slice(first, last + 1));
+  for (const candidate of attempts) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return undefined;
 }
 
 /** JSON Schema for the model. `$schema` is dropped: it is metadata the model does not need. */

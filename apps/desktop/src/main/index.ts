@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
+import { createAgentRuntime, createSourceStore, loadResearchConfig } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
 import { IpcEvents, ResearchProgressEventSchema } from '@rka/shared';
 import {
@@ -34,6 +34,8 @@ if (!app.requestSingleInstanceLock()) {
 function bootstrap(): void {
   const ollamaConfig = loadOllamaConfig(process.env);
   const webConfig = loadWebConfig(process.env);
+  // RESEARCH_* retry limits and timeouts; an invalid value stops startup with a clear error.
+  const researchDefaults = loadResearchConfig(process.env);
 
   // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
   // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
@@ -61,6 +63,7 @@ function bootstrap(): void {
     modelProvider: createOllamaProvider(ollamaConfig),
     tools,
     storage,
+    researchDefaults,
     // Research progress is pushed to every window (validated against the shared contract).
     onResearchEvent: (event) => {
       const parsed = ResearchProgressEventSchema.safeParse(event);

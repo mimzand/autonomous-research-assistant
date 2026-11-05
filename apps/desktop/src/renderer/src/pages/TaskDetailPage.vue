@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import ResearchView from '../components/research/ResearchView.vue';
+import TaskLogPanel from '../components/research/TaskLogPanel.vue';
 import EmptyState from '../components/ui/EmptyState.vue';
 import ErrorBanner from '../components/ui/ErrorBanner.vue';
 import JsonBlock from '../components/ui/JsonBlock.vue';
@@ -9,6 +10,7 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import { useAsyncData } from '../composables/useAsyncData';
 import { useNavigation } from '../composables/useNavigation';
 import { formatDateTime, formatDuration, formatNumber } from '../lib/format';
+import { describeInterruption, interruptionDetail } from '../lib/task-recovery';
 
 const props = defineProps<{ taskId: string }>();
 const nav = useNavigation();
@@ -45,6 +47,8 @@ const actionError = ref<string | null>(null);
 const task = computed(() => details.data.value?.task ?? null);
 const recovery = computed(() => details.data.value?.recovery ?? null);
 const steps = computed(() => details.data.value?.steps ?? []);
+const interruption = computed(() => describeInterruption(recovery.value?.interruption ?? null));
+const waitingDetail = computed(() => interruptionDetail(recovery.value?.interruption ?? null));
 const tokens = computed(() =>
   (details.data.value?.usage ?? []).reduce(
     (sum, u) => ({
@@ -62,7 +66,7 @@ function toggle(stepId: string): void {
   expanded.value = next;
 }
 
-async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
+async function act(action: 'resume' | 'cancel' | 'pause' | 'retry'): Promise<void> {
   acting.value = true;
   actionError.value = null;
   try {
@@ -137,6 +141,17 @@ async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
             Resume
           </button>
           <button
+            v-if="recovery.retryable"
+            type="button"
+            class="primary"
+            data-testid="retry-task"
+            :disabled="acting"
+            title="Run the failed step(s) again. Completed steps are kept."
+            @click="act('retry')"
+          >
+            Retry
+          </button>
+          <button
             v-if="recovery.cancellable"
             type="button"
             class="secondary"
@@ -154,19 +169,18 @@ async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
       <div
         v-if="task.status === 'interrupted'"
         class="card recovery"
-        :data-tone="recovery.paused ? 'info' : 'warn'"
+        :data-tone="interruption.tone"
+        :data-kind="recovery.interruption?.kind ?? 'other'"
         data-testid="recovery-panel"
       >
-        <strong>{{ recovery.paused ? 'Paused' : 'Interrupted — waiting for you' }}</strong>
+        <strong>{{ interruption.title }}</strong>
         <p>
-          {{
-            recovery.paused
-              ? 'You paused this task. The step that was running will start again on resume.'
-              : 'The app stopped while this task was running. It will not continue on its own.'
-          }}
+          {{ interruption.text }}
           {{ recovery.completedSteps }} of {{ recovery.totalSteps }} steps were completed and are
           kept with their outputs.
         </p>
+        <p v-if="waitingDetail" class="detail" data-testid="recovery-detail">{{ waitingDetail }}</p>
+        <p>{{ interruption.action }}</p>
         <p v-if="recovery.resumable && recovery.nextStep">
           <b>Resume</b> continues at step {{ recovery.nextStep.seq }} ({{
             recovery.nextStep.name
@@ -174,6 +188,34 @@ async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
         </p>
         <p v-else-if="recovery.reason">{{ recovery.reason }}</p>
       </div>
+
+      <div
+        v-if="task.status === 'failed' && isResearch"
+        class="card recovery"
+        data-tone="error"
+        data-testid="failed-panel"
+      >
+        <strong>Failed</strong>
+        <p>
+          {{ recovery.completedSteps }} of {{ recovery.totalSteps }} steps were completed and are
+          kept with their outputs.
+          <template v-if="recovery.retryable">
+            <b>Retry</b> runs the failed step{{ recovery.failedSteps === 1 ? '' : 's' }} again;
+            completed steps will not run again.
+          </template>
+          <template v-else>Nothing can run again; start a new research task instead.</template>
+        </p>
+      </div>
+      <p
+        v-else-if="isResearch && recovery.failedSteps > 0"
+        class="notice"
+        data-tone="warn"
+        data-testid="failed-steps-notice"
+      >
+        {{ recovery.failedSteps }} step{{ recovery.failedSteps === 1 ? '' : 's' }} failed (usually a
+        source that could not be read). The research continued without
+        {{ recovery.failedSteps === 1 ? 'it' : 'them' }}; see the timeline and the execution log.
+      </p>
 
       <ResearchView
         v-if="isResearch && details.data.value"
@@ -221,6 +263,13 @@ async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
           </div>
         </div>
       </div>
+
+      <TaskLogPanel
+        v-if="isResearch"
+        :task-id="task.id"
+        :task-status="task.status"
+        :refresh-key="progressKey"
+      />
 
       <div class="card timeline-card">
         <h3>Execution timeline</h3>
@@ -306,6 +355,11 @@ async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
 }
 .recovery p {
   margin: 4px 0 0;
+}
+.recovery .detail {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 .grid {
   display: grid;
@@ -404,6 +458,10 @@ dd {
 .marker[data-status='failed'] {
   border-color: var(--error);
   color: var(--error);
+}
+.marker[data-status='skipped'] {
+  border-style: dashed;
+  color: var(--muted);
 }
 .marker[data-status='interrupted'] {
   border-color: var(--warn);

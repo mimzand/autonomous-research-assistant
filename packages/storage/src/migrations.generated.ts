@@ -33,4 +33,13 @@ export const MIGRATIONS: readonly EmbeddedMigration[] = [
       'CREATE INDEX `tasks_created_at_idx` ON `tasks` (`created_at`);',
     ],
   },
+  {
+    tag: '0001_task_logs',
+    hash: '420c517efc25090e0834368c352a4c9f9f63fb0d6c3dde9272ab2cf78684b3dc',
+    statements: [
+      'CREATE TABLE `task_logs` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`task_id` text NOT NULL,\n\t`step_id` text,\n\t`seq` integer NOT NULL,\n\t`level` text NOT NULL,\n\t`event` text NOT NULL,\n\t`message` text NOT NULL,\n\t`data` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`step_id`) REFERENCES `task_steps`(`id`) ON UPDATE no action ON DELETE set null,\n\tCONSTRAINT "task_logs_level_check" CHECK("task_logs"."level" in (\'debug\', \'info\', \'warn\', \'error\')),\n\tCONSTRAINT "task_logs_seq_check" CHECK("task_logs"."seq" >= 1)\n);',
+      'CREATE UNIQUE INDEX `task_logs_task_seq_uq` ON `task_logs` (`task_id`,`seq`);',
+      'CREATE INDEX `task_logs_step_idx` ON `task_logs` (`step_id`);',
+    ],
+  },
 ];

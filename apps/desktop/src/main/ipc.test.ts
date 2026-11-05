@@ -252,8 +252,41 @@ describe('dashboard IPC', () => {
     });
     await expect(invoke(IpcChannels.tasksGet, trusted, { id: task.id })).resolves.toMatchObject({
       progress: null,
-      recovery: { paused: false, pausable: false },
+      recovery: { paused: false, pausable: false, retryable: false, interruption: null },
     });
+  });
+
+  it('validates retry and log requests and maps log steps to their sequence numbers', async () => {
+    const { invoke, storage } = setup();
+    const task = storage.tasks.create({ title: 'Not research', input: {} });
+    await expect(invoke(IpcChannels.tasksRetry, trusted, { id: task.id })).resolves.toMatchObject({
+      status: 'rejected',
+      message: expect.stringMatching(/Only research tasks/),
+    });
+    await expect(invoke(IpcChannels.tasksRetry, trusted, {})).rejects.toThrow();
+
+    const step = storage.steps.append(task.id, { kind: 'plan', name: 'Plan', input: {} });
+    storage.logs.append(task.id, { level: 'info', event: 'task.started', message: 'Started' });
+    storage.logs.append(task.id, {
+      stepId: step.id,
+      level: 'warn',
+      event: 'tool.retry',
+      message: 'Retrying',
+      data: { attempt: 1 },
+    });
+    await expect(invoke(IpcChannels.tasksLogs, trusted, { id: task.id })).resolves.toMatchObject({
+      items: [
+        { seq: 1, event: 'task.started', stepSeq: null, data: null },
+        { seq: 2, event: 'tool.retry', stepSeq: 1, level: 'warn', data: { attempt: 1 } },
+      ],
+      lastSeq: 2,
+    });
+    await expect(
+      invoke(IpcChannels.tasksLogs, trusted, { id: task.id, afterSeq: 2 }),
+    ).resolves.toEqual({ items: [], lastSeq: 2 });
+    await expect(
+      invoke(IpcChannels.tasksLogs, trusted, { id: task.id, afterSeq: -1 }),
+    ).rejects.toThrow();
   });
 
   it('exposes setting counts but never setting values', async () => {

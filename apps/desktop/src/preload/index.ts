@@ -21,6 +21,7 @@ import {
   SourceListResultSchema,
   StorageStatusSchema,
   TaskActionResultSchema,
+  TaskLogListSchema,
   TaskDetailsSchema,
   TaskListResultSchema,
   TaskStatusCountsSchema,
@@ -81,6 +82,8 @@ const tasks: TasksApi = {
   cancel: (id) => call(TaskActionResultSchema, IpcChannels.tasksCancel, { id }),
   startResearch: (request) => call(TaskActionResultSchema, IpcChannels.tasksStartResearch, request),
   pause: (id) => call(TaskActionResultSchema, IpcChannels.tasksPause, { id }),
+  retry: (id) => call(TaskActionResultSchema, IpcChannels.tasksRetry, { id }),
+  logs: (id, afterSeq = 0) => call(TaskLogListSchema, IpcChannels.tasksLogs, { id, afterSeq }),
   onProgress: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: unknown): void => {
       const parsed = ResearchProgressEventSchema.safeParse(payload);

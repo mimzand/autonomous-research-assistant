@@ -51,6 +51,8 @@ export const STEP_STATUSES = [
 
 export const APPROVAL_STATUSES = ['pending', 'approved', 'rejected'] as const;
 
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
 /** A research task: the user's request (input), its result (output) and lifecycle. */
 export const tasks = sqliteTable(
   'tasks',
@@ -208,6 +210,34 @@ export const approvals = sqliteTable(
   ],
 );
 
+/**
+ * Execution log of a task: lifecycle changes, step attempts, retries, failures
+ * and recovery decisions. Append-only; ordered by `seq` within a task.
+ */
+export const taskLogs = sqliteTable(
+  'task_logs',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    stepId: text('step_id').references(() => taskSteps.id, { onDelete: 'set null' }),
+    seq: integer('seq').notNull(),
+    level: text('level', { enum: LOG_LEVELS }).notNull(),
+    /** Machine-readable event name, e.g. `step.retry` or `task.paused`. */
+    event: text('event').notNull(),
+    message: text('message').notNull(),
+    data: text('data', { mode: 'json' }).$type<JsonValue>(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('task_logs_task_seq_uq').on(t.taskId, t.seq),
+    index('task_logs_step_idx').on(t.stepId),
+    check('task_logs_level_check', inList(t.level, LOG_LEVELS)),
+    check('task_logs_seq_check', sql`${t.seq} >= 1`),
+  ],
+);
+
 export const schema = {
   tasks,
   taskSteps,
@@ -217,6 +247,7 @@ export const schema = {
   modelUsage,
   settings,
   approvals,
+  taskLogs,
 };
 
 export type TaskRecord = typeof tasks.$inferSelect;
@@ -227,3 +258,5 @@ export type ReportRecord = typeof reports.$inferSelect;
 export type ModelUsageRecord = typeof modelUsage.$inferSelect;
 export type SettingRecord = typeof settings.$inferSelect;
 export type ApprovalRecord = typeof approvals.$inferSelect;
+export type TaskLogRecord = typeof taskLogs.$inferSelect;
+export type LogLevel = (typeof LOG_LEVELS)[number];

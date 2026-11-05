@@ -54,8 +54,18 @@ export {
   type RequestApprovalInput,
 } from './repositories/approvals.js';
 export {
+  createTaskLogRepository,
+  MAX_LOG_DATA_CHARS,
+  type AppendLogInput,
+  type ListLogsInput,
+  type TaskLogRepository,
+} from './repositories/task-logs.js';
+export {
+  LOG_LEVELS,
   type ApprovalRecord,
   type JsonValue,
+  type LogLevel,
+  type TaskLogRecord,
   type ModelUsageRecord,
   type ReportRecord,
   type SettingRecord,

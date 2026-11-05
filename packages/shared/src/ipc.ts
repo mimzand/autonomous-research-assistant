@@ -12,6 +12,7 @@ import {
   type StorageStatus,
   type ResearchProgressEvent,
   type StartResearchRequest,
+  type TaskLogList,
   type TaskActionResult,
   type TaskDetails,
   type TaskListQuery,
@@ -48,6 +49,8 @@ export const IpcChannels = {
   tasksCancel: 'tasks:cancel',
   tasksStartResearch: 'tasks:start-research',
   tasksPause: 'tasks:pause',
+  tasksRetry: 'tasks:retry',
+  tasksLogs: 'tasks:logs',
   sourcesList: 'sources:list',
   sourcesGet: 'sources:get',
   reportsList: 'reports:list',
@@ -102,6 +105,10 @@ export interface TasksApi {
   startResearch(request: StartResearchRequest): Promise<TaskActionResult>;
   /** Pauses a running research task. */
   pause(id: string): Promise<TaskActionResult>;
+  /** Runs the failed step(s) of a failed research task again. */
+  retry(id: string): Promise<TaskActionResult>;
+  /** Execution log of a task, oldest first; pass afterSeq to load only new entries. */
+  logs(id: string, afterSeq?: number): Promise<TaskLogList>;
   /** Live progress of research tasks. Returns an unsubscribe function. */
   onProgress(listener: (event: ResearchProgressEvent) => void): () => void;
 }

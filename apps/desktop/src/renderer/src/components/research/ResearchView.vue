@@ -37,7 +37,15 @@ const phase = computed(() => {
   if (s === 'failed') return { tone: 'error', text: 'Failed' };
   if (s === 'cancelled') return { tone: 'neutral', text: 'Cancelled' };
   if (props.details.recovery.paused) return { tone: 'info', text: 'Paused' };
-  if (s === 'interrupted') return { tone: 'warn', text: 'Interrupted' };
+  if (s === 'interrupted') {
+    const kind = props.details.recovery.interruption?.kind;
+    const waiting: Record<string, string> = {
+      'model-unavailable': 'Waiting for Ollama',
+      'search-unavailable': 'Waiting for SearXNG',
+      offline: 'Waiting for the internet connection',
+    };
+    return { tone: 'warn', text: (kind && waiting[kind]) ?? 'Interrupted' };
+  }
   return { tone: 'info', text: 'Running' };
 });
 

@@ -10,6 +10,7 @@ import {
 } from './format';
 import { renderMarkdown } from './markdown';
 import { TASK_FILTERS, TASK_STATUS_META } from './status';
+import { describeInterruption, interruptionDetail } from './task-recovery';
 
 describe('format helpers', () => {
   it('formats bytes', () => {
@@ -133,5 +134,38 @@ describe('research tools helpers', () => {
     expect(formatMs(null)).toBe('—');
     expect(resultSummary(1, 20)).toBe('1 result · 20 ms');
     expect(resultSummary(3, 20)).toBe('3 results · 20 ms');
+  });
+});
+
+describe('task recovery text', () => {
+  it('describes every interruption kind with an action', () => {
+    const kinds = [
+      'paused',
+      'app-closed',
+      'model-unavailable',
+      'search-unavailable',
+      'offline',
+      'other',
+    ] as const;
+    for (const kind of kinds) {
+      const view = describeInterruption({ kind, message: 'x' });
+      expect(view.title).not.toBe('');
+      expect(view.action).toMatch(/Resume/);
+    }
+    expect(describeInterruption({ kind: 'model-unavailable', message: '' }).title).toBe(
+      'Waiting for Ollama',
+    );
+    expect(describeInterruption(null).title).toMatch(/Interrupted/);
+  });
+
+  it('shows the stored detail without the repeated hint', () => {
+    expect(
+      interruptionDetail({
+        kind: 'model-unavailable',
+        message:
+          'Waiting for Ollama: connect ECONNREFUSED. Start Ollama (or check OLLAMA_HOST), then click Resume.',
+      }),
+    ).toBe('Waiting for Ollama: connect ECONNREFUSED.');
+    expect(interruptionDetail({ kind: 'paused', message: 'Paused by the user.' })).toBeNull();
   });
 });

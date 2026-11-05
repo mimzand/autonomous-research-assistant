@@ -24,7 +24,12 @@ export {
   isModelProviderError,
   type ModelErrorCode,
 } from './errors.js';
-export { generateObject, toModelJsonSchema, type StructuredResult } from './structured.js';
+export {
+  extractJson,
+  generateObject,
+  toModelJsonSchema,
+  type StructuredResult,
+} from './structured.js';
 
 // Ollama (the only implementation)
 export {
