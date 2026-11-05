@@ -6,14 +6,15 @@ import { defineConfig } from 'electron-vite';
 const fromHere = (path: string): string => resolve(import.meta.dirname, path);
 
 /**
- * All runtime code (workspace packages, zod, vue) is bundled, which is why
- * the desktop app lists everything under devDependencies: the packaged app
- * needs no node_modules besides Electron itself.
+ * All runtime code (workspace packages, zod, drizzle, vue) is bundled, which is
+ * why the desktop app lists almost everything under devDependencies. The one
+ * runtime dependency is better-sqlite3: a native addon loaded from node_modules.
  */
 export default defineConfig({
   main: {
     build: {
-      externalizeDeps: false,
+      // Externalizes only package.json `dependencies`: better-sqlite3 (native addon).
+      externalizeDeps: true,
       outDir: fromHere('out/main'),
       rollupOptions: {
         input: { index: fromHere('src/main/index.ts') },

@@ -2,7 +2,13 @@ packages:
   - apps/*
   - packages/*
 
-# pnpm blocks dependency build scripts unless explicitly allowed.
-# electron: fetches the Electron binary for this OS (otherwise it is fetched on first launch).
+# pnpm blocks dependency build scripts unless explicitly decided here.
 allowBuilds:
+  # Fetches the Electron binary for this OS (otherwise fetched on first launch).
   electron: true
+  # Ships prebuilt Node-API binaries (win32/darwin/linux) that work in Node and
+  # Electron alike; building from source would need a C++ toolchain. Never build.
+  better-sqlite3: false
+  # Pulled in by drizzle-kit (dev only); its platform binary comes from an
+  # optional dependency, so the install script is not needed.
+  esbuild: false

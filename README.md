@@ -64,7 +64,7 @@ packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
   tools/                  @rka/tools          Tool contract + validated registry
-  storage/                @rka/storage        Task repository contract (+ in-memory impl)
+  storage/                @rka/storage        SQLite (better-sqlite3 + Drizzle): migrations, repositories, recovery
   agent-runtime/          @rka/agent-runtime  Composition root for the agent (no loop yet)
 ```
 
@@ -140,6 +140,20 @@ ChatPanel.vue → chat/session.ts → window.api.chat (preload)
 - One generation at a time; closing the window cancels it.
 - Model output is rendered as plain text (no HTML).
 - Errors (Ollama down, model missing, timeout, generation failure) are shown with a fix.
+
+## Storage
+
+Local SQLite database at `%APPDATA%\Autonomous Research Assistant\data\research.db`
+(better-sqlite3 + Drizzle ORM). Tables: tasks, task_steps, sources, source_contents,
+reports, model_usage, settings, approvals. Full reference: [packages/storage/SCHEMA.md](packages/storage/SCHEMA.md).
+
+- Migrations are generated from `packages/storage/src/schema.ts`:
+  `pnpm --filter @rka/storage db:generate`, then applied automatically at startup.
+- Tasks that were running when the app stopped are marked `interrupted` on the next
+  start; completed steps are never executed again.
+- Secrets are encrypted with Windows DPAPI (Electron `safeStorage`), never stored in plaintext.
+- better-sqlite3 ships prebuilt Node-API binaries, so no C++ toolchain or
+  `electron-rebuild` is needed. The same binary works in Node (tests) and Electron.
 
 ## Security model
 

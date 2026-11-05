@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { createAgentRuntime } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
-import { createInMemoryTaskRepository } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from 'electron';
+import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
 import { loadDevEnvFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
@@ -25,16 +25,28 @@ if (!app.requestSingleInstanceLock()) {
 function bootstrap(): void {
   const ollamaConfig = loadOllamaConfig(process.env);
 
+  // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
+  // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
+  const { storage, recovery } = openAppStorage({
+    userDataDir: app.getPath('userData'),
+    cipher: safeStorage,
+  });
+  if (recovery.interruptedTaskIds.length) {
+    console.info(
+      `Marked ${recovery.interruptedTaskIds.length} task(s) as interrupted after an unexpected shutdown.`,
+    );
+  }
+  app.on('will-quit', () => storage.close());
+
   const runtime = createAgentRuntime({
     modelProvider: createOllamaProvider(ollamaConfig),
     tools: createToolRegistry([]),
-    // Replaced by the SQLite/Drizzle repository in a later step.
-    tasks: createInMemoryTaskRepository(),
+    tasks: storage.tasks,
   });
 
   registerIpcHandlers(ipcMain, {
     runtime,
-    chat: new ChatController({ runtime }),
+    chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
     isTrustedSender: (url) => isAppUrl(url, devServerUrl),
     getAppInfo: () => ({
       name: app.getName(),
@@ -82,5 +94,9 @@ app
   .then(bootstrap)
   .catch((error: unknown) => {
     console.error('Failed to start application:', error);
+    dialog.showErrorBox(
+      'Autonomous Research Assistant could not start',
+      error instanceof Error ? error.message : String(error),
+    );
     app.quit();
   });

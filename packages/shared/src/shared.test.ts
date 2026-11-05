@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   IpcChannels,
   ModelHealthSchema,
-  ResearchTaskSchema,
+  StepStatusSchema,
+  TaskStatusSchema,
   err,
   ok,
   toErrorMessage,
@@ -62,17 +63,10 @@ describe('ModelHealthSchema', () => {
   });
 });
 
-describe('ResearchTaskSchema', () => {
-  it('rejects an empty question', () => {
-    const now = new Date().toISOString();
-    const result = ResearchTaskSchema.safeParse({
-      id: 't1',
-      question: '   ',
-      status: 'pending',
-      createdAt: now,
-      updatedAt: now,
-    });
-    expect(result.success).toBe(false);
+describe('status enums', () => {
+  it('include interrupted for recovery', () => {
+    expect(TaskStatusSchema.options).toContain('interrupted');
+    expect(StepStatusSchema.options).toContain('interrupted');
   });
 });
 

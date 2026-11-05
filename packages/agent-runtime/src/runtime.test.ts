@@ -1,5 +1,5 @@
 import { type ModelProvider } from '@rka/model-provider';
-import { createInMemoryTaskRepository } from '@rka/storage';
+import { openStorage } from '@rka/storage';
 import { createToolRegistry, defineTool } from '@rka/tools';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -37,7 +37,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([]),
-      tasks: createInMemoryTaskRepository(),
+      tasks: openStorage({ path: ':memory:' }).tasks,
     });
     const controller = new AbortController();
     await expect(runtime.getModelHealth(controller.signal)).resolves.toMatchObject({
@@ -57,7 +57,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([tool]),
-      tasks: createInMemoryTaskRepository(),
+      tasks: openStorage({ path: ':memory:' }).tasks,
     });
     expect(runtime.listTools().map((t) => t.name)).toEqual(['noop']);
   });
@@ -66,7 +66,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([]),
-      tasks: createInMemoryTaskRepository(),
+      tasks: openStorage({ path: ':memory:' }).tasks,
     });
     const controller = new AbortController();
     const chunks = [];

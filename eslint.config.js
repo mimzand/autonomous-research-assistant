@@ -95,6 +95,13 @@ export default defineConfig(
     },
   },
 
+  // Build/maintenance scripts (Node, may log to the console).
+  {
+    files: ['**/scripts/**/*.{js,mjs}'],
+    languageOptions: { globals: globals.node },
+    rules: { 'no-console': 'off' },
+  },
+
   // Node-side code: config files, main process, preload, runtime packages.
   {
     files: [

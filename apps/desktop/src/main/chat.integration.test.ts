@@ -7,7 +7,7 @@ import { type AddressInfo } from 'node:net';
 import { createAgentRuntime } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
 import { type ChatEvent } from '@rka/shared';
-import { createInMemoryTaskRepository } from '@rka/storage';
+import { openStorage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ChatController, type ChatEventSink } from './chat.js';
@@ -50,7 +50,7 @@ function wire(host = `127.0.0.1:${port}`) {
   const runtime = createAgentRuntime({
     modelProvider: createOllamaProvider(loadOllamaConfig({ OLLAMA_HOST: host })),
     tools: createToolRegistry([]),
-    tasks: createInMemoryTaskRepository(),
+    tasks: openStorage({ path: ':memory:' }).tasks,
   });
   const events: ChatEvent[] = [];
   const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };

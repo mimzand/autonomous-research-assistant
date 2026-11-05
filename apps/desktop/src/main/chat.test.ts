@@ -1,7 +1,7 @@
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { ModelProviderError, type GenerateChunk } from '@rka/model-provider';
 import { type ChatEvent } from '@rka/shared';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ChatController, toChatError, type ChatEventSink } from './chat.js';
 
 const IDS = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
@@ -18,7 +18,10 @@ const done: GenerateChunk = {
 
 type StreamFn = AgentRuntime['streamChat'];
 
-function setup(streamChat: StreamFn) {
+function setup(
+  streamChat: StreamFn,
+  onUsage?: ConstructorParameters<typeof ChatController>[0]['onUsage'],
+) {
   const ids = [...IDS];
   const events: ChatEvent[] = [];
   let destroyed = false;
@@ -37,6 +40,7 @@ function setup(streamChat: StreamFn) {
       },
     },
     newId: () => ids.shift() ?? 'unexpected',
+    ...(onUsage && { onUsage }),
   });
   return { controller, sink, events, calls, destroy: () => (destroyed = true) };
 }
@@ -185,6 +189,56 @@ describe('ChatController', () => {
       code: 'invalid-request',
       message: 'The last message must be a non-empty user message.',
     });
+  });
+});
+
+describe('ChatController usage reporting', () => {
+  it('reports model and token usage once per completed reply', async () => {
+    const usages: unknown[] = [];
+    const { controller, sink } = setup(
+      async function* () {
+        yield { type: 'delta', content: 'Hi' };
+        yield done;
+      },
+      (usage) => usages.push(usage),
+    );
+    controller.start(sink, { messages: [user('Hi')] });
+    await controller.whenIdle();
+    expect(usages).toEqual([
+      {
+        model: 'qwen3:8b',
+        promptTokens: 5,
+        completionTokens: 2,
+        totalDurationMs: 120,
+        loadDurationMs: 0,
+      },
+    ]);
+  });
+
+  it('keeps the reply working if recording usage fails', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { controller, sink, events } = setup(
+      async function* () {
+        yield done;
+      },
+      () => {
+        throw new Error('disk full');
+      },
+    );
+    controller.start(sink, { messages: [user('Hi')] });
+    await controller.whenIdle();
+    expect(events.at(-1)?.type).toBe('done');
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('does not report usage for cancelled replies', async () => {
+    const usages: unknown[] = [];
+    const { controller, sink } = setup(endless, (usage) => usages.push(usage));
+    controller.start(sink, { messages: [user('go')] });
+    controller.stop({ streamId: IDS[0] });
+    await controller.whenIdle();
+    expect(usages).toEqual([]);
   });
 });
 

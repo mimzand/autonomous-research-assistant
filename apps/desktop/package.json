@@ -14,6 +14,9 @@
     "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
     "test": "vitest run"
   },
+  "dependencies": {
+    "better-sqlite3": "13.0.3"
+  },
   "devDependencies": {
     "@rka/agent-runtime": "workspace:*",
     "@rka/model-provider": "workspace:*",

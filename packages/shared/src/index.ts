@@ -6,12 +6,14 @@ export {
   type ModelUnavailableReason,
 } from './model.js';
 export {
-  TaskStatusSchema,
+  ApprovalStatusSchema,
+  StepStatusSchema,
   TaskIdSchema,
-  ResearchTaskSchema,
-  type TaskStatus,
+  TaskStatusSchema,
+  type ApprovalStatus,
+  type StepStatus,
   type TaskId,
-  type ResearchTask,
+  type TaskStatus,
 } from './domain.js';
 export {
   CHAT_MAX_MESSAGES,

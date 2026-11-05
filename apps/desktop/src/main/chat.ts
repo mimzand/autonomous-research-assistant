@@ -17,8 +17,19 @@ export interface ChatEventSink {
   send(event: ChatEvent): void;
 }
 
+/** Token usage of one finished chat reply. */
+export interface ChatUsage {
+  readonly model: string;
+  readonly promptTokens: number | null;
+  readonly completionTokens: number | null;
+  readonly totalDurationMs: number | null;
+  readonly loadDurationMs: number | null;
+}
+
 export interface ChatControllerDeps {
   readonly runtime: Pick<AgentRuntime, 'model' | 'streamChat'>;
+  /** Called once per completed reply (e.g. to persist model usage). Must not throw. */
+  readonly onUsage?: (usage: ChatUsage) => void;
   /** Injected for tests. */
   readonly newId?: () => string;
 }
@@ -87,6 +98,15 @@ export class ChatController {
     await this.active?.finished;
   }
 
+  private reportUsage(usage: ChatUsage): void {
+    try {
+      this.deps.onUsage?.(usage);
+    } catch (error) {
+      // Recording usage must never break the conversation.
+      console.error('Failed to record model usage:', error);
+    }
+  }
+
   private async run(
     sink: ChatEventSink,
     streamId: string,
@@ -111,6 +131,7 @@ export class ChatController {
         if (chunk.type === 'delta') {
           if (chunk.content) emit({ type: 'delta', streamId, content: chunk.content });
         } else {
+          this.reportUsage({ model: chunk.result.model, ...chunk.result.usage });
           emit({
             type: 'done',
             streamId,
