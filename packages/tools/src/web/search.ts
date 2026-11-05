@@ -21,10 +21,19 @@ export interface SearchResult {
   readonly publishedAt: string | null;
 }
 
+export interface SearchProviderHealth {
+  readonly provider: string;
+  /** Where the provider is reached (origin only, no credentials or query). */
+  readonly endpoint: string;
+  readonly latencyMs: number;
+}
+
 /** A web search backend. Implementations must return only fetchable public URLs. */
 export interface WebSearchProvider {
   readonly id: string;
   search(query: SearchQuery, options?: { signal?: AbortSignal }): Promise<SearchResult[]>;
+  /** Checks that the backend answers. Throws a WebError when it does not. */
+  checkHealth(options?: { signal?: AbortSignal }): Promise<SearchProviderHealth>;
 }
 
 export interface SearxngConfig {
@@ -67,8 +76,40 @@ export function createSearxngProvider(
   }
   const endpoint = new URL('search', base.href.endsWith('/') ? base.href : `${base.href}/`);
 
+  const healthz = new URL('healthz', endpoint);
+  const configUrl = new URL('config', endpoint);
+
   return {
     id: 'searxng',
+    async checkHealth(options = {}) {
+      const started = performance.now();
+      const get = (url: URL) =>
+        http.get(url.href, {
+          maxBytes: 256 * 1024,
+          ...(options.signal && { signal: options.signal }),
+        });
+      try {
+        await get(healthz);
+      } catch (error) {
+        // Older instances have no /healthz; /config answers on every version.
+        if (!(error instanceof WebError && error.code === 'http-error' && error.status === 404)) {
+          if (error instanceof WebError && error.code === 'network-error') {
+            throw new WebError(
+              'network-error',
+              `SearXNG at ${base.origin} is not reachable: ${error.message}`,
+            );
+          }
+          throw error;
+        }
+        await get(configUrl);
+      }
+      return {
+        provider: 'searxng',
+        endpoint: base.origin,
+        latencyMs: Math.round(performance.now() - started),
+      };
+    },
+
     async search(query, options = {}) {
       const url = new URL(endpoint);
       url.searchParams.set('q', query.query);

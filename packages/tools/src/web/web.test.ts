@@ -280,6 +280,7 @@ describe('duplicate detection', () => {
     text: 'The text of page A.',
     truncated: false,
     metadata: {},
+    timings: { downloadMs: 1, extractMs: 1 },
     ...over,
   });
   function fakeFetcher(docs: Record<string, FetchedDocument>) {

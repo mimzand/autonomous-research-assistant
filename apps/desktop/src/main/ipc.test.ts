@@ -1,12 +1,14 @@
 import { createAgentRuntime, type AgentRuntime } from '@rka/agent-runtime';
 import { type ModelProvider } from '@rka/model-provider';
 import { openStorage } from '@rka/storage';
-import { createToolRegistry } from '@rka/tools';
+import { createSourceStore } from '@rka/agent-runtime';
+import { createToolRegistry, createWebServices, loadWebConfig } from '@rka/tools';
 import { IpcChannels, IpcEvents, type AppInfo, type ModelHealth } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatController } from './chat.js';
 import { createDashboardService } from './dashboard.js';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
+import { createResearchToolsService } from './research-tools.js';
 
 type Listener = (event: InvokeEventLike, ...args: unknown[]) => unknown;
 
@@ -56,11 +58,23 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
     versions: { electron: '45.2.2', chrome: '1', node: '24' },
   };
 
+  const webConfig = loadWebConfig({});
+  const researchTools = createResearchToolsService({
+    config: webConfig,
+    services: createWebServices(webConfig),
+    tools: createToolRegistry([]),
+    storage,
+    sourceStore: createSourceStore(storage),
+    chooseFile: async () => null,
+    openExternal: async () => undefined,
+  });
+
   const chat = new ChatController({ runtime, newId: () => STREAM_ID });
   registerIpcHandlers(ipc, {
     runtime,
     chat,
     dashboard,
+    researchTools,
     getAppInfo: () => (overrides.appInfo ?? appInfo) as AppInfo,
     isTrustedSender: (url) => url.startsWith('file://'),
   });

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { type ToolDefinition } from '../tool.js';
-import { createWebFetcher } from './fetcher.js';
+import { createWebFetcher, type WebFetcher } from './fetcher.js';
 import { createSafeHttpClient } from './http-client.js';
-import { createSearxngProvider } from './search.js';
+import { createSearxngProvider, type WebSearchProvider } from './search.js';
 import { type SourceStore } from './sources.js';
 import { createWebTools } from './tools.js';
 
@@ -41,12 +41,18 @@ export function loadWebConfig(env: WebEnv): WebConfig {
   });
 }
 
+export interface WebServices {
+  readonly fetcher: WebFetcher;
+  /** Undefined when SEARXNG_URL is not set. */
+  readonly searchProvider?: WebSearchProvider;
+}
+
 /**
- * Builds the web tools. Search and page fetching use SEPARATE HTTP clients:
+ * Builds the fetcher and search provider. They use SEPARATE HTTP clients:
  * only the search client may reach the (usually local) SearXNG instance, so
- * fetch_source can never be pointed at it or at any other private address.
+ * the fetcher can never be pointed at it or at any other private address.
  */
-export function createWebToolsFromConfig(config: WebConfig, store: SourceStore): ToolDefinition[] {
+export function createWebServices(config: WebConfig): WebServices {
   const fetchClient = createSafeHttpClient({
     timeoutMs: config.fetchTimeoutMs,
     maxBytes: config.maxDownloadBytes,
@@ -61,9 +67,14 @@ export function createWebToolsFromConfig(config: WebConfig, store: SourceStore):
         }),
       )
     : undefined;
-  return createWebTools({
-    fetcher: createWebFetcher(fetchClient),
-    store,
-    ...(searchProvider && { searchProvider }),
-  });
+  return { fetcher: createWebFetcher(fetchClient), ...(searchProvider && { searchProvider }) };
+}
+
+/** Builds the web tools from configuration (see createWebServices). */
+export function createWebToolsFromConfig(
+  config: WebConfig,
+  store: SourceStore,
+  services: WebServices = createWebServices(config),
+): ToolDefinition[] {
+  return createWebTools({ ...services, store });
 }

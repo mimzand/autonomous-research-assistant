@@ -26,6 +26,8 @@ export interface FetchedDocument {
   readonly title: string | null;
   readonly text: string;
   readonly truncated: boolean;
+  /** Time spent downloading (incl. redirects) and extracting, in ms. */
+  readonly timings: { readonly downloadMs: number; readonly extractMs: number };
   readonly metadata: {
     readonly description?: string;
     readonly lang?: string;
@@ -93,6 +95,84 @@ export function detectKind(mimeType: string, bytes: Uint8Array): DocumentKind {
   );
 }
 
+export interface ExtractedDocument {
+  readonly kind: DocumentKind;
+  readonly title: string | null;
+  readonly text: string;
+  readonly truncated: boolean;
+  readonly metadata: FetchedDocument['metadata'];
+}
+
+export interface ExtractOptions {
+  /** Charset from the HTTP Content-Type, if any. */
+  readonly charset?: string;
+  /** Page URL, used to resolve relative links in HTML. */
+  readonly baseUrl?: string;
+  readonly maxTextChars?: number;
+  readonly maxPdfPages?: number;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Turns downloaded or user-selected bytes into text. In memory only: nothing
+ * is written to disk, executed, or handed to another program.
+ */
+export async function extractDocument(
+  kind: DocumentKind,
+  bytes: Uint8Array,
+  options: ExtractOptions = {},
+): Promise<ExtractedDocument> {
+  const maxTextChars = options.maxTextChars ?? 1_000_000;
+  let title: string | null = null;
+  let text: string;
+  let metadata: FetchedDocument['metadata'] = {};
+  if (kind === 'html') {
+    const html = extractHtml(decodeText(bytes, options.charset, true), options.baseUrl);
+    title = html.title;
+    text = html.text;
+    metadata = {
+      ...(html.description && { description: html.description }),
+      ...(html.lang && { lang: html.lang }),
+      ...(html.author && { author: html.author }),
+      ...(html.publishedAt && { publishedAt: html.publishedAt }),
+      ...(html.siteName && { siteName: html.siteName }),
+      ...(html.canonicalUrl && { declaredCanonicalUrl: html.canonicalUrl }),
+    };
+  } else if (kind === 'pdf') {
+    const pdf = await extractPdf(bytes, {
+      maxPages: options.maxPdfPages ?? 300,
+      maxChars: maxTextChars,
+      ...(options.signal && { signal: options.signal }),
+    });
+    title = pdf.title;
+    text = pdf.text;
+    metadata = {
+      ...(pdf.author && { author: pdf.author }),
+      ...(pdf.createdAt && { publishedAt: pdf.createdAt }),
+      pages: pdf.totalPages,
+      extractedPages: pdf.extractedPages,
+    };
+  } else if (kind === 'docx') {
+    const docx = extractDocx(bytes);
+    title = docx.title;
+    text = docx.text;
+    metadata = {
+      ...(docx.author && { author: docx.author }),
+      ...(docx.createdAt && { publishedAt: docx.createdAt }),
+    };
+  } else {
+    text = decodeText(bytes, options.charset).replace(/\r\n?/g, '\n').trim();
+  }
+  const limited = truncate(text, maxTextChars);
+  return {
+    kind,
+    title,
+    text: limited.text,
+    truncated: limited.truncated || (metadata.extractedPages ?? 0) < (metadata.pages ?? 0),
+    metadata,
+  };
+}
+
 /**
  * Fetches a URL through the SSRF-safe client and extracts its text. Nothing is
  * written to disk and nothing downloaded is ever executed or opened by another
@@ -102,7 +182,6 @@ export function createWebFetcher(
   http: SafeHttpClient,
   options: WebFetcherOptions = {},
 ): WebFetcher {
-  const maxTextChars = options.maxTextChars ?? 1_000_000;
   const now = options.now ?? (() => new Date());
 
   return {
@@ -110,55 +189,22 @@ export function createWebFetcher(
       const checked = parsePublicUrl(rawUrl);
       if (!checked.ok) throw new WebError('blocked-url', checked.error.message);
 
+      const started = performance.now();
       const res = await http.get(checked.value.href, {
         accept: ACCEPT,
         ...(fetchOptions.signal && { signal: fetchOptions.signal }),
       });
+      const downloaded = performance.now();
       const { mimeType, charset } = parseContentType(res.contentType);
       const kind = detectKind(mimeType, res.body);
+      const extracted = await extractDocument(kind, res.body, {
+        baseUrl: res.finalUrl,
+        ...(charset && { charset }),
+        ...(options.maxTextChars !== undefined && { maxTextChars: options.maxTextChars }),
+        ...(options.maxPdfPages !== undefined && { maxPdfPages: options.maxPdfPages }),
+        ...(fetchOptions.signal && { signal: fetchOptions.signal }),
+      });
 
-      let title: string | null = null;
-      let text: string;
-      let metadata: FetchedDocument['metadata'] = {};
-      if (kind === 'html') {
-        const html = extractHtml(decodeText(res.body, charset, true), res.finalUrl);
-        title = html.title;
-        text = html.text;
-        metadata = {
-          ...(html.description && { description: html.description }),
-          ...(html.lang && { lang: html.lang }),
-          ...(html.author && { author: html.author }),
-          ...(html.publishedAt && { publishedAt: html.publishedAt }),
-          ...(html.siteName && { siteName: html.siteName }),
-          ...(html.canonicalUrl && { declaredCanonicalUrl: html.canonicalUrl }),
-        };
-      } else if (kind === 'pdf') {
-        const pdf = await extractPdf(res.body, {
-          maxPages: options.maxPdfPages ?? 300,
-          maxChars: maxTextChars,
-          ...(fetchOptions.signal && { signal: fetchOptions.signal }),
-        });
-        title = pdf.title;
-        text = pdf.text;
-        metadata = {
-          ...(pdf.author && { author: pdf.author }),
-          ...(pdf.createdAt && { publishedAt: pdf.createdAt }),
-          pages: pdf.totalPages,
-          extractedPages: pdf.extractedPages,
-        };
-      } else if (kind === 'docx') {
-        const docx = extractDocx(res.body);
-        title = docx.title;
-        text = docx.text;
-        metadata = {
-          ...(docx.author && { author: docx.author }),
-          ...(docx.createdAt && { publishedAt: docx.createdAt }),
-        };
-      } else {
-        text = decodeText(res.body, charset).replace(/\r\n?/g, '\n').trim();
-      }
-
-      const limited = truncate(text, maxTextChars);
       return {
         requestedUrl: res.requestedUrl,
         finalUrl: res.finalUrl,
@@ -170,10 +216,14 @@ export function createWebFetcher(
         byteLength: res.body.length,
         sha256: createHash('sha256').update(res.body).digest('hex'),
         retrievedAt: now().toISOString(),
-        title,
-        text: limited.text,
-        truncated: limited.truncated || (metadata.extractedPages ?? 0) < (metadata.pages ?? 0),
-        metadata,
+        title: extracted.title,
+        text: extracted.text,
+        truncated: extracted.truncated,
+        metadata: extracted.metadata,
+        timings: {
+          downloadMs: Math.round(downloaded - started),
+          extractMs: Math.round(performance.now() - downloaded),
+        },
       };
     },
   };

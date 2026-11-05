@@ -1,14 +1,20 @@
 import { join } from 'node:path';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
-import { createToolRegistry, createWebToolsFromConfig, loadWebConfig } from '@rka/tools';
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from 'electron';
+import {
+  createToolRegistry,
+  createWebServices,
+  createWebToolsFromConfig,
+  loadWebConfig,
+} from '@rka/tools';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
 import { createDashboardService } from './dashboard.js';
 import { backupDialogOptions } from './backup-dialog.js';
 import { loadDevEnvFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
+import { createResearchToolsService } from './research-tools.js';
 import { isAppUrl } from './security.js';
 import { createMainWindow } from './window.js';
 
@@ -43,7 +49,9 @@ function bootstrap(): void {
 
   // Web research tools. fetch_source can only reach public addresses; web_search
   // is offered only when SEARXNG_URL points at a SearXNG instance.
-  const tools = createToolRegistry(createWebToolsFromConfig(webConfig, createSourceStore(storage)));
+  const webServices = createWebServices(webConfig);
+  const sourceStore = createSourceStore(storage);
+  const tools = createToolRegistry(createWebToolsFromConfig(webConfig, sourceStore, webServices));
   if (!webConfig.searxngUrl) {
     console.info('Web search is off: set SEARXNG_URL to a SearXNG instance to enable it.');
   }
@@ -67,10 +75,34 @@ function bootstrap(): void {
     },
   });
 
+  const focusedWindow = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const researchTools = createResearchToolsService({
+    config: webConfig,
+    services: webServices,
+    tools,
+    storage,
+    sourceStore,
+    chooseFile: async () => {
+      // The only way a local file reaches the tools: the user picks it here.
+      const options: Electron.OpenDialogOptions = {
+        title: 'Choose a PDF or Word document',
+        properties: ['openFile'],
+        filters: [{ name: 'PDF or Word documents', extensions: ['pdf', 'docx'] }],
+      };
+      const parent = focusedWindow();
+      const result = parent
+        ? await dialog.showOpenDialog(parent, options)
+        : await dialog.showOpenDialog(options);
+      return result.canceled ? null : (result.filePaths[0] ?? null);
+    },
+    openExternal: (url) => shell.openExternal(url),
+  });
+
   registerIpcHandlers(ipcMain, {
     runtime,
     chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
     dashboard,
+    researchTools,
     isTrustedSender: (url) => isAppUrl(url, devServerUrl),
     getAppInfo: () => ({
       name: app.getName(),

@@ -225,6 +225,32 @@ Tools never receive the registry, so a tool cannot call another tool.
   fetched again. After fetching, the final URL, every redirect hop and the text's SHA-256 are
   checked, so a mirror or http/https copy of a saved page is reported as a duplicate.
 
+### Research Tools page
+
+**Research Tools** in the sidebar runs the agent's tools by hand, before the agent exists:
+
+- **Web Search**
+  - Shows the SearXNG status (ready, unavailable or not configured).
+  - Runs the real `web_search` tool and lists results with position, title, URL and snippet,
+    plus the time taken.
+  - Each result can be opened in the default browser, or fetched straight into the next tab.
+- **Web Fetch & Extraction**
+  - Uses the same SSRF-protected fetcher as `fetch_source`.
+  - Shows the HTTP status, content type, title, sizes, SHA-256 hashes, download and
+    extraction times, metadata, and the extracted text (as plain text, marked untrusted).
+  - **Save as test source** stores the page in the _Research tools playground_ task, with
+    duplicate detection. Nothing is saved otherwise.
+- **Local File Extraction**
+  - Choose a PDF or DOCX in a native dialog. The main process reads it into memory and
+    extracts it; it is never saved, and the page only sees the file name and size.
+  - The file must match its extension (a renamed executable is refused), and the
+    `WEB_MAX_DOWNLOAD_BYTES` limit applies.
+
+The page reaches these tools only through nine fixed IPC calls, and every request and
+response is validated with Zod. There is no generic fetch, and file paths never come from
+the renderer. Only URLs that came from a search result or fetch can be opened in the
+browser. Pending requests can be cancelled.
+
 ### Web security
 
 - **Protocols:** only `http`/`https`. No credentials in URLs; ports 80, 443, 8080 and 8443 only.

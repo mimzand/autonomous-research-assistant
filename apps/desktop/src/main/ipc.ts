@@ -9,6 +9,7 @@ import {
 } from '@rka/shared';
 import { type ChatController } from './chat.js';
 import { type DashboardService } from './dashboard.js';
+import { type ResearchToolsService } from './research-tools.js';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
 export interface SenderLike {
@@ -33,6 +34,7 @@ export interface IpcDeps {
   readonly runtime: AgentRuntime;
   readonly chat: ChatController;
   readonly dashboard: DashboardService;
+  readonly researchTools: ResearchToolsService;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
 }
@@ -113,6 +115,20 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
     [IpcChannels.storageIntegrityCheck]: () => dashboard.integrityCheck(),
     [IpcChannels.storageBackup]: () => dashboard.backup(),
   };
+  // Research Tools playground: fixed operations only (no generic fetch). Each
+  // method validates its payload with Zod and its response against the contract.
+  const { researchTools } = deps;
+  Object.assign(routes, {
+    [IpcChannels.researchStatus]: () => researchTools.status(),
+    [IpcChannels.researchCheckSearch]: () => researchTools.checkSearch(),
+    [IpcChannels.researchSearch]: (p: unknown) => researchTools.search(p),
+    [IpcChannels.researchFetch]: (p: unknown) => researchTools.fetch(p),
+    [IpcChannels.researchPickFile]: () => researchTools.pickFile(),
+    [IpcChannels.researchExtractFile]: (p: unknown) => researchTools.extractFile(p),
+    [IpcChannels.researchSaveSource]: (p: unknown) => researchTools.saveSource(p),
+    [IpcChannels.researchOpenUrl]: (p: unknown) => researchTools.openUrl(p),
+    [IpcChannels.researchCancel]: (p: unknown) => researchTools.cancel(p),
+  });
   for (const [channel, handler] of Object.entries(routes)) {
     ipc.handle(
       channel,

@@ -110,3 +110,28 @@ describe('renderMarkdown', () => {
     expect(html).toContain('[image: chart]');
   });
 });
+
+describe('research tools helpers', () => {
+  it('explains error codes and falls back for unknown ones', async () => {
+    const { describeError } = await import('./research');
+    expect(describeError({ code: 'blocked-url', message: 'x' }).hint).toMatch(/Localhost, private/);
+    expect(describeError({ code: 'too-large', message: 'x' }).title).toBe('Too large');
+    expect(describeError({ code: 'something-new', message: 'x' })).toEqual({
+      title: 'Failed',
+      hint: '',
+    });
+  });
+
+  it('creates unique request ids and formats durations', async () => {
+    const { formatMs, newRequestId, resultSummary } = await import('./research');
+    const ids = new Set(Array.from({ length: 100 }, () => newRequestId()));
+    expect(ids.size).toBe(100);
+    expect([...ids].every((id) => id.length <= 100)).toBe(true);
+    expect(formatMs(412)).toBe('412 ms');
+    expect(formatMs(1534)).toBe('1.53 s');
+    expect(formatMs(12_345)).toBe('12.3 s');
+    expect(formatMs(null)).toBe('—');
+    expect(resultSummary(1, 20)).toBe('1 result · 20 ms');
+    expect(resultSummary(3, 20)).toBe('3 results · 20 ms');
+  });
+});

@@ -32,12 +32,16 @@ export { extractDocx, type DocxExtraction } from './web/extract/docx.js';
 export {
   createWebFetcher,
   detectKind,
+  extractDocument,
+  type ExtractedDocument,
+  type ExtractOptions,
   type DocumentKind,
   type FetchedDocument,
   type WebFetcher,
 } from './web/fetcher.js';
 export {
   createSearxngProvider,
+  type SearchProviderHealth,
   type SearchQuery,
   type SearchResult,
   type SearxngConfig,
@@ -46,6 +50,7 @@ export {
 export {
   findDuplicate,
   textSha256,
+  toSourceToSave,
   type DuplicateMatch,
   type SourceMetadata,
   type SourceStore,
@@ -63,8 +68,20 @@ export {
   type WebToolDeps,
 } from './web/tools.js';
 export {
+  createWebServices,
   createWebToolsFromConfig,
   loadWebConfig,
+  type WebServices,
   type WebConfig,
   type WebEnv,
 } from './web/config.js';
+export {
+  detectLocalKind,
+  extractLocalDocument,
+  fileExtension,
+  LOCAL_DOCUMENT_TYPES,
+  type LocalDocumentKind,
+  type LocalExtraction,
+} from './web/local-files.js';
+/** Test helpers: build small, valid PDF/DOCX files in memory (used by app tests). */
+export { buildDocx, buildPdf, paragraph } from './web/extract/test-documents.js';

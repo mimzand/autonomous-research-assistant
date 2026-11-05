@@ -23,6 +23,7 @@ const page = (url: string, text: string): FetchedDocument => ({
   text,
   truncated: false,
   metadata: { lang: 'en', description: 'About heat pumps' },
+  timings: { downloadMs: 1, extractMs: 1 },
 });
 
 function setup() {

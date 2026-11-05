@@ -17,6 +17,17 @@ import {
   type TaskStatusCounts,
 } from './dashboard.js';
 import { type ModelHealth } from './model.js';
+import {
+  type ExtractionResult,
+  type OpenUrlResult,
+  type PickFileResult,
+  type ResearchToolsStatus,
+  type SaveTestSourceResult,
+  type SearchHealth,
+  type ToolFetchRequest,
+  type ToolSearchRequest,
+  type ToolSearchResult,
+} from './research-tools.js';
 
 /**
  * IPC contract between the Electron main process and the preload bridge.
@@ -40,6 +51,15 @@ export const IpcChannels = {
   storageStatus: 'storage:status',
   storageIntegrityCheck: 'storage:integrity-check',
   storageBackup: 'storage:backup',
+  researchStatus: 'research:status',
+  researchCheckSearch: 'research:check-search',
+  researchSearch: 'research:search',
+  researchFetch: 'research:fetch',
+  researchPickFile: 'research:pick-file',
+  researchExtractFile: 'research:extract-file',
+  researchSaveSource: 'research:save-source',
+  researchOpenUrl: 'research:open-url',
+  researchCancel: 'research:cancel',
 } as const;
 
 /** Main → renderer push channels (not invokable). */
@@ -92,6 +112,23 @@ export interface StorageApi {
   backup(): Promise<BackupResult>;
 }
 
+/** Research Tools playground: runs the agent's research tools by hand. */
+export interface ResearchToolsApi {
+  status(): Promise<ResearchToolsStatus>;
+  checkSearch(): Promise<SearchHealth>;
+  search(request: ToolSearchRequest): Promise<ToolSearchResult>;
+  /** Fetches a public URL through the SSRF-protected fetcher and extracts its text. */
+  fetchUrl(request: ToolFetchRequest): Promise<ExtractionResult>;
+  /** Opens a native file dialog (PDF/DOCX). The path stays in the main process. */
+  pickFile(): Promise<PickFileResult>;
+  extractFile(request: { requestId: string; token: string }): Promise<ExtractionResult>;
+  /** Saves a fetched web page as a source of the "Research tools playground" task. */
+  saveSource(resultId: string): Promise<SaveTestSourceResult>;
+  /** Opens a URL from a search result or fetch in the default browser. */
+  openUrl(url: string): Promise<OpenUrlResult>;
+  cancel(requestId: string): Promise<void>;
+}
+
 export interface RendererApi {
   getAppInfo(): Promise<AppInfo>;
   getModelHealth(): Promise<ModelHealth>;
@@ -100,6 +137,7 @@ export interface RendererApi {
   readonly knowledge: KnowledgeApi;
   readonly reports: ReportsApi;
   readonly storage: StorageApi;
+  readonly researchTools: ResearchToolsApi;
 }
 
 /** Name of the global the preload script exposes in the renderer. */

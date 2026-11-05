@@ -18,6 +18,8 @@ const ICONS: Record<Section, string> = {
   reports: 'M6 3h12v18H6zM9 8h6M9 12h6M9 16h4',
   storage:
     'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  'research-tools':
+    'M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1z',
 };
 
 const badge = (section: Section): { text: string; tone: string } | null => {

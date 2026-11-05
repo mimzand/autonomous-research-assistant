@@ -6,6 +6,7 @@ import { useNavigation } from './composables/useNavigation';
 import ChatPage from './pages/ChatPage.vue';
 import KnowledgePage from './pages/KnowledgePage.vue';
 import ReportsPage from './pages/ReportsPage.vue';
+import ResearchToolsPage from './pages/ResearchToolsPage.vue';
 import StoragePage from './pages/StoragePage.vue';
 import TaskDetailPage from './pages/TaskDetailPage.vue';
 import TasksPage from './pages/TasksPage.vue';
@@ -28,7 +29,7 @@ onMounted(async () => {
     <main class="content" :data-section="nav.section.value">
       <!-- Chat stays mounted so an ongoing conversation or stream survives navigation. -->
       <ChatPage v-show="nav.section.value === 'chat'" />
-      <KeepAlive :max="6">
+      <KeepAlive :max="7">
         <TaskDetailPage
           v-if="nav.section.value === 'tasks' && nav.taskId.value"
           :key="`task-${nav.taskId.value}`"
@@ -38,6 +39,10 @@ onMounted(async () => {
         <KnowledgePage v-else-if="nav.section.value === 'knowledge'" key="knowledge" />
         <ReportsPage v-else-if="nav.section.value === 'reports'" key="reports" />
         <StoragePage v-else-if="nav.section.value === 'storage'" key="storage" />
+        <ResearchToolsPage
+          v-else-if="nav.section.value === 'research-tools'"
+          key="research-tools"
+        />
       </KeepAlive>
     </main>
   </div>

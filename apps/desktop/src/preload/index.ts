@@ -3,13 +3,19 @@ import {
   BackupResultSchema,
   ChatEventSchema,
   ChatStartResultSchema,
+  ExtractionResultSchema,
   IntegrityCheckResultSchema,
   IpcChannels,
   IpcEvents,
   ModelHealthSchema,
+  OpenUrlResultSchema,
+  PickFileResultSchema,
   RENDERER_API_KEY,
   ReportDetailsSchema,
   ReportListResultSchema,
+  ResearchToolsStatusSchema,
+  SaveTestSourceResultSchema,
+  SearchHealthSchema,
   SourceDetailsSchema,
   SourceListResultSchema,
   StorageStatusSchema,
@@ -17,11 +23,13 @@ import {
   TaskDetailsSchema,
   TaskListResultSchema,
   TaskStatusCountsSchema,
+  ToolSearchResultSchema,
   type ChatApi,
   type ChatEvent,
   type KnowledgeApi,
   type RendererApi,
   type ReportsApi,
+  type ResearchToolsApi,
   type StorageApi,
   type TasksApi,
 } from '@rka/shared';
@@ -88,6 +96,21 @@ const storage: StorageApi = {
   backup: () => call(BackupResultSchema, IpcChannels.storageBackup),
 };
 
+const researchTools: ResearchToolsApi = {
+  status: () => call(ResearchToolsStatusSchema, IpcChannels.researchStatus),
+  checkSearch: () => call(SearchHealthSchema, IpcChannels.researchCheckSearch),
+  search: (request) => call(ToolSearchResultSchema, IpcChannels.researchSearch, request),
+  fetchUrl: (request) => call(ExtractionResultSchema, IpcChannels.researchFetch, request),
+  pickFile: () => call(PickFileResultSchema, IpcChannels.researchPickFile),
+  extractFile: (request) => call(ExtractionResultSchema, IpcChannels.researchExtractFile, request),
+  saveSource: (resultId) =>
+    call(SaveTestSourceResultSchema, IpcChannels.researchSaveSource, { resultId }),
+  openUrl: (url) => call(OpenUrlResultSchema, IpcChannels.researchOpenUrl, { url }),
+  cancel: async (requestId) => {
+    await ipcRenderer.invoke(IpcChannels.researchCancel, { requestId });
+  },
+};
+
 const api: RendererApi = {
   getAppInfo: () => call(AppInfoSchema, IpcChannels.appGetInfo),
   getModelHealth: () => call(ModelHealthSchema, IpcChannels.modelGetHealth),
@@ -96,6 +119,7 @@ const api: RendererApi = {
   knowledge: Object.freeze(knowledge),
   reports: Object.freeze(reports),
   storage: Object.freeze(storage),
+  researchTools: Object.freeze(researchTools),
 };
 
 contextBridge.exposeInMainWorld(RENDERER_API_KEY, Object.freeze(api));
