@@ -75,16 +75,19 @@ One execution step of a task. Steps are persisted as they run, so work survives 
 ### `sources`
 
 A web source collected for a task. Unique per `(task_id, url)`: adding the same URL again updates it.
+The web tools store the **canonical** URL (see `canonicalizeUrl` in `@rka/tools`), so trivially
+different URLs of one page collide here. Duplicate checks use `sources.findByUrl(taskId, url)` and
+`sources.findByContentHash(taskId, sha256)`, which compares the hash in `source_contents`.
 
-| Column                     | Type                 | Notes                                 |
-| -------------------------- | -------------------- | ------------------------------------- |
-| `id`                       | text PK              |                                       |
-| `task_id`                  | text FK → `tasks.id` | cascade                               |
-| `url`                      | text                 | `http(s)` only, ≤ 2048 chars          |
-| `title`                    | text                 |                                       |
-| `retrieved_at`             | text                 | When the page was fetched             |
-| `metadata`                 | JSON                 | e.g. language, author, published date |
-| `created_at`, `updated_at` | text                 |                                       |
+| Column                     | Type                 | Notes                                                                                                                                                                                                                                                 |
+| -------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                       | text PK              |                                                                                                                                                                                                                                                       |
+| `task_id`                  | text FK → `tasks.id` | cascade                                                                                                                                                                                                                                               |
+| `url`                      | text                 | `http(s)` only, ≤ 2048 chars                                                                                                                                                                                                                          |
+| `title`                    | text                 |                                                                                                                                                                                                                                                       |
+| `retrieved_at`             | text                 | When the page was fetched                                                                                                                                                                                                                             |
+| `metadata`                 | JSON                 | From `fetch_source`: `requestedUrl`, `finalUrl`, `redirects`, `httpStatus`, `kind`, `contentType`, `byteLength`, `rawSha256`, `truncated`, and when known `description`, `lang`, `author`, `publishedAt`, `siteName`, `declaredCanonicalUrl`, `pages` |
+| `created_at`, `updated_at` | text                 |                                                                                                                                                                                                                                                       |
 
 ### `source_contents`
 

@@ -51,8 +51,15 @@ describe('createAgentRuntime', () => {
       name: 'noop',
       description: 'Does nothing.',
       inputSchema: z.object({}),
-      requiresApproval: false,
-      execute: async () => undefined,
+      outputSchema: z.null(),
+      timeoutMs: 1000,
+      permissions: {
+        network: 'none',
+        filesystem: 'none',
+        effects: 'read-only',
+        requiresApproval: false,
+      },
+      execute: async () => null,
     });
     const runtime = createAgentRuntime({
       modelProvider,

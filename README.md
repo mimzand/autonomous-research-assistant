@@ -63,7 +63,7 @@ apps/
 packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
-  tools/                  @rka/tools          Tool contract + validated registry
+  tools/                  @rka/tools          Tool contract + registry, web research tools
   storage/                @rka/storage        SQLite (better-sqlite3 + Drizzle): migrations, repositories, recovery
   agent-runtime/          @rka/agent-runtime  Composition root for the agent (no loop yet)
 ```
@@ -190,6 +190,74 @@ pages/*.vue → window.api.{tasks,knowledge,reports,storage} (preload, response 
 
 Chat history is **not** persisted yet. It lives in the window for the session only.
 
+## Web research tools
+
+`@rka/tools` defines the tool contract and the first two research tools. Every tool declares:
+
+- a name and a description
+- an input schema and an output schema (Zod; both are also sent to the model as JSON Schema)
+- a timeout and permissions: network, filesystem, effects, and whether approval is required
+
+`registry.execute()` handles every call:
+
+1. Validates the input.
+2. Refuses tools that need approval unless an approval is given.
+3. Enforces the timeout, even if a tool ignores its abort signal.
+4. Validates the output.
+
+Tools never receive the registry, so a tool cannot call another tool.
+
+| Tool           | Network                | Effects                    | Timeout |
+| -------------- | ---------------------- | -------------------------- | ------- |
+| `web_search`   | the configured SearXNG | read-only                  | 30 s    |
+| `fetch_source` | public web only        | saves a source of the task | 60 s    |
+
+- **Search:** `WebSearchProvider` is an interface with one implementation: [SearXNG](https://docs.searxng.org),
+  a free, self-hosted metasearch engine that needs no API key. Set `SEARXNG_URL` (see `.env.example`).
+  Without it, `web_search` is not offered.
+- **Fetching:** `fetch_source` downloads a page, extracts its text and stores it with its metadata
+  in SQLite. It returns the source id and a 1,500-character excerpt; the full text stays in the
+  Knowledge Base.
+  - Supported formats: HTML (htmlparser2), PDF (pdf.js via unpdf), DOCX (fflate + XML) and plain text.
+  - Images, executables, archives, scripts and other types are refused.
+- **Duplicates:** URLs are canonicalised before they are stored: lower-case host, no default port,
+  no fragment, no tracking parameters, sorted query. A URL already saved for the task is not
+  fetched again. After fetching, the final URL, every redirect hop and the text's SHA-256 are
+  checked, so a mirror or http/https copy of a saved page is reported as a duplicate.
+
+### Web security
+
+- **Protocols:** only `http`/`https`. No credentials in URLs; ports 80, 443, 8080 and 8443 only.
+- **SSRF:** localhost and internal names are refused, including `*.local`, `*.internal`,
+  `metadata.google.internal` and single-label names. Every DNS answer is checked; if **any**
+  address is loopback, private, link-local, CGNAT, multicast, reserved, or a cloud metadata
+  address (169.254.169.254, fd00:ec2::254, 100.100.100.200, 168.63.129.16), the request is
+  refused. The same applies to IPv4 addresses embedded in IPv6 (mapped, NAT64, 6to4, Teredo),
+  and to decimal, hex, octal and short IP notations.
+- **DNS rebinding:** the socket connects to the IP address that was validated. TLS still
+  verifies the certificate against the original host name.
+- **Redirects:** followed manually (at most 5), and every hop is validated again. Downgrades
+  from https to http are refused.
+- **Limits:**
+  - A deadline for each request.
+  - Download size limit, applied to the declared length, while streaming, and after
+    decompression (so gzip bombs stop at the limit).
+  - Per-part ZIP size limit for DOCX.
+  - Page and character limits for PDF.
+- **Nothing downloaded is executed or saved as a file.** Parsing happens in memory.
+  - HTML scripts, styles and iframes are dropped, never run.
+  - pdf.js runs with scripting and XFA off, in a build with no eval.
+  - DOCX macros and external links are never read.
+- **Untrusted content:**
+  - Page text is returned as data and marked `untrusted: true`.
+  - Hidden HTML text (a common prompt-injection carrier) is dropped, and invisible Unicode
+    control characters are stripped.
+  - `wrapUntrusted()` fences text for prompts.
+  - Tool calls only come from the model's structured output, never from page text.
+- **Local files:** no tool takes a file path. Only the user-configured SearXNG origin may be
+  private, and only the search client can reach it; `fetch_source` cannot.
+- **Proxies:** connections are direct, so an HTTP proxy is not used.
+
 ## Security model
 
 - Renderer runs with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,
@@ -208,12 +276,17 @@ Settings come from environment variables. In development the app also reads `.en
 (from `apps/desktop/` or the repository root); real environment variables take
 precedence. See `.env.example`:
 
-| Variable                    | Default           | Notes                             |
-| --------------------------- | ----------------- | --------------------------------- |
-| `OLLAMA_HOST`               | `127.0.0.1:11434` | Same variable the Ollama CLI uses |
-| `OLLAMA_MODEL`              | `qwen3:8b`        | Must support tool calling         |
-| `OLLAMA_NUM_CTX`            | `4096`            | Larger values use more VRAM       |
-| `OLLAMA_REQUEST_TIMEOUT_MS` | `5000`            | Health check timeout              |
+| Variable                    | Default           | Notes                                       |
+| --------------------------- | ----------------- | ------------------------------------------- |
+| `OLLAMA_HOST`               | `127.0.0.1:11434` | Same variable the Ollama CLI uses           |
+| `OLLAMA_MODEL`              | `qwen3:8b`        | Must support tool calling                   |
+| `OLLAMA_NUM_CTX`            | `4096`            | Larger values use more VRAM                 |
+| `OLLAMA_REQUEST_TIMEOUT_MS` | `5000`            | Health check timeout                        |
+| `SEARXNG_URL`               | (empty)           | SearXNG base URL; empty disables web search |
+| `SEARXNG_SAFESEARCH`        | `1`               | 0 off, 1 moderate, 2 strict                 |
+| `WEB_FETCH_TIMEOUT_MS`      | `20000`           | Deadline per page download                  |
+| `WEB_SEARCH_TIMEOUT_MS`     | `15000`           | Deadline per search                         |
+| `WEB_MAX_DOWNLOAD_BYTES`    | `15728640`        | Larger downloads are refused                |
 
 No API keys are required or supported.
 
@@ -225,6 +298,9 @@ default. The app defaults to `127.0.0.1`.
 
 **"Model not installed".** Run `ollama pull qwen3:8b`, or set `OLLAMA_MODEL` to an
 installed model that supports tools (`ollama show <model>` lists capabilities).
+
+**Web search fails with 403.** SearXNG only serves HTML by default. Add `json` to
+`search.formats` in its `settings.yml` and restart it.
 
 **`ERR_PNPM_IGNORED_BUILDS`.** pnpm 11 blocks dependency build scripts by default.
 Only `electron` is allowed, in `pnpm-workspace.yaml`.

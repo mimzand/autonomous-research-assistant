@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Executor, type StorageContext } from '../context.js';
 import { StorageError } from '../errors.js';
@@ -104,6 +104,27 @@ export function createSourceRepository(db: Executor, ctx: StorageContext) {
           .returning()
           .get(),
       );
+    },
+
+    /** The task's source with exactly this URL (callers pass the canonical form). */
+    findByUrl(taskId: string, url: string): SourceRecord | undefined {
+      return db
+        .select()
+        .from(sources)
+        .where(and(eq(sources.taskId, taskId), eq(sources.url, url)))
+        .get();
+    },
+
+    /** The task's source whose stored text has this SHA-256 (duplicate content). */
+    findByContentHash(taskId: string, sha256: string): SourceRecord | undefined {
+      const row = db
+        .select({ source: sources })
+        .from(sources)
+        .innerJoin(sourceContents, eq(sourceContents.sourceId, sources.id))
+        .where(and(eq(sources.taskId, taskId), eq(sourceContents.sha256, sha256.toLowerCase())))
+        .orderBy(asc(sources.createdAt), asc(sources.id))
+        .get();
+      return row?.source;
     },
 
     getContent(sourceId: string): SourceContentRecord | undefined {

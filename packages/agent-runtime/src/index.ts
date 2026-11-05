@@ -12,3 +12,4 @@ export {
   isPersistenceCheck,
   type PersistenceCheck,
 } from './persistence-check.js';
+export { createSourceStore } from './source-store.js';

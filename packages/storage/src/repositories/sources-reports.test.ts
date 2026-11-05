@@ -55,6 +55,23 @@ describe('sources repository', () => {
     });
   });
 
+  it('finds duplicates by URL and by content hash, per task', () => {
+    const { storage, task } = setup();
+    const other = storage.tasks.create({ title: 'Other', input: {} });
+    const a = storage.sources.add(task.id, { url: 'https://example.org/a' });
+    storage.sources.setContent(a.id, { contentType: 'text/plain', text: 'same text' });
+    const hash = createHash('sha256').update('same text', 'utf8').digest('hex');
+
+    expect(storage.sources.findByUrl(task.id, 'https://example.org/a')?.id).toBe(a.id);
+    expect(storage.sources.findByUrl(task.id, 'https://example.org/b')).toBeUndefined();
+    expect(storage.sources.findByUrl(other.id, 'https://example.org/a')).toBeUndefined();
+
+    expect(storage.sources.findByContentHash(task.id, hash)?.id).toBe(a.id);
+    expect(storage.sources.findByContentHash(task.id, hash.toUpperCase())?.id).toBe(a.id);
+    expect(storage.sources.findByContentHash(other.id, hash)).toBeUndefined();
+    expect(storage.sources.findByContentHash(task.id, '0'.repeat(64))).toBeUndefined();
+  });
+
   it('deletes content with its source', () => {
     const { storage, task } = setup();
     const source = storage.sources.add(task.id, { url: 'https://example.org/a' });

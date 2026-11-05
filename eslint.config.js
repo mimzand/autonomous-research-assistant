@@ -201,7 +201,14 @@ export default defineConfig(
       'no-restricted-imports': [
         'error',
         {
-          paths: [{ name: 'electron', message: 'Packages must stay Electron-agnostic.' }],
+          paths: [
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+            {
+              name: 'fflate',
+              message:
+                "Import 'fflate/browser'. The Node build declares its own `require`, which clashes with the require shim in the Electron main bundle and crashes the app at startup.",
+            },
+          ],
           patterns: [
             banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
           ],
@@ -241,7 +248,14 @@ export default defineConfig(
       'no-restricted-imports': [
         'error',
         {
-          paths: [{ name: 'electron', message: 'Packages must stay Electron-agnostic.' }],
+          paths: [
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+            {
+              name: 'fflate',
+              message:
+                "Import 'fflate/browser'. The Node build declares its own `require`, which clashes with the require shim in the Electron main bundle and crashes the app at startup.",
+            },
+          ],
           patterns: [
             banPackages('Leaf packages may depend only on @rka/shared.', [
               '@rka/agent-runtime',

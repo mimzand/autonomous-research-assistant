@@ -1,7 +1,7 @@
 import { join } from 'node:path';
-import { createAgentRuntime } from '@rka/agent-runtime';
+import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
-import { createToolRegistry } from '@rka/tools';
+import { createToolRegistry, createWebToolsFromConfig, loadWebConfig } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from 'electron';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
@@ -26,6 +26,7 @@ if (!app.requestSingleInstanceLock()) {
 
 function bootstrap(): void {
   const ollamaConfig = loadOllamaConfig(process.env);
+  const webConfig = loadWebConfig(process.env);
 
   // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
   // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
@@ -40,9 +41,16 @@ function bootstrap(): void {
   }
   app.on('will-quit', () => storage.close());
 
+  // Web research tools. fetch_source can only reach public addresses; web_search
+  // is offered only when SEARXNG_URL points at a SearXNG instance.
+  const tools = createToolRegistry(createWebToolsFromConfig(webConfig, createSourceStore(storage)));
+  if (!webConfig.searxngUrl) {
+    console.info('Web search is off: set SEARXNG_URL to a SearXNG instance to enable it.');
+  }
+
   const runtime = createAgentRuntime({
     modelProvider: createOllamaProvider(ollamaConfig),
-    tools: createToolRegistry([]),
+    tools,
     storage,
   });
 
