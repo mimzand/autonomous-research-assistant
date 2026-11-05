@@ -155,6 +155,41 @@ reports, model_usage, settings, approvals. Full reference: [packages/storage/SCH
 - better-sqlite3 ships prebuilt Node-API binaries, so no C++ toolchain or
   `electron-rebuild` is needed. The same binary works in Node (tests) and Electron.
 
+## Dashboard
+
+The sidebar has five sections: **Chat**, **Tasks**, **Knowledge Base**, **Reports** and **Storage**.
+Every number and record shown comes from the SQLite database through IPC. Nothing is mocked
+and nothing is kept only in the frontend.
+
+```text
+pages/*.vue → window.api.{tasks,knowledge,reports,storage} (preload, response re-validated)
+  → IPC tasks:* / sources:* / reports:* / storage:* (sender + Zod-validated in main)
+  → DashboardService (main) → storage.inspect / repositories, runtime.tasks
+```
+
+- **Tasks:**
+  - Status counts; filter and search; a paginated table.
+  - Task details: input, output, error, token usage, and a step timeline with full inputs and outputs.
+  - Interrupted tasks show their recovery status. **Resume** is offered only when an executor
+    exists for the task type. Nothing resumes automatically.
+- **Persistence check:** a real three-step diagnostic task that checks the model, asks it one
+  question, and reads the stored answer back from SQLite with its checksum. Use it to verify
+  that tasks survive closing the app. It is the only task executor until the research agent exists.
+- **Knowledge Base:**
+  - Sources grouped by task, with search and an extraction filter.
+  - Source metadata is shown separately from the extracted text, which is marked as untrusted.
+- **Reports:**
+  - Markdown rendered with `markdown-it` (raw HTML disabled; only http(s) links; images not loaded).
+  - Cited sources are listed in the report's order.
+- **Storage:**
+  - File path, size, SQLite version, journal mode, migrations and row counts. Setting values
+    and secrets are never shown.
+  - A manual `PRAGMA integrity_check`.
+  - Backup to a file you choose. The native save dialog asks before replacing a file, and the
+    copy is verified before it is moved into place.
+
+Chat history is **not** persisted yet. It lives in the window for the session only.
+
 ## Security model
 
 - Renderer runs with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,

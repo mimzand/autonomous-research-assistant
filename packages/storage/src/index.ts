@@ -5,6 +5,13 @@ export {
   type Storage,
 } from './storage.js';
 export { StorageError, isStorageError, type StorageErrorCode } from './errors.js';
+export {
+  TABLE_NAMES,
+  inputPreview,
+  likePattern,
+  type Inspector,
+  type TaskDetailsRecord,
+} from './inspect.js';
 export { runMigrations, listAppliedMigrations, type AppliedMigration } from './migrate.js';
 export { MIGRATIONS, type EmbeddedMigration } from './migrations.generated.js';
 export {

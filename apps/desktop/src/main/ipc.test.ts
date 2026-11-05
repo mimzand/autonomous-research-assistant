@@ -1,7 +1,11 @@
-import { type AgentRuntime } from '@rka/agent-runtime';
-import { IpcChannels, IpcEvents, type AppInfo } from '@rka/shared';
+import { createAgentRuntime, type AgentRuntime } from '@rka/agent-runtime';
+import { type ModelProvider } from '@rka/model-provider';
+import { openStorage } from '@rka/storage';
+import { createToolRegistry } from '@rka/tools';
+import { IpcChannels, IpcEvents, type AppInfo, type ModelHealth } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatController } from './chat.js';
+import { createDashboardService } from './dashboard.js';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
 
 type Listener = (event: InvokeEventLike, ...args: unknown[]) => unknown;
@@ -12,25 +16,38 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
   const handlers = new Map<string, Listener>();
   const ipc: IpcMainLike = { handle: (channel, listener) => void handlers.set(channel, listener) };
 
-  const runtime: AgentRuntime = {
+  const health = (overrides.health ?? {
+    status: 'ready',
+    provider: 'ollama',
+    baseUrl: 'http://127.0.0.1:11434',
     model: 'qwen3:8b',
-    getModelHealth: async () =>
-      (overrides.health ?? {
-        status: 'ready',
-        provider: 'ollama',
-        baseUrl: 'http://127.0.0.1:11434',
-        model: 'qwen3:8b',
-        checkedAt: '2026-11-04T12:00:00.000Z',
-        serverVersion: '0.40.14',
-        capabilities: ['completion', 'tools', 'thinking'],
-        contextLength: 40960,
-        structuredOutput: true,
-      }) as Awaited<ReturnType<AgentRuntime['getModelHealth']>>,
-    listTools: () => [],
-    streamChat: async function* () {
+    checkedAt: '2026-11-04T12:00:00.000Z',
+    serverVersion: '0.40.14',
+    capabilities: ['completion', 'tools', 'thinking'],
+    contextLength: 40960,
+    structuredOutput: true,
+  }) as ModelHealth;
+  const provider: ModelProvider = {
+    id: 'ollama',
+    defaultModel: 'qwen3:8b',
+    checkHealth: async () => health,
+    checkModel: vi.fn(),
+    generate: vi.fn(),
+    generateStream: async function* () {
       yield { type: 'delta' as const, content: 'Hi' };
     },
   };
+  const storage = openStorage({ path: ':memory:' });
+  const runtime: AgentRuntime = createAgentRuntime({
+    modelProvider: provider,
+    tools: createToolRegistry([]),
+    storage,
+  });
+  const dashboard = createDashboardService({
+    storage,
+    runtime,
+    chooseBackupPath: async () => null,
+  });
 
   const appInfo: AppInfo = {
     name: 'rka',
@@ -43,6 +60,7 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
   registerIpcHandlers(ipc, {
     runtime,
     chat,
+    dashboard,
     getAppInfo: () => (overrides.appInfo ?? appInfo) as AppInfo,
     isTrustedSender: (url) => url.startsWith('file://'),
   });
@@ -61,7 +79,7 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
     return handler({ senderFrame: url === null ? null : { url }, sender }, payload);
   };
 
-  return { handlers, invoke, chat, sender, destroyedListeners };
+  return { handlers, invoke, chat, sender, destroyedListeners, storage };
 }
 
 const trusted = 'file:///app/index.html';
@@ -141,5 +159,62 @@ describe('chat IPC', () => {
     expect(sender.once).toHaveBeenCalledTimes(1); // Watched once per window.
     destroyedListeners.forEach((listener) => listener());
     expect(stopForSink).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('dashboard IPC', () => {
+  it('serves task, source, report and storage data from SQLite', async () => {
+    const { invoke, storage } = setup();
+    const task = storage.tasks.create({ title: 'Heat pumps', input: { question: 'q' } });
+    storage.sources.add(task.id, { url: 'https://example.org/a', title: 'A' });
+
+    await expect(invoke(IpcChannels.tasksCounts, trusted)).resolves.toMatchObject({ total: 1 });
+    await expect(invoke(IpcChannels.tasksList, trusted, {})).resolves.toMatchObject({
+      total: 1,
+      items: [{ title: 'Heat pumps', sourceCount: 1 }],
+    });
+    await expect(invoke(IpcChannels.tasksGet, trusted, { id: task.id })).resolves.toMatchObject({
+      task: { title: 'Heat pumps' },
+      recovery: { resumable: false },
+    });
+    await expect(invoke(IpcChannels.tasksGet, trusted, { id: 'missing' })).resolves.toBeNull();
+    await expect(invoke(IpcChannels.sourcesList, trusted, {})).resolves.toMatchObject({ total: 1 });
+    await expect(invoke(IpcChannels.reportsList, trusted, {})).resolves.toEqual({
+      items: [],
+      total: 0,
+    });
+    await expect(invoke(IpcChannels.storageStatus, trusted)).resolves.toMatchObject({
+      connected: true,
+    });
+    await expect(invoke(IpcChannels.storageIntegrityCheck, trusted)).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(invoke(IpcChannels.storageBackup, trusted)).resolves.toEqual({
+      status: 'cancelled',
+    });
+  });
+
+  it('validates dashboard inputs', async () => {
+    const { invoke } = setup();
+    await expect(invoke(IpcChannels.tasksList, trusted, { status: ['bogus'] })).rejects.toThrow();
+    await expect(invoke(IpcChannels.tasksList, trusted, { limit: 5000 })).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.tasksList, trusted, { sql: 'DROP TABLE tasks' }),
+    ).rejects.toThrow();
+    await expect(invoke(IpcChannels.tasksGet, trusted, {})).rejects.toThrow();
+    await expect(invoke(IpcChannels.sourcesGet, trusted, { id: 42 })).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.sourcesList, trusted, { content: 'everything' }),
+    ).rejects.toThrow();
+  });
+
+  it('exposes setting counts but never setting values', async () => {
+    const { invoke, storage } = setup();
+    storage.settings.set('ui.theme', 'dark');
+    const status = (await invoke(IpcChannels.storageStatus, trusted)) as {
+      tables: { name: string; rows: number }[];
+    };
+    expect(status.tables.find((t) => t.name === 'settings')?.rows).toBe(1);
+    expect(JSON.stringify(status)).not.toContain('dark');
   });
 });

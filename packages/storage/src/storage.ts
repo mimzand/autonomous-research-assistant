@@ -10,6 +10,7 @@ import {
   type Transaction,
 } from './context.js';
 import { StorageError } from './errors.js';
+import { createInspector } from './inspect.js';
 import { runMigrations } from './migrate.js';
 import { createRecovery } from './recovery.js';
 import { createApprovalRepository } from './repositories/approvals.js';
@@ -49,6 +50,8 @@ export interface Repositories {
 
 export interface Storage extends Repositories {
   readonly recovery: ReturnType<typeof createRecovery>;
+  /** Read-only dashboard queries, storage status, integrity check and backup. */
+  readonly inspect: ReturnType<typeof createInspector>;
   readonly path: string;
   readonly db: Database;
   /** Raw better-sqlite3 handle (diagnostics, tests). Prefer the repositories. */
@@ -114,6 +117,7 @@ export function openStorage(options: OpenStorageOptions): Storage {
   return {
     ...repos,
     recovery: createRecovery(db, ctx, (fn) => runInTransaction(db, fn)),
+    inspect: createInspector(db, sqlite, ctx, options.path),
     path: options.path,
     db,
     sqlite,

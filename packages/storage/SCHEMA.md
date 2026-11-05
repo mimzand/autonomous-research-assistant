@@ -232,6 +232,37 @@ task back to `running` and returns a `ResumePlan`:
 
 `recovery.listResumable()` lists `interrupted` and `awaiting-approval` tasks for the UI.
 
+## Read-only inspection (`storage.inspect`)
+
+The dashboard reads through `storage.inspect`. It adds **no tables or columns**.
+
+- Task, source and report lists with filters, LIKE search and offset pagination.
+  Searches escape `%`, `_` and `\`.
+- Task details: steps, counts and model-usage totals.
+- Source details: metadata plus extracted text.
+- Report details: citations resolved in the report's order.
+- `status()`: file sizes (db, -wal, -shm), SQLite version, pragmas, applied migrations,
+  and row counts for the fixed table list. It never reads setting values.
+- `integrityCheck()`: runs `PRAGMA integrity_check` and stores the result under the
+  settings keys `storage.integrity.last` and `storage.integrity.lastSuccessAt`.
+- `backupTo(path)`:
+  - Writes an online `sqlite.backup()` to a temporary file and verifies it with `quick_check`.
+  - Only then renames it to the target.
+  - Refuses `:memory:` and the live database, WAL and SHM paths.
+  - The caller (the native save dialog) is responsible for overwrite confirmation.
+
+## Proposed: conversation history (not implemented)
+
+The chat playground keeps messages in renderer memory only. A minimal design:
+
+- `conversations`: `id`, `title`, `model`, `created_at`, `updated_at`.
+- `conversation_messages`: `id`, `conversation_id` (FK, cascade), `seq` (unique per
+  conversation), `role` (`user` | `assistant`), `content`, `status`
+  (`complete` | `cancelled` | `error`), `model`, `prompt_tokens`, `completion_tokens`,
+  `created_at`, `updated_at`.
+- A `ConversationRepository` (`create`, `appendMessage`, `list`, `get`, `delete`), with
+  `ChatController` in main persisting a turn when it is done or cancelled.
+
 ## Secrets
 
 Credentials are never stored in plaintext:

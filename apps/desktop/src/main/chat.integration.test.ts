@@ -50,7 +50,7 @@ function wire(host = `127.0.0.1:${port}`) {
   const runtime = createAgentRuntime({
     modelProvider: createOllamaProvider(loadOllamaConfig({ OLLAMA_HOST: host })),
     tools: createToolRegistry([]),
-    tasks: openStorage({ path: ':memory:' }).tasks,
+    storage: openStorage({ path: ':memory:' }),
   });
   const events: ChatEvent[] = [];
   const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };

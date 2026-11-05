@@ -5,6 +5,8 @@ import { createToolRegistry } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session } from 'electron';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
+import { createDashboardService } from './dashboard.js';
+import { backupDialogOptions } from './backup-dialog.js';
 import { loadDevEnvFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
 import { isAppUrl } from './security.js';
@@ -41,12 +43,26 @@ function bootstrap(): void {
   const runtime = createAgentRuntime({
     modelProvider: createOllamaProvider(ollamaConfig),
     tools: createToolRegistry([]),
-    tasks: storage.tasks,
+    storage,
+  });
+
+  const dashboard = createDashboardService({
+    storage,
+    runtime,
+    chooseBackupPath: async () => {
+      const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      const options = backupDialogOptions(app.getPath('documents'), new Date());
+      const result = parent
+        ? await dialog.showSaveDialog(parent, options)
+        : await dialog.showSaveDialog(options);
+      return result.canceled || !result.filePath ? null : result.filePath;
+    },
   });
 
   registerIpcHandlers(ipcMain, {
     runtime,
     chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
+    dashboard,
     isTrustedSender: (url) => isAppUrl(url, devServerUrl),
     getAppInfo: () => ({
       name: app.getName(),

@@ -8,6 +8,7 @@ import {
   type AppInfo,
 } from '@rka/shared';
 import { type ChatController } from './chat.js';
+import { type DashboardService } from './dashboard.js';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
 export interface SenderLike {
@@ -31,6 +32,7 @@ export interface IpcMainLike {
 export interface IpcDeps {
   readonly runtime: AgentRuntime;
   readonly chat: ChatController;
+  readonly dashboard: DashboardService;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
 }
@@ -92,4 +94,29 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
       deps.chat.stop(payload);
     }),
   );
+
+  // Dashboard: read-only SQLite queries plus explicit task/storage actions.
+  // Each service method validates its payload and its response.
+  const { dashboard } = deps;
+  const routes: Record<string, (payload: unknown) => unknown> = {
+    [IpcChannels.tasksCounts]: () => dashboard.taskCounts(),
+    [IpcChannels.tasksList]: (p) => dashboard.listTasks(p),
+    [IpcChannels.tasksGet]: (p) => dashboard.getTask(p),
+    [IpcChannels.tasksRunPersistenceCheck]: () => dashboard.runPersistenceCheck(),
+    [IpcChannels.tasksResume]: (p) => dashboard.resumeTask(p),
+    [IpcChannels.tasksCancel]: (p) => dashboard.cancelTask(p),
+    [IpcChannels.sourcesList]: (p) => dashboard.listSources(p),
+    [IpcChannels.sourcesGet]: (p) => dashboard.getSource(p),
+    [IpcChannels.reportsList]: (p) => dashboard.listReports(p),
+    [IpcChannels.reportsGet]: (p) => dashboard.getReport(p),
+    [IpcChannels.storageStatus]: () => dashboard.storageStatus(),
+    [IpcChannels.storageIntegrityCheck]: () => dashboard.integrityCheck(),
+    [IpcChannels.storageBackup]: () => dashboard.backup(),
+  };
+  for (const [channel, handler] of Object.entries(routes)) {
+    ipc.handle(
+      channel,
+      guard((_event, payload) => handler(payload)),
+    );
+  }
 }

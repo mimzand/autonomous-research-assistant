@@ -37,7 +37,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([]),
-      tasks: openStorage({ path: ':memory:' }).tasks,
+      storage: openStorage({ path: ':memory:' }),
     });
     const controller = new AbortController();
     await expect(runtime.getModelHealth(controller.signal)).resolves.toMatchObject({
@@ -57,7 +57,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([tool]),
-      tasks: openStorage({ path: ':memory:' }).tasks,
+      storage: openStorage({ path: ':memory:' }),
     });
     expect(runtime.listTools().map((t) => t.name)).toEqual(['noop']);
   });
@@ -66,7 +66,7 @@ describe('createAgentRuntime', () => {
     const runtime = createAgentRuntime({
       modelProvider,
       tools: createToolRegistry([]),
-      tasks: openStorage({ path: ':memory:' }).tasks,
+      storage: openStorage({ path: ':memory:' }),
     });
     const controller = new AbortController();
     const chunks = [];

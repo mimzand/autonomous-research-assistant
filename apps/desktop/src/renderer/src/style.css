@@ -12,6 +12,11 @@
   --accent: #2f5bd3;
   --on-accent: #ffffff;
   --bubble: #f3f4f6;
+  --info: #1f6feb;
+  --violet: #8250df;
+  --sidebar: #eef0f3;
+  --hover: rgba(0, 0, 0, 0.04);
+  --selected: rgba(47, 91, 211, 0.1);
   font-family:
     'Segoe UI Variable',
     'Segoe UI',
@@ -35,6 +40,11 @@
     --accent: #4f7cf0;
     --on-accent: #ffffff;
     --bubble: #2b2b31;
+    --info: #58a6ff;
+    --violet: #b392f0;
+    --sidebar: #141417;
+    --hover: rgba(255, 255, 255, 0.05);
+    --selected: rgba(79, 124, 240, 0.18);
   }
 }
 
@@ -61,4 +71,83 @@ button:disabled {
 
 code {
   font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+button.secondary:hover:not(:disabled),
+button:not(.primary):not(.link):hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+/* Status tones (badges, stat cards). */
+[data-tone='neutral'] {
+  --tone-fg: var(--muted);
+  --tone-bg: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+[data-tone='info'] {
+  --tone-fg: var(--info);
+  --tone-bg: color-mix(in srgb, var(--info) 14%, transparent);
+}
+[data-tone='ok'] {
+  --tone-fg: var(--ok);
+  --tone-bg: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+[data-tone='error'] {
+  --tone-fg: var(--error);
+  --tone-bg: color-mix(in srgb, var(--error) 14%, transparent);
+}
+[data-tone='warn'] {
+  --tone-fg: var(--warn);
+  --tone-bg: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+[data-tone='accent'] {
+  --tone-fg: var(--violet);
+  --tone-bg: color-mix(in srgb, var(--violet) 14%, transparent);
+}
+
+.mono {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85em;
+}
+
+.muted {
+  color: var(--muted);
 }
