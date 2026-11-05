@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
+import { IpcEvents, ResearchProgressEventSchema } from '@rka/shared';
 import {
   createToolRegistry,
   createWebServices,
@@ -60,6 +61,14 @@ function bootstrap(): void {
     modelProvider: createOllamaProvider(ollamaConfig),
     tools,
     storage,
+    // Research progress is pushed to every window (validated against the shared contract).
+    onResearchEvent: (event) => {
+      const parsed = ResearchProgressEventSchema.safeParse(event);
+      if (!parsed.success) return;
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IpcEvents.researchProgress, parsed.data);
+      }
+    },
   });
 
   const dashboard = createDashboardService({

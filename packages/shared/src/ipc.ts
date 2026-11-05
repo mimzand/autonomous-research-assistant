@@ -10,6 +10,8 @@ import {
   type SourceListQuery,
   type SourceListResult,
   type StorageStatus,
+  type ResearchProgressEvent,
+  type StartResearchRequest,
   type TaskActionResult,
   type TaskDetails,
   type TaskListQuery,
@@ -44,6 +46,8 @@ export const IpcChannels = {
   tasksRunPersistenceCheck: 'tasks:run-persistence-check',
   tasksResume: 'tasks:resume',
   tasksCancel: 'tasks:cancel',
+  tasksStartResearch: 'tasks:start-research',
+  tasksPause: 'tasks:pause',
   sourcesList: 'sources:list',
   sourcesGet: 'sources:get',
   reportsList: 'reports:list',
@@ -65,6 +69,7 @@ export const IpcChannels = {
 /** Main → renderer push channels (not invokable). */
 export const IpcEvents = {
   chatEvent: 'chat:event',
+  researchProgress: 'research:progress',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -93,6 +98,12 @@ export interface TasksApi {
   runPersistenceCheck(): Promise<TaskActionResult>;
   resume(id: string): Promise<TaskActionResult>;
   cancel(id: string): Promise<TaskActionResult>;
+  /** Starts an autonomous research task for a goal (local model only). */
+  startResearch(request: StartResearchRequest): Promise<TaskActionResult>;
+  /** Pauses a running research task. */
+  pause(id: string): Promise<TaskActionResult>;
+  /** Live progress of research tasks. Returns an unsubscribe function. */
+  onProgress(listener: (event: ResearchProgressEvent) => void): () => void;
 }
 
 export interface KnowledgeApi {

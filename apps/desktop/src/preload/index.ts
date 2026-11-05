@@ -13,6 +13,7 @@ import {
   RENDERER_API_KEY,
   ReportDetailsSchema,
   ReportListResultSchema,
+  ResearchProgressEventSchema,
   ResearchToolsStatusSchema,
   SaveTestSourceResultSchema,
   SearchHealthSchema,
@@ -78,6 +79,18 @@ const tasks: TasksApi = {
   runPersistenceCheck: () => call(TaskActionResultSchema, IpcChannels.tasksRunPersistenceCheck),
   resume: (id) => call(TaskActionResultSchema, IpcChannels.tasksResume, { id }),
   cancel: (id) => call(TaskActionResultSchema, IpcChannels.tasksCancel, { id }),
+  startResearch: (request) => call(TaskActionResultSchema, IpcChannels.tasksStartResearch, request),
+  pause: (id) => call(TaskActionResultSchema, IpcChannels.tasksPause, { id }),
+  onProgress: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = ResearchProgressEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(IpcEvents.researchProgress, handler);
+    return () => {
+      ipcRenderer.removeListener(IpcEvents.researchProgress, handler);
+    };
+  },
 };
 
 const knowledge: KnowledgeApi = {

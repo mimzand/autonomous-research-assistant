@@ -13,3 +13,4 @@ export {
   type PersistenceCheck,
 } from './persistence-check.js';
 export { createSourceStore } from './source-store.js';
+export * from './research/index.js';

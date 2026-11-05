@@ -222,6 +222,40 @@ describe('dashboard IPC', () => {
     ).rejects.toThrow();
   });
 
+  it('starts and pauses research tasks through validated channels', async () => {
+    const { invoke, storage } = setup();
+    // No web_search tool is registered in this setup: the start is refused with a reason.
+    await expect(
+      invoke(IpcChannels.tasksStartResearch, trusted, { goal: 'How efficient are heat pumps?' }),
+    ).resolves.toEqual({
+      status: 'rejected',
+      message: expect.stringMatching(/SEARXNG_URL/),
+    });
+    await expect(
+      invoke(IpcChannels.tasksStartResearch, trusted, { goal: 'short' }),
+    ).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.tasksStartResearch, trusted, {
+        goal: 'A valid goal here',
+        maxSources: 99,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.tasksStartResearch, trusted, {
+        goal: 'A valid goal here',
+        model: 'gpt-4',
+      }),
+    ).rejects.toThrow();
+    const task = storage.tasks.create({ title: 'Not research', input: {} });
+    await expect(invoke(IpcChannels.tasksPause, trusted, { id: task.id })).resolves.toMatchObject({
+      status: 'rejected',
+    });
+    await expect(invoke(IpcChannels.tasksGet, trusted, { id: task.id })).resolves.toMatchObject({
+      progress: null,
+      recovery: { paused: false, pausable: false },
+    });
+  });
+
   it('exposes setting counts but never setting values', async () => {
     const { invoke, storage } = setup();
     storage.settings.set('ui.theme', 'dark');

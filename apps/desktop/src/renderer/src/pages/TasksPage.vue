@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue';
 import EmptyState from '../components/ui/EmptyState.vue';
 import ErrorBanner from '../components/ui/ErrorBanner.vue';
 import PageHeader from '../components/ui/PageHeader.vue';
+import NewResearchForm from '../components/research/NewResearchForm.vue';
 import PagerBar from '../components/ui/PagerBar.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { useAsyncData } from '../composables/useAsyncData';
@@ -69,6 +70,12 @@ const statCards = computed(() =>
   })),
 );
 
+const showNewResearch = ref(false);
+function researchStarted(taskId: string): void {
+  showNewResearch.value = false;
+  nav.openTask(taskId);
+}
+
 function refreshAll(): void {
   void list.refresh();
 }
@@ -116,6 +123,14 @@ function clearFilters(): void {
         <button
           type="button"
           class="primary"
+          data-testid="open-new-research"
+          @click="showNewResearch = !showNewResearch"
+        >
+          New research
+        </button>
+        <button
+          type="button"
+          class="secondary"
           data-testid="run-persistence-check"
           :disabled="starting"
           title="Creates a real task that checks the model, asks it a question and verifies the stored answer."
@@ -125,6 +140,12 @@ function clearFilters(): void {
         </button>
       </template>
     </PageHeader>
+
+    <NewResearchForm
+      v-if="showNewResearch"
+      @started="researchStarted"
+      @close="showNewResearch = false"
+    />
 
     <p v-if="actionMessage" class="notice" :data-tone="actionMessage.tone" role="status">
       {{ actionMessage.text }}
@@ -180,7 +201,7 @@ function clearFilters(): void {
       <EmptyState
         v-else-if="list.data.value && list.data.value.total === 0 && !hasFilters"
         title="No tasks yet"
-        text="Research tasks will appear here with their full execution history. Run a persistence check to create a real task and verify that it survives a restart."
+        text="Research tasks will appear here with their full execution history. Start one with “New research”, or run a persistence check to verify that tasks survive a restart."
       >
         <template #icon>☰</template>
         <button type="button" class="primary" @click="runPersistenceCheck">

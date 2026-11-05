@@ -11,6 +11,7 @@ import {
   SourceListQuerySchema,
   SourceListResultSchema,
   StorageStatusSchema,
+  StartResearchRequestSchema,
   TaskActionResultSchema,
   TaskDetailsSchema,
   TaskIdRequestSchema,
@@ -71,6 +72,7 @@ export function createDashboardService({ storage, runtime, chooseBackupPath }: D
       return TaskDetailsSchema.parse({
         ...details,
         recovery: runtime.tasks.recoveryInfo(details.task, details.steps),
+        progress: runtime.tasks.progress(details.task, details.steps),
       });
     },
 
@@ -84,6 +86,23 @@ export function createDashboardService({ storage, runtime, chooseBackupPath }: D
           message: error instanceof Error ? error.message : String(error),
         };
       }
+    },
+
+    startResearch(payload: unknown): TaskActionResult {
+      const request = StartResearchRequestSchema.parse(payload);
+      return actionResult(
+        runtime.tasks.startResearch({
+          goal: request.goal,
+          limits: {
+            ...(request.maxQuestions !== undefined && { maxQuestions: request.maxQuestions }),
+            ...(request.maxSources !== undefined && { maxSources: request.maxSources }),
+          },
+        }),
+      );
+    },
+
+    pauseTask(payload: unknown): TaskActionResult {
+      return actionResult(runtime.tasks.pause(TaskIdRequestSchema.parse(payload).id));
     },
 
     resumeTask(payload: unknown): TaskActionResult {

@@ -215,6 +215,14 @@ stateDiagram-v2
 `completed` and `skipped` are final. Starting a completed step throws
 `StorageError('step-already-completed')`, so a completed step can never execute twice.
 
+## Pausing
+
+There is no separate `paused` status, because the CHECK constraint on `tasks.status`
+would need a table rebuild. A paused task is `interrupted`, with
+`error = "Paused by the user. Resume to continue from the current step."`. Its running step
+becomes `interrupted` (`steps.interrupt()`) and runs again on resume. The UI shows such
+tasks as _Paused_.
+
 ## Recovery of interrupted tasks
 
 On every startup, before any task can run, the desktop app calls

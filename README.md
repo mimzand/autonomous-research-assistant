@@ -284,6 +284,44 @@ browser. Pending requests can be cancelled.
   private, and only the search client can reach it; `fetch_source` cannot.
 - **Proxies:** connections are direct, so an HTTP proxy is not used.
 
+## Autonomous research
+
+**Tasks → New research** starts the first end-to-end research workflow. It uses the local
+Ollama model and the web tools only; no cloud model is involved.
+
+```text
+plan → search (per question) → choose sources → read source + extract evidence (per source)
+     → compare findings → write report → review for unsupported claims → save
+```
+
+- **Persisted steps:** every step is saved with its output before the next one starts. Later
+  steps are added from earlier outputs: the plan decides the searches, and the chosen
+  sources decide the reads. Pause, crashes and restarts continue at the first unfinished
+  step; completed steps never run again.
+- **Limits:**
+  - Questions (1–6, default 3) and queries per question.
+  - Sources (1–12, default 6), with characters per source and claims per source.
+  - Total steps (default 40).
+  - Model timeout, and retry counts for model and tool calls.
+- **Validation:** all model output is JSON validated with Zod. Invalid output is retried
+  once, with the error fed back to the model.
+- **Grounding:**
+  - Each claim must come with an exact quote from the stored source text. Claims whose
+    quote is not found are dropped.
+  - Evidence ids are assigned by the app; any id the model invents is removed.
+  - The Markdown, including the numbered citations and source list, is rendered by the
+    app from verified evidence, and the reports repository refuses unknown source ids.
+- **Review step:**
+  - Paragraphs without valid evidence are removed and listed under _Review notes_.
+  - The model checks the remaining paragraphs against the quotes of the evidence they cite.
+  - Partly supported, unverified and low-certainty statements are marked in the text.
+- **Untrusted content:** web text only reaches the model inside fenced untrusted blocks,
+  and hidden HTML text is dropped during extraction.
+- **UI:** the task page shows the goal, status, current step, progress (pushed by progress
+  events), discovered sources and the final report, with **Pause**, **Resume** and **Stop**.
+
+Manual test with a real model: [docs/manual-testing-research-agent.md](docs/manual-testing-research-agent.md).
+
 ## Security model
 
 - Renderer runs with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,

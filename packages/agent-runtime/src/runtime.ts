@@ -2,12 +2,26 @@ import { type GenerateChunk, type ModelProvider } from '@rka/model-provider';
 import { type ChatTurn, type ModelHealth, type TaskRecoveryInfo } from '@rka/shared';
 import { type Storage, type TaskRecord, type TaskStepRecord } from '@rka/storage';
 import { type ToolRegistry, type ToolSummary } from '@rka/tools';
+import { ZodError } from 'zod';
 import { createPersistenceCheck, isPersistenceCheck } from './persistence-check.js';
+import {
+  createResearchAgent,
+  isPausedTask,
+  isResearchTask,
+  type ResearchEvent,
+  type ResearchLimits,
+  type ResearchProgress,
+  type ResearchRequest,
+} from './research/index.js';
 
 export interface AgentRuntimeDeps {
   readonly modelProvider: ModelProvider;
   readonly tools: ToolRegistry;
   readonly storage: Storage;
+  /** Progress of research tasks (for the UI). */
+  readonly onResearchEvent?: (event: ResearchEvent) => void;
+  /** Default research limits (requests may override within the schema bounds). */
+  readonly researchDefaults?: Partial<ResearchLimits>;
 }
 
 export interface StreamChatOptions {
@@ -36,6 +50,12 @@ export interface AgentRuntime {
   readonly tasks: {
     /** Creates and starts a persistence check task. */
     runPersistenceCheck(): TaskRecord;
+    /** Validates the goal, then creates and starts an autonomous research task. */
+    startResearch(request: ResearchRequest): TaskActionOutcome;
+    /** Pauses a running research task; its current step is repeated on resume. */
+    pause(taskId: string): TaskActionOutcome;
+    /** Step progress of a research task, or null for other task types. */
+    progress(task: TaskRecord, steps: readonly TaskStepRecord[]): ResearchProgress | null;
     /** Resumes an interrupted task if an executor exists for it. Never automatic. */
     resume(taskId: string): TaskActionOutcome;
     /** Cancels a pending/interrupted/awaiting task, or stops a running check. */
@@ -55,12 +75,21 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     storage,
     modelProvider: deps.modelProvider,
   });
+  const research = createResearchAgent({
+    storage,
+    modelProvider: deps.modelProvider,
+    tools: deps.tools,
+    ...(deps.onResearchEvent && { onEvent: deps.onResearchEvent }),
+    ...(deps.researchDefaults && { defaults: deps.researchDefaults }),
+  });
+  const isExecuting = (id: string) => persistenceCheck.isRunning(id) || research.isRunning(id);
 
   function recoveryInfo(task: TaskRecord, steps: readonly TaskStepRecord[]): TaskRecoveryInfo {
     const done = steps.filter((s) => s.status === 'completed' || s.status === 'skipped');
     const next = steps.find((s) => s.status !== 'completed' && s.status !== 'skipped');
-    const hasExecutor = isPersistenceCheck(task);
-    const executing = persistenceCheck.isRunning(task.id);
+    const hasExecutor = isPersistenceCheck(task) || isResearchTask(task);
+    const executing = isExecuting(task.id);
+    const paused = isPausedTask(task);
 
     let reason: string | null = null;
     if (task.status === 'interrupted' && !hasExecutor) {
@@ -70,6 +99,8 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     return {
       resumable: task.status === 'interrupted' && hasExecutor && !executing,
       reason,
+      paused,
+      pausable: task.status === 'running' && isResearchTask(task) && research.isRunning(task.id),
       cancellable:
         ['pending', 'interrupted', 'awaiting-approval'].includes(task.status) ||
         (task.status === 'running' && executing),
@@ -92,6 +123,33 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     tasks: {
       runPersistenceCheck: () => persistenceCheck.start(),
 
+      startResearch(request) {
+        const ready = research.readiness();
+        if (!ready.ok) return { ok: false, message: ready.message };
+        try {
+          return { ok: true, task: research.start(request) };
+        } catch (error) {
+          if (error instanceof ZodError) {
+            return { ok: false, message: error.issues.map((i) => i.message).join(' ') };
+          }
+          return { ok: false, message: errorMessage(error) };
+        }
+      },
+
+      pause(taskId) {
+        try {
+          const task = storage.tasks.require(taskId);
+          if (!isResearchTask(task) || !research.pause(taskId)) {
+            return { ok: false, message: 'Only running research tasks can be paused.' };
+          }
+          return { ok: true, task: storage.tasks.require(taskId) };
+        } catch (error) {
+          return { ok: false, message: errorMessage(error) };
+        }
+      },
+
+      progress: (task, steps) => (isResearchTask(task) ? research.progress(task, steps) : null),
+
       resume(taskId) {
         try {
           const task = storage.tasks.require(taskId);
@@ -103,7 +161,10 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
                 info.reason ?? `Only interrupted tasks can be resumed (task is "${task.status}").`,
             };
           }
-          return { ok: true, task: persistenceCheck.resume(taskId) };
+          return {
+            ok: true,
+            task: isResearchTask(task) ? research.resume(taskId) : persistenceCheck.resume(taskId),
+          };
         } catch (error) {
           return { ok: false, message: errorMessage(error) };
         }
@@ -111,7 +172,7 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
 
       cancel(taskId) {
         try {
-          if (persistenceCheck.cancel(taskId)) {
+          if (persistenceCheck.cancel(taskId) || research.cancel(taskId)) {
             return { ok: true, task: storage.tasks.require(taskId) };
           }
           return { ok: true, task: storage.tasks.cancel(taskId) };
@@ -121,7 +182,9 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
       },
 
       recoveryInfo,
-      whenIdle: () => persistenceCheck.whenIdle(),
+      whenIdle: async () => {
+        await Promise.all([persistenceCheck.whenIdle(), research.whenIdle()]);
+      },
     },
   };
 }

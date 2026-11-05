@@ -107,6 +107,8 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
     [IpcChannels.tasksRunPersistenceCheck]: () => dashboard.runPersistenceCheck(),
     [IpcChannels.tasksResume]: (p) => dashboard.resumeTask(p),
     [IpcChannels.tasksCancel]: (p) => dashboard.cancelTask(p),
+    [IpcChannels.tasksStartResearch]: (p) => dashboard.startResearch(p),
+    [IpcChannels.tasksPause]: (p) => dashboard.pauseTask(p),
     [IpcChannels.sourcesList]: (p) => dashboard.listSources(p),
     [IpcChannels.sourcesGet]: (p) => dashboard.getSource(p),
     [IpcChannels.reportsList]: (p) => dashboard.listReports(p),

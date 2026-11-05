@@ -96,6 +96,10 @@ export const TaskRecoveryInfoSchema = z.object({
   resumable: z.boolean(),
   /** Why it cannot be resumed (null when resumable or not applicable). */
   reason: z.string().nullable(),
+  /** Interrupted because the user paused it (not a crash). */
+  paused: z.boolean(),
+  /** A running research task that can be paused now. */
+  pausable: z.boolean(),
   cancellable: z.boolean(),
   completedSteps: z.int().nonnegative(),
   totalSteps: z.int().nonnegative(),
@@ -103,8 +107,19 @@ export const TaskRecoveryInfoSchema = z.object({
 });
 export type TaskRecoveryInfo = z.infer<typeof TaskRecoveryInfoSchema>;
 
+export const TaskProgressSchema = z.object({
+  completed: z.int().nonnegative(),
+  total: z.int().nonnegative(),
+  /** The total grows once sources are chosen. */
+  estimated: z.boolean(),
+  current: z.object({ seq: z.int().positive(), name: z.string(), kind: z.string() }).nullable(),
+});
+export type TaskProgress = z.infer<typeof TaskProgressSchema>;
+
 export const TaskDetailsSchema = z.object({
   task: TaskViewSchema,
+  /** Step progress for research tasks; null for other task types. */
+  progress: TaskProgressSchema.nullable(),
   steps: z.array(TaskStepViewSchema),
   sourceCount: z.int().nonnegative(),
   reportCount: z.int().nonnegative(),
@@ -115,6 +130,24 @@ export const TaskDetailsSchema = z.object({
 export type TaskDetails = z.infer<typeof TaskDetailsSchema>;
 
 export const TaskIdRequestSchema = z.strictObject({ id: Id });
+
+/** Starts an autonomous research task (validated again by the runtime). */
+export const StartResearchRequestSchema = z.strictObject({
+  goal: z.string().trim().min(10).max(2000),
+  maxQuestions: z.int().min(1).max(6).optional(),
+  maxSources: z.int().min(1).max(12).optional(),
+});
+export type StartResearchRequest = z.input<typeof StartResearchRequestSchema>;
+
+/** Pushed to the window while research tasks run (the UI also polls). */
+export const ResearchProgressEventSchema = z.object({
+  type: z.enum(['task', 'step-started', 'step-completed', 'step-failed', 'source']),
+  taskId: Id,
+  taskStatus: TaskStatusSchema,
+  progress: TaskProgressSchema,
+  message: z.string().max(500).optional(),
+});
+export type ResearchProgressEvent = z.infer<typeof ResearchProgressEventSchema>;
 
 export const TaskActionResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('ok'), taskId: Id }),

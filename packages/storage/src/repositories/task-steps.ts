@@ -134,6 +134,11 @@ export function createTaskStepRepository(db: Executor, ctx: StorageContext) {
     },
 
     skip: (id: string) => transition(id, 'skipped'),
+
+    /** running → interrupted (e.g. the user paused the task). The step runs again on resume. */
+    interrupt(id: string, reason: string): TaskStepRecord {
+      return transition(id, 'interrupted', { error: reason.slice(0, 10_000) });
+    },
   };
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import ResearchView from '../components/research/ResearchView.vue';
 import EmptyState from '../components/ui/EmptyState.vue';
 import ErrorBanner from '../components/ui/ErrorBanner.vue';
 import JsonBlock from '../components/ui/JsonBlock.vue';
@@ -13,8 +14,28 @@ const props = defineProps<{ taskId: string }>();
 const nav = useNavigation();
 
 const details = useAsyncData(() => window.api.tasks.get(props.taskId), {
-  // Follow live progress while the task runs.
-  pollMs: (): number | null => (details.data.value?.task.status === 'running' ? 1000 : null),
+  // Follow live progress while the task runs (progress events also trigger a refresh).
+  pollMs: (): number | null => (details.data.value?.task.status === 'running' ? 1500 : null),
+});
+
+// Live progress pushed by the main process for this task.
+const progressKey = ref(0);
+let unsubscribe: (() => void) | null = null;
+onMounted(() => {
+  unsubscribe = window.api.tasks.onProgress((event) => {
+    if (event.taskId !== props.taskId) return;
+    progressKey.value++;
+    void details.refresh({ silent: true });
+    details.reschedule();
+  });
+});
+onUnmounted(() => unsubscribe?.());
+
+const isResearch = computed(() => {
+  const input = details.data.value?.task.input;
+  return (
+    !!input && typeof input === 'object' && !Array.isArray(input) && input['kind'] === 'research'
+  );
 });
 
 const expanded = ref(new Set<string>());
@@ -41,7 +62,7 @@ function toggle(stepId: string): void {
   expanded.value = next;
 }
 
-async function act(action: 'resume' | 'cancel'): Promise<void> {
+async function act(action: 'resume' | 'cancel' | 'pause'): Promise<void> {
   acting.value = true;
   actionError.value = null;
   try {
@@ -86,7 +107,25 @@ async function act(action: 'resume' | 'cancel'): Promise<void> {
           </button>
         </template>
         <template #actions>
-          <StatusBadge :status="task.status" />
+          <span
+            v-if="recovery.paused"
+            class="paused-badge"
+            data-tone="info"
+            data-testid="paused-badge"
+          >
+            Paused
+          </span>
+          <StatusBadge v-else :status="task.status" />
+          <button
+            v-if="recovery.pausable"
+            type="button"
+            class="secondary"
+            data-testid="pause-task"
+            :disabled="acting"
+            @click="act('pause')"
+          >
+            Pause
+          </button>
           <button
             v-if="recovery.resumable"
             type="button"
@@ -115,12 +154,16 @@ async function act(action: 'resume' | 'cancel'): Promise<void> {
       <div
         v-if="task.status === 'interrupted'"
         class="card recovery"
-        data-tone="warn"
+        :data-tone="recovery.paused ? 'info' : 'warn'"
         data-testid="recovery-panel"
       >
-        <strong>Interrupted — waiting for you</strong>
+        <strong>{{ recovery.paused ? 'Paused' : 'Interrupted — waiting for you' }}</strong>
         <p>
-          The app stopped while this task was running. It will not continue on its own.
+          {{
+            recovery.paused
+              ? 'You paused this task. The step that was running will start again on resume.'
+              : 'The app stopped while this task was running. It will not continue on its own.'
+          }}
           {{ recovery.completedSteps }} of {{ recovery.totalSteps }} steps were completed and are
           kept with their outputs.
         </p>
@@ -131,6 +174,12 @@ async function act(action: 'resume' | 'cancel'): Promise<void> {
         </p>
         <p v-else-if="recovery.reason">{{ recovery.reason }}</p>
       </div>
+
+      <ResearchView
+        v-if="isResearch && details.data.value"
+        :details="details.data.value"
+        :refresh-key="progressKey"
+      />
 
       <div class="grid">
         <div class="card facts">
@@ -218,6 +267,14 @@ async function act(action: 'resume' | 'cancel'): Promise<void> {
 </template>
 
 <style scoped>
+.paused-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--tone-fg);
+  background: var(--tone-bg);
+}
 .page {
   display: grid;
   gap: 16px;

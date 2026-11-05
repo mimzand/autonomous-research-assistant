@@ -78,4 +78,18 @@ describe('task steps repository', () => {
     storage.tasks.delete(task.id);
     expect(storage.steps.listByTask(task.id)).toEqual([]);
   });
+
+  it('interrupts a running step so it can run again (pause)', () => {
+    const storage = memoryStorage();
+    const task = storage.tasks.create({ title: 'T', input: {} });
+    const step = storage.steps.append(task.id, { kind: 'k', name: 'n' });
+    storage.steps.start(step.id);
+    expect(storage.steps.interrupt(step.id, 'Paused')).toMatchObject({
+      status: 'interrupted',
+      error: 'Paused',
+    });
+    expect(storage.steps.start(step.id)).toMatchObject({ status: 'running', attempts: 2 });
+    storage.steps.complete(step.id, null);
+    expect(() => storage.steps.interrupt(step.id, 'x')).toThrow();
+  });
 });
