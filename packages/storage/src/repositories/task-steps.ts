@@ -2,6 +2,7 @@ import { type StepStatus } from '@rka/shared';
 import { and, asc, eq, max } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Executor, type StorageContext } from '../context.js';
+import { redactText } from '@rka/shared';
 import { StorageError } from '../errors.js';
 import { taskSteps, type JsonValue, type TaskStepRecord } from '../schema.js';
 import { guarded } from '../sqlite-errors.js';
@@ -61,6 +62,8 @@ export function createTaskStepRepository(db: Executor, ctx: StorageContext) {
         status: to,
         updatedAt: now,
         ...patch,
+        // Step errors are shown and kept long-term: never store secrets or personal paths.
+        ...(typeof patch.error === 'string' && { error: redactText(patch.error) }),
         ...(to === 'running' && {
           attempts: current.attempts + 1,
           startedAt: now,

@@ -56,17 +56,30 @@ export function evidencePrompt(
       'Claims without an exact quote will be discarded. Set relevant=false and claims=[] if the source does not help.',
       'Use confidence "low" for claims the source itself presents as uncertain, disputed or as an estimate.',
       '',
-      `Source title: ${(source.title ?? '(no title)').slice(0, 200)}`,
-      wrapUntrusted(source.text, { url: source.url }),
+      // The page title is web content too, so it goes inside the untrusted block.
+      wrapUntrusted(
+        `Title: ${(source.title ?? '(no title)').replace(/\s+/g, ' ').slice(0, 200)}\n\n${source.text}`,
+        { url: source.url },
+      ),
     ].join('\n'),
   );
 }
 
-const evidenceLines = (evidence: readonly EvidenceItem[]) =>
-  evidence.map(
-    (e) =>
-      `- ${e.id} [${e.questions.join(',') || 'general'}; ${e.confidence}; source ${e.sourceId.slice(0, 8)}]: ${e.claim}`,
-  );
+/**
+ * Claims are the model's paraphrases of web text, so they are fenced as
+ * untrusted data as well: a page could have steered a claim's wording.
+ */
+const evidenceLines = (evidence: readonly EvidenceItem[]) => [
+  wrapUntrusted(
+    evidence
+      .map(
+        (e) =>
+          `- ${e.id} [${e.questions.join(',') || 'general'}; ${e.confidence}; source ${e.sourceId.slice(0, 8)}]: ${e.claim}`,
+      )
+      .join('\n') || '- (none)',
+    { url: 'evidence extracted from the web sources' },
+  ),
+];
 
 export function analysisPrompt(
   goal: string,

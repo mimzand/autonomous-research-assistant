@@ -216,3 +216,34 @@ describe('execution log', () => {
     expect(storage.logs.listByTask(t.id)).toEqual([]);
   });
 });
+
+describe('redaction of stored diagnostics', () => {
+  it('removes secrets and personal details from logs, task errors and step errors', () => {
+    const storage = memoryStorage();
+    const task = storage.tasks.create({ title: 'Redaction', input: {} });
+    storage.tasks.transition(task.id, 'running');
+    const step = storage.steps.append(task.id, { kind: 'fetch', name: 'Fetch', input: {} });
+    storage.steps.start(step.id);
+    const secretUrl = 'https://bob:hunter2@example.com/a?token=abc123&page=2';
+
+    const log = storage.logs.append(task.id, {
+      level: 'warn',
+      event: 'tool.failed',
+      message: `fetch failed for ${secretUrl} (C:\\Users\\zandm\\x)`,
+      data: { url: secretUrl, password: 'p', code: 'timeout' },
+    });
+    expect(log.message).toBe(
+      'fetch failed for https://[redacted]@example.com/a?token=[redacted]&page=2 (C:\\Users\\[user]\\x)',
+    );
+    expect(log.data).toEqual({
+      url: 'https://[redacted]@example.com/a?token=[redacted]&page=2',
+      password: '[redacted]',
+      code: 'timeout',
+    });
+    expect(storage.steps.fail(step.id, `[timeout] ${secretUrl}`).error).not.toContain('hunter2');
+    expect(storage.tasks.fail(task.id, `api_key=abcdef failed`).error).toBe(
+      'api_key=[redacted] failed',
+    );
+    storage.close();
+  });
+});

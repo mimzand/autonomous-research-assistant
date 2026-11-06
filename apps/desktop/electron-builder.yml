@@ -1,0 +1,95 @@
+# Windows packaging (electron-builder). Build with: pnpm package:win
+# See docs/release.md for the full procedure and docs/installation.md for users.
+
+appId: com.rka.autonomous-research-assistant
+# Must stay equal to package.json "productName": Electron derives the user data
+# folder (%APPDATA%\Autonomous Research Assistant) from it. Changing it would
+# make an update start with an empty database.
+productName: Autonomous Research Assistant
+copyright: Copyright © 2026
+executableName: autonomous-research-assistant
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the compiled app goes into app.asar. Workspace packages, Vue, Zod and
+# Drizzle are bundled into out/ by electron-vite; the one runtime dependency
+# (better-sqlite3) is collected from node_modules.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/*.d.ts'
+  - '!**/node_modules/better-sqlite3/{deps,src,binding.gyp,docs}/**'
+asar: true
+# Only English UI strings from Chromium (saves ~40 MB).
+electronLanguages: [en-US]
+# Native addons cannot be loaded from inside an asar archive.
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**/*.node'
+
+# better-sqlite3 ships prebuilt Node-API binaries for win32-x64 (and others)
+# that work in Electron without recompiling, so no C++ toolchain is needed.
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+
+# Electron fuses: flipped in the packaged executable, cannot be changed by
+# environment variables or command-line switches at run time.
+electronFuses:
+  # ELECTRON_RUN_AS_NODE would turn the app into a plain Node.js runtime.
+  runAsNode: false
+  # NODE_OPTIONS and --inspect could inject code or open a debugger port.
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  # Refuse a modified app.asar, and refuse to load an unpacked app folder.
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  # Must stay on while the renderer is loaded with loadFile (file://): turning it
+  # off makes the window fail to load. Compensating controls: the production CSP
+  # has connect-src 'none', navigation is limited to the renderer's index.html,
+  # and IPC accepts only that page. Removing it needs a custom app:// protocol.
+  grantFileProtocolExtraPrivileges: true
+
+win:
+  executableName: Autonomous Research Assistant
+  # Ship only the Windows native binaries of better-sqlite3.
+  files:
+    - '!**/node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*.node'
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  # Runs as the normal user; never asks for administrator rights.
+  requestedExecutionLevel: asInvoker
+  # Sets the exe's name, version and icon resources (rcedit). Code signing only
+  # happens when a certificate is configured (CSC_LINK); see docs/release.md.
+  # Building on Linux/macOS needs Wine for this step and for NSIS.
+  signAndEditExecutable: true
+  artifactName: ${productName}-${version}-win-${arch}-portable.${ext}
+
+nsis:
+  # Per-user install in %LOCALAPPDATA%\Programs, no administrator rights.
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Autonomous Research Assistant
+  # Uninstalling keeps the database and reports in %APPDATA%.
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-${version}-win-${arch}-setup.${ext}
+
+# Linux folder build: only used to run the packaged app in automated tests.
+linux:
+  target: dir
+  files:
+    - '!**/node_modules/better-sqlite3/prebuilds/{darwin,win32,linuxmusl}-*.node'
+  category: Utility
+
+publish: null

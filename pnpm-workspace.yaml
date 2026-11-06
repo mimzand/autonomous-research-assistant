@@ -12,3 +12,6 @@ allowBuilds:
   # Pulled in by drizzle-kit (dev only); its platform binary comes from an
   # optional dependency, so the install script is not needed.
   esbuild: false
+  # Optional dependency of electron-builder for Squirrel.Windows installers; this
+  # project builds NSIS installers, so its install script is not needed.
+  electron-winstaller: false

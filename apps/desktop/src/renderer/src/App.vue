@@ -2,6 +2,7 @@
 import { type AppInfo } from '@rka/shared';
 import { onMounted, ref } from 'vue';
 import AppSidebar from './components/AppSidebar.vue';
+import StartupChecks from './components/StartupChecks.vue';
 import { useNavigation } from './composables/useNavigation';
 import ChatPage from './pages/ChatPage.vue';
 import KnowledgePage from './pages/KnowledgePage.vue';
@@ -27,6 +28,8 @@ onMounted(async () => {
   <div class="shell">
     <AppSidebar :app-info="appInfo" />
     <main class="content" :data-section="nav.section.value">
+      <!-- Always present (possibly empty) so the chat grid keeps its rows. -->
+      <div class="startup-slot"><StartupChecks /></div>
       <!-- Chat stays mounted so an ongoing conversation or stream survives navigation. -->
       <ChatPage v-show="nav.section.value === 'chat'" />
       <KeepAlive :max="7">
@@ -64,6 +67,7 @@ onMounted(async () => {
 .content[data-section='chat'] {
   overflow: hidden;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 @media (max-width: 960px) {
   .shell {

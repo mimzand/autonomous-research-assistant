@@ -163,6 +163,17 @@ describe('research workflow: happy path', () => {
     expect(open).toBeGreaterThan(0);
     expect(injection).toBeGreaterThan(open);
     expect(injection).toBeLessThan(close);
+    // The page title is web content too.
+    const title = prompt.indexOf('Title: Heat pump basics');
+    expect(title).toBeGreaterThan(open);
+    expect(title).toBeLessThan(close);
+    // Claims derived from pages are fenced in the analysis and report prompts.
+    for (const task of ['compare-findings', 'write-report']) {
+      const later = h.model.prompts.find((p) => p.task === task)?.prompt ?? '';
+      const claim = later.indexOf('Seasonal COP is 3 to 4');
+      expect(claim).toBeGreaterThan(later.indexOf('<<<UNTRUSTED_WEB_CONTENT'));
+      expect(claim).toBeLessThan(later.indexOf('UNTRUSTED_WEB_CONTENT>>>'));
+    }
     // The injected instruction had no effect: only the three chosen sources were fetched.
     expect(h.web.fetched.some((u) => u.includes('169.254'))).toBe(false);
     const system = h.model.generate.mock.calls[0]?.[0].messages[0]?.content ?? '';

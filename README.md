@@ -49,6 +49,8 @@ Run from the repository root:
 | `pnpm test`         | Run all Vitest projects once                                          |
 | `pnpm test:watch`   | Vitest in watch mode                                                  |
 | `pnpm check`        | typecheck → lint → format:check → test → build                        |
+| `pnpm package:win`  | Build and package the Windows installer + portable zip (on Windows)   |
+| `pnpm package:dir`  | Build and package an unpacked app folder for the current OS (testing) |
 
 Run a single package's checks with a filter, e.g. `pnpm --filter @rka/tools test`.
 
@@ -344,10 +346,26 @@ Manual test with a real model: [docs/manual-testing-research-agent.md](docs/manu
 - Strict Content-Security-Policy; navigation away from the app and new windows are
   blocked; browser permission requests are denied; `<webview>` is disabled.
 - Only the main process talks to Ollama. The renderer never makes network requests.
+- Packaged builds: production CSP with `default-src 'none'` and `connect-src 'none'`,
+  no DevTools, no menu, and Electron fuses that disable `ELECTRON_RUN_AS_NODE`,
+  `NODE_OPTIONS` and `--inspect` and require an intact `app.asar`.
+- Logs, step errors and task errors are redacted: credentials in URLs, secret query
+  parameters, tokens, e-mail addresses and the user name in home-folder paths.
+
+Full threat model, controls and their tests: [docs/security.md](docs/security.md).
+
+## Installing and releasing
+
+- Users: [docs/installation.md](docs/installation.md) explains how to install Ollama, the
+  model, SearXNG and the app, where data is stored, and how to update and uninstall.
+- Maintainers: [docs/release.md](docs/release.md) covers building, testing and publishing
+  a release, and has the release checklist.
 
 ## Configuration
 
-Settings come from environment variables. In development the app also reads `.env`
+Settings come from environment variables. The installed app also reads
+`%APPDATA%\Autonomous Research Assistant\settings.env`. Only `OLLAMA_*`, `SEARXNG_*`,
+`WEB_*` and `RESEARCH_*` keys are applied from that file. In development the app also reads `.env`
 (from `apps/desktop/` or the repository root); real environment variables take
 precedence. See `.env.example`:
 
@@ -373,6 +391,14 @@ No API keys are required or supported. An invalid `RESEARCH_*` value stops the a
 startup with a message naming the variable.
 
 ## Troubleshooting
+
+**Dev server port reserved by Windows (`listen EACCES … :5173`).** Hyper-V, WSL and
+Docker Desktop reserve port ranges on Windows, and the ranges can change after a reboot.
+`pnpm dev` therefore listens on `127.0.0.1` and uses the first port it can actually
+open: 5173, then 5273, 5373 and a few more. The terminal shows the chosen port. To force
+a port, run `$env:RKA_DEV_PORT=5299; pnpm dev`. To see the reserved ranges, run
+`netsh interface ipv4 show excludedportrange protocol=tcp`. This only affects
+development; the installed app uses no port.
 
 **"Ollama unreachable" while Ollama is running.** Use `127.0.0.1`, not `localhost`.
 On Windows `localhost` can resolve to IPv6 `::1`, where Ollama does not listen by

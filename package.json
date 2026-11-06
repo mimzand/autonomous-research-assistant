@@ -4,7 +4,7 @@
   "private": true,
   "description": "Autonomous Research & Knowledge Assistant - Windows desktop app powered by a local Ollama model.",
   "type": "module",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@12.16.1+sha512.091d1dee7927575661b25dab3c2ae31cafc1c54d6b71ed6a6600cf0c1cb10434a447eae14015f1b23e2e6bedeed79df94a932e2164d2832280dce3fb32f656d1",
   "engines": {
     "node": ">=22.12.0",
     "pnpm": ">=11.9.0"
@@ -13,6 +13,8 @@
     "dev": "pnpm --filter @rka/desktop dev",
     "build": "pnpm --filter @rka/desktop build",
     "preview": "pnpm --filter @rka/desktop preview",
+    "package:win": "pnpm --filter @rka/desktop package:win",
+    "package:dir": "pnpm --filter @rka/desktop package:dir",
     "typecheck": "tsc -p tsconfig.json && pnpm -r --workspace-concurrency=1 typecheck",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",

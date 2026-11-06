@@ -21,7 +21,8 @@ export interface SenderLike {
 
 /** Minimal shape of Electron's IpcMainInvokeEvent that we rely on. */
 export interface InvokeEventLike {
-  readonly senderFrame: { readonly url: string } | null;
+  /** `parent` is null for the top-level frame (Electron's WebFrameMain). */
+  readonly senderFrame: { readonly url: string; readonly parent?: unknown } | null;
   readonly sender: SenderLike;
 }
 
@@ -48,10 +49,14 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
   const guard =
     <T>(handler: (event: InvokeEventLike, payload: unknown) => Promise<T> | T) =>
     async (event: InvokeEventLike, ...args: unknown[]): Promise<T> => {
-      const url = event.senderFrame?.url;
-      if (!url || !deps.isTrustedSender(url)) {
+      const frame = event.senderFrame;
+      const url = frame?.url;
+      // Only our own page, and only its top-level frame (never an iframe).
+      if (!frame || !url || !deps.isTrustedSender(url) || (frame.parent ?? null) !== null) {
         throw new Error('Rejected IPC call from an untrusted sender.');
       }
+      // Every channel takes at most one (validated) argument.
+      if (args.length > 1) throw new Error('Rejected IPC call with unexpected arguments.');
       return handler(event, args[0]);
     };
 

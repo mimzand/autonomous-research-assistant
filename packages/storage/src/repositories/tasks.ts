@@ -2,6 +2,7 @@ import { type TaskStatus } from '@rka/shared';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Executor, type StorageContext } from '../context.js';
+import { redactText } from '@rka/shared';
 import { StorageError } from '../errors.js';
 import { tasks, type JsonValue, type TaskRecord } from '../schema.js';
 import { guarded } from '../sqlite-errors.js';
@@ -69,7 +70,10 @@ export function createTaskRepository(db: Executor, ctx: StorageContext) {
         status: to,
         updatedAt: now,
         ...(output !== undefined && { output }),
-        ...(patch.error !== undefined && { error: patch.error }),
+        // Errors are shown and kept long-term: never store secrets or personal paths in them.
+        ...(patch.error !== undefined && {
+          error: patch.error === null ? null : redactText(patch.error),
+        }),
         ...(to === 'running' && { error: null, finishedAt: null }),
         ...(to === 'running' && !current.startedAt && { startedAt: now }),
         ...(TERMINAL.includes(to) && { finishedAt: now }),

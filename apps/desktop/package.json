@@ -1,7 +1,7 @@
 {
   "name": "@rka/desktop",
   "productName": "Autonomous Research Assistant",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Electron shell: main process, preload bridge and Vue renderer.",
   "type": "module",
@@ -12,7 +12,9 @@
     "build": "electron-vite build",
     "preview": "install-electron && electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "package:win": "electron-vite build && electron-builder --win --config electron-builder.yml",
+    "package:dir": "electron-vite build && electron-builder --dir --config electron-builder.yml"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3"
@@ -25,11 +27,13 @@
     "@rka/tools": "workspace:*",
     "@vitejs/plugin-vue": "6.0.10",
     "electron": "44.10.1",
+    "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
     "markdown-it": "15.0.3",
     "vite": "8.3.5",
     "vue": "3.5.44",
     "vue-tsc": "3.3.14",
     "zod": "4.6.7"
-  }
+  },
+  "author": "Autonomous Research Assistant contributors"
 }

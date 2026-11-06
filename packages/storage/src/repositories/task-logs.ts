@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, inArray, max } from 'drizzle-orm';
+import { redactText, redactValue } from '@rka/shared';
 import { z } from 'zod';
 import { type Executor, type StorageContext } from '../context.js';
 import { LOG_LEVELS, taskLogs, type TaskLogRecord } from '../schema.js';
@@ -48,8 +49,9 @@ export function createTaskLogRepository(db: Executor, ctx: StorageContext) {
             seq: (last?.seq ?? 0) + 1,
             level: data.level,
             event: data.event,
-            message: data.message,
-            data: data.data ?? null,
+            // The log can be exported or shown in bug reports: strip secrets and personal details.
+            message: redactText(data.message),
+            data: data.data === undefined ? null : redactValue(data.data),
             createdAt: now,
             updatedAt: now,
           })

@@ -120,6 +120,20 @@ describe('registerIpcHandlers', () => {
     }
   });
 
+  it('rejects calls from sub-frames and calls with extra arguments', async () => {
+    const { handlers, sender } = setup();
+    const handler = handlers.get(IpcChannels.appGetInfo);
+    if (!handler) throw new Error('missing handler');
+    const iframe = { url: trusted, parent: { url: trusted } };
+    await expect(handler({ senderFrame: iframe, sender })).rejects.toThrow(/untrusted/);
+    await expect(
+      handler({ senderFrame: { url: trusted, parent: null }, sender }, {}, 'extra'),
+    ).rejects.toThrow(/unexpected arguments/);
+    await expect(
+      handler({ senderFrame: { url: trusted, parent: null }, sender }),
+    ).resolves.toMatchObject({ name: 'rka' });
+  });
+
   it('refuses to send responses that break the contract', async () => {
     const { invoke } = setup({ health: { status: 'ready', provider: 'openai' } });
     await expect(invoke(IpcChannels.modelGetHealth, trusted)).rejects.toThrow();

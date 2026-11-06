@@ -8,23 +8,37 @@ import {
   createWebToolsFromConfig,
   loadWebConfig,
 } from '@rka/tools';
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
 import { createDashboardService } from './dashboard.js';
 import { backupDialogOptions } from './backup-dialog.js';
-import { loadDevEnvFile } from './env.js';
+import { loadDevEnvFile, loadSettingsFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
 import { createResearchToolsService } from './research-tools.js';
-import { isAppUrl } from './security.js';
-import { createMainWindow } from './window.js';
+import { installConsoleRedaction } from './log.js';
+import { isAllowedSetting, isAppUrl, isSafeExternalUrl, type AppUrlOptions } from './security.js';
+import { checkStartup } from './startup.js';
+import { createMainWindow, rendererIndexPath } from './window.js';
+
+// Everything the main process prints is redacted (secrets, e-mail addresses, user names in paths).
+installConsoleRedaction();
 
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
+const urlPolicy: AppUrlOptions = { devServerUrl, rendererIndexPath: rendererIndexPath() };
+const windowOptions = { ...urlPolicy, allowDevTools: !app.isPackaged };
 
 if (!app.isPackaged) {
   // apps/desktop/.env first, then the repository root .env.
   const appPath = app.getAppPath();
   loadDevEnvFile([join(appPath, '.env'), join(appPath, '..', '..', '.env')], process.env);
+}
+// Installed app: settings live next to the database, in %APPDATA%\<app>\settings.env.
+// Real environment variables (and a development .env) take precedence.
+const settingsPath = join(app.getPath('userData'), 'settings.env');
+const settings = loadSettingsFile(settingsPath, process.env, isAllowedSetting);
+if (settings?.ignored.length) {
+  console.warn(`Ignored unsupported keys in ${settingsPath}: ${settings.ignored.join(', ')}`);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -107,7 +121,11 @@ function bootstrap(): void {
         : await dialog.showOpenDialog(options);
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
-    openExternal: (url) => shell.openExternal(url),
+    // Defence in depth: the service already allows only public http(s) URLs it has seen.
+    openExternal: async (url) => {
+      if (!isSafeExternalUrl(url)) throw new Error('Refused to open a non-http(s) link.');
+      await shell.openExternal(url);
+    },
   });
 
   registerIpcHandlers(ipcMain, {
@@ -115,7 +133,7 @@ function bootstrap(): void {
     chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
     dashboard,
     researchTools,
-    isTrustedSender: (url) => isAppUrl(url, devServerUrl),
+    isTrustedSender: (url) => isAppUrl(url, urlPolicy),
     getAppInfo: () => ({
       name: app.getName(),
       version: app.getVersion(),
@@ -128,12 +146,28 @@ function bootstrap(): void {
     }),
   });
 
-  // The renderer needs no browser permissions (camera, notifications, ...).
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  // The renderer needs no browser permissions (camera, notifications, geolocation, ...).
+  // Only writing to the clipboard ("Copy" buttons) is allowed; reading it is not.
+  const allowed = (permission: string) => permission === 'clipboard-sanitized-write';
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(allowed(permission));
   });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
+    allowed(permission),
+  );
+  // No device access either (USB, HID, serial, Bluetooth).
+  session.defaultSession.setDevicePermissionHandler(() => false);
 
-  createMainWindow({ devServerUrl });
+  // Packaged builds have no menu: no reload, no DevTools shortcuts.
+  if (app.isPackaged) Menu.setApplicationMenu(null);
+
+  createMainWindow(windowOptions);
+
+  // Startup check: Ollama reachable and the model installed. Never downloads a model;
+  // the window shows the exact command to run when something is missing.
+  void checkStartup(() => runtime.getModelHealth(), webConfig.searxngUrl !== null).then((result) =>
+    console.info(`Startup check: ${result.summary}`),
+  );
 }
 
 app.on('second-instance', () => {
@@ -147,6 +181,11 @@ app.on('second-instance', () => {
 app.on('web-contents-created', (_event, contents) => {
   // Defence in depth: never allow <webview> attachment.
   contents.on('will-attach-webview', (event) => event.preventDefault());
+  // Any web contents (not only the main window) may never open windows or navigate away.
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url, urlPolicy)) event.preventDefault();
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -154,7 +193,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createMainWindow({ devServerUrl });
+  if (BrowserWindow.getAllWindows().length === 0) createMainWindow(windowOptions);
 });
 
 app
