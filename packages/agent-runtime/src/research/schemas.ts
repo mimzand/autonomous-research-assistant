@@ -46,10 +46,26 @@ export const ResearchRequestSchema = z.strictObject({
 });
 export type ResearchRequest = z.input<typeof ResearchRequestSchema>;
 
+/**
+ * The model configuration a task started with (task isolation). Opaque to the
+ * workflow: the runtime that captured it also turns it back into a provider.
+ * Absent on tasks created before runtime settings existed.
+ */
+export const TaskModelConfigSchema = z.object({
+  provider: z.string().min(1),
+  /** Model name, for display and logs. */
+  name: z.string().min(1),
+  /** Server URL, for display and logs. */
+  url: z.string(),
+  config: z.json(),
+});
+export type TaskModelConfig = z.infer<typeof TaskModelConfigSchema>;
+
 export const ResearchTaskInputSchema = z.object({
   kind: z.literal(RESEARCH_TASK_KIND),
   goal: z.string(),
   limits: ResearchLimitsSchema,
+  model: TaskModelConfigSchema.optional(),
 });
 export type ResearchTaskInput = z.infer<typeof ResearchTaskInputSchema>;
 

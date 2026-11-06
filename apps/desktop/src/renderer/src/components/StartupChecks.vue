@@ -2,6 +2,8 @@
 import { describeReadiness, type ReadinessIssue } from '@rka/shared';
 import { computed, onMounted, ref } from 'vue';
 import { useModelHealth } from '../composables/useModelHealth';
+import { useNavigation } from '../composables/useNavigation';
+import { useSettings } from '../composables/useSettings';
 
 /**
  * Startup checks shown above every page: Ollama reachable, the configured
@@ -9,20 +11,27 @@ import { useModelHealth } from '../composables/useModelHealth';
  * it shows the `ollama pull` command for the user to run.
  */
 const { health, checking, refresh } = useModelHealth();
+const nav = useNavigation();
+const { view } = useSettings((changed) => {
+  if (changed.includes('searxng.url')) void loadSearch();
+});
 const searchConfigured = ref<boolean | null>(null);
 const dismissed = ref(new Set<string>());
 const copied = ref<string | null>(null);
 
-onMounted(async () => {
+async function loadSearch(): Promise<void> {
   try {
     searchConfigured.value = (await window.api.researchTools.status()).search.configured;
   } catch {
     searchConfigured.value = null; // Unknown: do not warn.
   }
-});
+}
+onMounted(loadSearch);
 
 const issues = computed<ReadinessIssue[]>(() => {
-  if (!health.value) return [];
+  // Hidden while the Settings page is open (it shows the same information) or when turned off.
+  if (!health.value || nav.section.value === 'settings') return [];
+  if (view.value && !view.value.values['general.showStartupChecks']) return [];
   return describeReadiness(health.value, searchConfigured.value ?? true).filter(
     (issue) => !dismissed.value.has(issue.id),
   );
@@ -78,6 +87,14 @@ async function copy(command: string): Promise<void> {
           @click="refresh()"
         >
           {{ checking ? 'Checking…' : 'Check again' }}
+        </button>
+        <button
+          type="button"
+          class="secondary small"
+          data-testid="startup-open-settings"
+          @click="nav.go('settings')"
+        >
+          Open Settings
         </button>
         <button
           type="button"

@@ -3,11 +3,17 @@ import {
   BackupResultSchema,
   ChatEventSchema,
   ChatStartResultSchema,
+  ConnectionTestResultSchema,
+  EffectiveModelConfigSchema,
   ExtractionResultSchema,
   IntegrityCheckResultSchema,
   IpcChannels,
   IpcEvents,
   ModelHealthSchema,
+  ModelTestResultSchema,
+  OllamaConnectionStateSchema,
+  OllamaModelDetailsSchema,
+  OllamaModelListSchema,
   OpenUrlResultSchema,
   PickFileResultSchema,
   RENDERER_API_KEY,
@@ -17,6 +23,10 @@ import {
   ResearchToolsStatusSchema,
   SaveTestSourceResultSchema,
   SearchHealthSchema,
+  SettingsChangedEventSchema,
+  SettingsUpdateResultSchema,
+  SettingsValidateResultSchema,
+  SettingsViewSchema,
   SourceDetailsSchema,
   SourceListResultSchema,
   StorageStatusSchema,
@@ -29,14 +39,16 @@ import {
   type ChatApi,
   type ChatEvent,
   type KnowledgeApi,
+  type OllamaApi,
   type RendererApi,
   type ReportsApi,
   type ResearchToolsApi,
+  type SettingsApi,
   type StorageApi,
   type TasksApi,
 } from '@rka/shared';
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { type z } from 'zod';
+import { z } from 'zod';
 
 /**
  * The renderer's only bridge to the main process. It exposes a fixed set of
@@ -127,6 +139,46 @@ const researchTools: ResearchToolsApi = {
   },
 };
 
+const settings: SettingsApi = {
+  get: () => call(SettingsViewSchema, IpcChannels.settingsGet),
+  validate: (patch) => call(SettingsValidateResultSchema, IpcChannels.settingsValidate, patch),
+  update: (patch) => call(SettingsUpdateResultSchema, IpcChannels.settingsUpdate, patch),
+  reset: (keys) =>
+    call(SettingsUpdateResultSchema, IpcChannels.settingsReset, keys ? { keys } : {}),
+  setSecret: (key, value) =>
+    call(SettingsUpdateResultSchema, IpcChannels.settingsSetSecret, { key, value }),
+  chooseBackupFolder: () =>
+    call(
+      z.union([SettingsUpdateResultSchema, z.object({ status: z.literal('cancelled') })]),
+      IpcChannels.settingsChooseBackupFolder,
+    ),
+  testSearxng: (url) =>
+    call(ConnectionTestResultSchema, IpcChannels.settingsTestSearxng, url ? { url } : {}),
+  onChanged: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = SettingsChangedEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(IpcEvents.settingsChanged, handler);
+    return () => {
+      ipcRenderer.removeListener(IpcEvents.settingsChanged, handler);
+    };
+  },
+};
+
+const ollama: OllamaApi = {
+  testConnection: (url) =>
+    call(ConnectionTestResultSchema, IpcChannels.ollamaTestConnection, url ? { url } : {}),
+  connectionState: () => call(OllamaConnectionStateSchema, IpcChannels.ollamaConnectionState),
+  connect: () => call(OllamaConnectionStateSchema, IpcChannels.ollamaConnect),
+  disconnect: () => call(OllamaConnectionStateSchema, IpcChannels.ollamaDisconnect),
+  listModels: () => call(OllamaModelListSchema, IpcChannels.ollamaListModels),
+  showModel: (name) => call(OllamaModelDetailsSchema, IpcChannels.ollamaShowModel, { name }),
+  testModel: (name, prompt) =>
+    call(ModelTestResultSchema, IpcChannels.ollamaTestModel, { name, prompt }),
+  effectiveConfig: () => call(EffectiveModelConfigSchema, IpcChannels.ollamaEffectiveConfig),
+};
+
 const api: RendererApi = {
   getAppInfo: () => call(AppInfoSchema, IpcChannels.appGetInfo),
   getModelHealth: () => call(ModelHealthSchema, IpcChannels.modelGetHealth),
@@ -136,6 +188,8 @@ const api: RendererApi = {
   reports: Object.freeze(reports),
   storage: Object.freeze(storage),
   researchTools: Object.freeze(researchTools),
+  settings: Object.freeze(settings),
+  ollama: Object.freeze(ollama),
 };
 
 contextBridge.exposeInMainWorld(RENDERER_API_KEY, Object.freeze(api));

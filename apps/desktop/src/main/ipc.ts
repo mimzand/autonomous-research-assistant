@@ -9,6 +9,7 @@ import {
 } from '@rka/shared';
 import { type ChatController } from './chat.js';
 import { type DashboardService } from './dashboard.js';
+import { type SettingsService } from './config/settings-service.js';
 import { type ResearchToolsService } from './research-tools.js';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
@@ -36,6 +37,7 @@ export interface IpcDeps {
   readonly chat: ChatController;
   readonly dashboard: DashboardService;
   readonly researchTools: ResearchToolsService;
+  readonly settings: SettingsService;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
 }
@@ -137,6 +139,25 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
     [IpcChannels.researchSaveSource]: (p: unknown) => researchTools.saveSource(p),
     [IpcChannels.researchOpenUrl]: (p: unknown) => researchTools.openUrl(p),
     [IpcChannels.researchCancel]: (p: unknown) => researchTools.cancel(p),
+  });
+  // Settings and Ollama management. Secrets go in, never out.
+  const { settings } = deps;
+  Object.assign(routes, {
+    [IpcChannels.settingsGet]: () => settings.get(),
+    [IpcChannels.settingsValidate]: (p: unknown) => settings.validate(p),
+    [IpcChannels.settingsUpdate]: (p: unknown) => settings.update(p),
+    [IpcChannels.settingsReset]: (p: unknown) => settings.reset(p),
+    [IpcChannels.settingsSetSecret]: (p: unknown) => settings.setSecret(p),
+    [IpcChannels.settingsChooseBackupFolder]: () => settings.chooseBackupFolder(),
+    [IpcChannels.settingsTestSearxng]: (p: unknown) => settings.testSearxng(p),
+    [IpcChannels.ollamaTestConnection]: (p: unknown) => settings.ollamaTestConnection(p),
+    [IpcChannels.ollamaConnectionState]: () => settings.ollamaConnectionState(),
+    [IpcChannels.ollamaConnect]: () => settings.ollamaConnect(),
+    [IpcChannels.ollamaDisconnect]: () => settings.ollamaDisconnect(),
+    [IpcChannels.ollamaListModels]: () => settings.ollamaListModels(),
+    [IpcChannels.ollamaShowModel]: (p: unknown) => settings.ollamaShowModel(p),
+    [IpcChannels.ollamaTestModel]: (p: unknown) => settings.ollamaTestModel(p),
+    [IpcChannels.ollamaEffectiveConfig]: () => settings.ollamaEffectiveConfig(),
   });
   for (const [channel, handler] of Object.entries(routes)) {
     ipc.handle(

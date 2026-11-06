@@ -13,6 +13,7 @@ import {
   type ResearchEvent,
   type ResearchLimits,
   type ResearchProgress,
+  type ResearchAgentDeps,
   type ResearchRequest,
 } from './research/index.js';
 
@@ -22,8 +23,12 @@ export interface AgentRuntimeDeps {
   readonly storage: Storage;
   /** Progress of research tasks (for the UI). */
   readonly onResearchEvent?: (event: ResearchEvent) => void;
-  /** Default research limits (requests may override within the schema bounds). */
-  readonly researchDefaults?: Partial<ResearchLimits>;
+  /** Default research limits (requests may override within the schema bounds). Read per task. */
+  readonly researchDefaults?: Partial<ResearchLimits> | (() => Partial<ResearchLimits>);
+  /** Task isolation for research tasks (see ResearchAgentDeps.taskModels). */
+  readonly taskModels?: ResearchAgentDeps['taskModels'];
+  /** Whether web search is configured now (Settings can change it at run time). */
+  readonly searchConfigured?: () => boolean;
 }
 
 export interface StreamChatOptions {
@@ -39,7 +44,7 @@ export type TaskActionOutcome =
  * autonomous research workflow, with their task lifecycle actions.
  */
 export interface AgentRuntime {
-  /** Model used for chat and (later) agent runs. */
+  /** Model used for chat and new tasks (follows the current settings). */
   readonly model: string;
   getModelHealth(signal?: AbortSignal): Promise<ModelHealth>;
   listTools(): readonly ToolSummary[];
@@ -88,6 +93,8 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     tools: deps.tools,
     ...(deps.onResearchEvent && { onEvent: deps.onResearchEvent }),
     ...(deps.researchDefaults && { defaults: deps.researchDefaults }),
+    ...(deps.taskModels && { taskModels: deps.taskModels }),
+    ...(deps.searchConfigured && { searchConfigured: deps.searchConfigured }),
   });
   const isExecuting = (id: string) => persistenceCheck.isRunning(id) || research.isRunning(id);
 
@@ -127,7 +134,9 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
   }
 
   return {
-    model: deps.modelProvider.defaultModel,
+    get model() {
+      return deps.modelProvider.defaultModel;
+    },
     getModelHealth: (signal) => deps.modelProvider.checkHealth({ signal }),
     listTools: () => deps.tools.list(),
     streamChat: (turns, options = {}) =>

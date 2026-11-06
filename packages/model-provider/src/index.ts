@@ -41,10 +41,12 @@ export {
   OLLAMA_DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   OLLAMA_DEFAULT_TIMEOUT_MS,
   OllamaConfigSchema,
+  OllamaGenerationDefaultsSchema,
   loadOllamaConfig,
   resolveOllamaBaseUrl,
   type OllamaConfig,
   type OllamaEnv,
+  type OllamaGenerationDefaults,
 } from './config.js';
 export {
   OllamaProvider,
@@ -52,5 +54,8 @@ export {
   matchesModel,
   supportsStructuredOutput,
   type FetchLike,
+  type OllamaConnectionInfo,
+  type OllamaModelDetails,
+  type OllamaModelSummary,
   type OllamaProviderOptions,
 } from './ollama/provider.js';

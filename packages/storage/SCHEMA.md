@@ -139,7 +139,9 @@ Indexes: `task_id`, `created_at`.
 
 ### `settings`
 
-Key/value application settings.
+Key/value application settings. The runtime settings (Settings page) use this table with
+no schema change: `settings.<key>` holds a saved value (JSON), `secret.<key>` an
+encrypted secret (`is_secret = 1`). See [docs/settings.md](../../docs/settings.md).
 
 | Column                     | Type              | Notes                                                       |
 | -------------------------- | ----------------- | ----------------------------------------------------------- |

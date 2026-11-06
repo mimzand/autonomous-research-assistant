@@ -8,23 +8,40 @@ import { z } from 'zod';
 
 export const OllamaVersionSchema = z.object({ version: z.string().min(1) });
 
+const OllamaModelDetailsSchema = z.object({
+  format: z.string().optional(),
+  family: z.string().optional(),
+  families: z.array(z.string()).nullable().optional(),
+  parameter_size: z.string().optional(),
+  quantization_level: z.string().optional(),
+  context_length: z.number().int().positive().optional(),
+});
+
 export const OllamaTagsSchema = z.object({
   models: z.array(
     z.object({
       name: z.string().min(1),
-      details: z
-        .object({
-          parameter_size: z.string().optional(),
-          quantization_level: z.string().optional(),
-          context_length: z.number().int().positive().optional(),
-        })
-        .optional(),
+      modified_at: z.string().optional(),
+      size: z.number().int().nonnegative().optional(),
+      digest: z.string().optional(),
+      details: OllamaModelDetailsSchema.optional(),
       /** Present in recent Ollama versions. */
       capabilities: z.array(z.string()).optional(),
     }),
   ),
 });
 export type OllamaTags = z.infer<typeof OllamaTagsSchema>;
+
+/** POST /api/show. Only the fields shown in Settings; the rest is ignored. */
+export const OllamaShowSchema = z.object({
+  details: OllamaModelDetailsSchema.optional(),
+  capabilities: z.array(z.string()).optional(),
+  model_info: z.record(z.string(), z.unknown()).optional(),
+  parameters: z.string().optional(),
+  license: z.string().optional(),
+  modified_at: z.string().optional(),
+});
+export type OllamaShow = z.infer<typeof OllamaShowSchema>;
 
 export const OllamaErrorBodySchema = z.object({ error: z.string() });
 
@@ -57,6 +74,8 @@ export interface OllamaChatBody {
     num_ctx: number;
     temperature?: number;
     top_p?: number;
+    top_k?: number;
+    repeat_penalty?: number;
     seed?: number;
     num_predict?: number;
     stop?: string[];

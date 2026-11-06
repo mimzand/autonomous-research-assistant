@@ -32,6 +32,22 @@ import {
   type ToolSearchResult,
 } from './research-tools.js';
 
+import {
+  type ConnectionTestResult,
+  type EffectiveModelConfig,
+  type ModelTestResult,
+  type OllamaConnectionState,
+  type OllamaModelDetails,
+  type OllamaModelList,
+  type SecretSettingKey,
+  type SettingKey,
+  type SettingsChangedEvent,
+  type SettingsPatch,
+  type SettingsUpdateResult,
+  type SettingsValidateResult,
+  type SettingsView,
+} from './settings.js';
+
 /**
  * IPC contract between the Electron main process and the preload bridge.
  * Channel names live here so main and preload can never drift apart.
@@ -67,12 +83,28 @@ export const IpcChannels = {
   researchSaveSource: 'research:save-source',
   researchOpenUrl: 'research:open-url',
   researchCancel: 'research:cancel',
+  settingsGet: 'settings:get',
+  settingsValidate: 'settings:validate',
+  settingsUpdate: 'settings:update',
+  settingsReset: 'settings:reset',
+  settingsSetSecret: 'settings:set-secret',
+  settingsChooseBackupFolder: 'settings:choose-backup-folder',
+  settingsTestSearxng: 'settings:test-searxng',
+  ollamaTestConnection: 'ollama:test-connection',
+  ollamaConnectionState: 'ollama:connection-state',
+  ollamaConnect: 'ollama:connect',
+  ollamaDisconnect: 'ollama:disconnect',
+  ollamaListModels: 'ollama:list-models',
+  ollamaShowModel: 'ollama:show-model',
+  ollamaTestModel: 'ollama:test-model',
+  ollamaEffectiveConfig: 'ollama:effective-config',
 } as const;
 
 /** Main → renderer push channels (not invokable). */
 export const IpcEvents = {
   chatEvent: 'chat:event',
   researchProgress: 'research:progress',
+  settingsChanged: 'settings:changed',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -147,6 +179,38 @@ export interface ResearchToolsApi {
   cancel(requestId: string): Promise<void>;
 }
 
+/** Settings page. Secrets are write-only: no method ever returns a secret value. */
+export interface SettingsApi {
+  get(): Promise<SettingsView>;
+  /** Checks a change without saving it. */
+  validate(patch: SettingsPatch): Promise<SettingsValidateResult>;
+  /** Validates, applies to the running app and saves; all or nothing. */
+  update(patch: SettingsPatch): Promise<SettingsUpdateResult>;
+  /** Removes saved values (all when `keys` is omitted); falls back to environment/default. */
+  reset(keys?: SettingKey[]): Promise<SettingsUpdateResult>;
+  /** Stores (or with null, removes) a secret, encrypted with the OS key store. */
+  setSecret(key: SecretSettingKey, value: string | null): Promise<SettingsUpdateResult>;
+  /** Native folder picker for the backup folder. */
+  chooseBackupFolder(): Promise<SettingsUpdateResult | { status: 'cancelled' }>;
+  /** Tests a SearXNG URL (the saved one when omitted) without saving it. */
+  testSearxng(url?: string): Promise<ConnectionTestResult>;
+  /** Called after settings changed (from any window). Returns an unsubscribe function. */
+  onChanged(listener: (event: SettingsChangedEvent) => void): () => void;
+}
+
+/** Ollama connection and model management (Settings page). */
+export interface OllamaApi {
+  /** Tests a server URL (the saved one when omitted) without saving it. */
+  testConnection(url?: string): Promise<ConnectionTestResult>;
+  connectionState(): Promise<OllamaConnectionState>;
+  connect(): Promise<OllamaConnectionState>;
+  disconnect(): Promise<OllamaConnectionState>;
+  listModels(): Promise<OllamaModelList>;
+  showModel(name: string): Promise<OllamaModelDetails>;
+  testModel(name: string, prompt: string): Promise<ModelTestResult>;
+  effectiveConfig(): Promise<EffectiveModelConfig>;
+}
+
 export interface RendererApi {
   getAppInfo(): Promise<AppInfo>;
   getModelHealth(): Promise<ModelHealth>;
@@ -156,6 +220,8 @@ export interface RendererApi {
   readonly reports: ReportsApi;
   readonly storage: StorageApi;
   readonly researchTools: ResearchToolsApi;
+  readonly settings: SettingsApi;
+  readonly ollama: OllamaApi;
 }
 
 /** Name of the global the preload script exposes in the renderer. */

@@ -27,6 +27,7 @@ const REASON_TEXT: Record<ModelUnavailableReason, string> = {
   timeout: 'Ollama did not respond in time.',
   'invalid-response': 'The server did not answer like Ollama.',
   'http-error': 'Ollama returned an error.',
+  disconnected: 'Disconnected in Settings.',
 };
 
 const PENDING: ModelStatusView = {

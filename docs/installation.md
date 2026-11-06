@@ -72,42 +72,42 @@ zip: right-click the zip → **Properties** → tick **Unblock** before extracti
 
 ## 5. Configure
 
-The defaults match a standard local setup:
+Open **Settings** in the sidebar. Changes apply immediately; no restart and no file
+editing is needed.
 
-- Ollama on `127.0.0.1:11434`.
-- The model `qwen3:8b`.
-- **Web search is off** until you set `SEARXNG_URL`.
+1. **Ollama Connection:** the default is `http://127.0.0.1:11434`. For Ollama on another
+   computer enter its address (e.g. `http://192.168.1.100:11434` or
+   `https://ollama.example.com`), click **Test connection**, then **Save**. See
+   [settings.md](settings.md#configuring-a-remote-ollama-server) for the server side and
+   security recommendations.
+2. **AI Models:** pick one of the models installed on that server with **Use**. Adjust
+   generation options if you like.
+3. **Research & Web Search:** enter your SearXNG URL (e.g. `http://127.0.0.1:8080`),
+   click **Test connection**, then **Save**. Web search is off until then.
 
-To change settings:
+Every setting, its default and its validation rules: [settings.md](settings.md).
 
-1. Open `%APPDATA%\Autonomous Research Assistant` in Explorer. Paste the path into the
-   address bar. The folder exists after the first start.
-2. Create a text file named `settings.env`, for example:
+**Optional: `settings.env`.** Administrators can provide defaults in a text file
+`%APPDATA%\Autonomous Research Assistant\settings.env` (read at startup), e.g.:
 
-   ```ini
-   SEARXNG_URL=http://127.0.0.1:8080
-   # OLLAMA_HOST=127.0.0.1:11434
-   # OLLAMA_MODEL=qwen3:8b
-   # RESEARCH_MAX_SOURCES=6
-   ```
+```ini
+SEARXNG_URL=http://127.0.0.1:8080
+# OLLAMA_HOST=127.0.0.1:11434
+# OLLAMA_MODEL=qwen3:8b
+```
 
-3. Restart the app.
-
-How settings are applied:
-
-- Only `OLLAMA_*`, `SEARXNG_*`, `WEB_*` and `RESEARCH_*` settings are read from this
-  file. Anything else is ignored, which is written to the log.
-- Real environment variables take precedence over the file.
+- Only `OLLAMA_*`, `SEARXNG_*`, `WEB_*` and `RESEARCH_*` keys are read; anything else is
+  ignored and written to the log. Real environment variables take precedence over the file.
 - An invalid value stops the app with a message naming the setting.
-
-All settings are listed in [`.env.example`](../.env.example).
+- Values saved in the Settings page win over the file; **Reset** in Settings returns to it.
+- All variables are listed in [`.env.example`](../.env.example).
 
 ## 6. Where your data is stored
 
 | What                                                    | Where                                                                         |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Database: tasks, steps, execution log, sources, reports | `%APPDATA%\Autonomous Research Assistant\data\research.db` (+ `-wal`, `-shm`) |
-| Settings                                                | `%APPDATA%\Autonomous Research Assistant\settings.env`                        |
+| Settings (incl. the encrypted access token)             | In the database (`settings` table); optional defaults in `settings.env`       |
 | Browser cache of the app window                         | Other folders under `%APPDATA%\Autonomous Research Assistant`                 |
 | Program files                                           | The installation folder; no user data is stored there.                        |
 | Backups                                                 | Wherever you save them: **Storage → Export backup…**.                         |

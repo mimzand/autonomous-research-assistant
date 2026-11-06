@@ -413,7 +413,9 @@ describe('local file extraction', () => {
 
   it('refuses files whose content does not match the extension', async () => {
     const { service, choose } = setup();
-    choose(tempFile('invoice.pdf', Buffer.from('MZ\x90\x00 not really a pdf')));
+    // Plain text named .pdf. (Not an "MZ" executable header: on Windows the antivirus
+    // scans such a file on open, which can take longer than the test timeout.)
+    choose(tempFile('invoice.pdf', 'This is plain text, not a PDF.'));
     const picked = await service.pickFile();
     if (picked.status !== 'selected') throw new Error('expected selection');
     expect(await service.extractFile({ requestId: rid(), token: picked.file.token })).toMatchObject(
@@ -507,6 +509,7 @@ describe('IPC', () => {
       chat: {} as never,
       dashboard: {} as never,
       researchTools: service,
+      settings: {} as never,
       getAppInfo: fake,
       isTrustedSender: (url) => url === 'app://renderer',
     });

@@ -20,13 +20,21 @@ export function describeReadiness(
   searchConfigured: boolean,
 ): ReadinessIssue[] {
   const issues: ReadinessIssue[] = [];
-  if (health.status === 'unreachable') {
+  if (health.status === 'unreachable' && health.reason === 'disconnected') {
+    issues.push({
+      id: 'ollama-unreachable',
+      severity: 'warn',
+      title: 'Disconnected from Ollama',
+      detail: 'Chat and research are paused. Connect again in Settings → Ollama Connection.',
+      command: null,
+    });
+  } else if (health.status === 'unreachable') {
     issues.push({
       id: 'ollama-unreachable',
       severity: 'error',
       title: `Ollama is not reachable at ${health.baseUrl}`,
       detail:
-        'Install Ollama from ollama.com and start it (it runs in the system tray), or set OLLAMA_HOST if it runs on another port.',
+        'Start Ollama (it runs in the system tray), or set its address in Settings → Ollama Connection.',
       command: null,
     });
   } else if (health.status === 'model-missing') {
@@ -34,7 +42,7 @@ export function describeReadiness(
       id: 'model-missing',
       severity: 'error',
       title: `The model ${health.model} is not installed`,
-      detail: `Run this command in a terminal, then click "Check again". It downloads several GB. Installed models: ${
+      detail: `Choose an installed model in Settings → AI Models, or run this command in a terminal and click "Check again" (it downloads several GB). Installed models: ${
         health.installedModels.join(', ') || 'none'
       }.`,
       command: `ollama pull ${health.model}`,
@@ -45,8 +53,7 @@ export function describeReadiness(
       id: 'search-not-configured',
       severity: 'warn',
       title: 'Web search is not configured',
-      detail:
-        'Research needs a SearXNG instance. Set SEARXNG_URL in settings.env in the app data folder and restart the app.',
+      detail: 'Research needs a SearXNG instance. Set its URL in Settings → Research & Web Search.',
       command: null,
     });
   }

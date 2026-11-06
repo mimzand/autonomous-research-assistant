@@ -6,11 +6,20 @@ import { createToolRegistry, createWebServices, loadWebConfig } from '@rka/tools
 import { IpcChannels, IpcEvents, type AppInfo, type ModelHealth } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatController } from './chat.js';
+import { createRuntimeConfig } from './config/runtime-config.js';
+import { createSettingsService } from './config/settings-service.js';
 import { createDashboardService } from './dashboard.js';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
 import { createResearchToolsService } from './research-tools.js';
 
 type Listener = (event: InvokeEventLike, ...args: unknown[]) => unknown;
+
+/** Reversible stand-in for Electron safeStorage. */
+const testCipher = {
+  isEncryptionAvailable: () => true,
+  encryptString: (text: string) => Buffer.from(`enc:${text}`).reverse(),
+  decryptString: (data: Buffer) => Buffer.from(data).reverse().toString().slice(4),
+};
 
 const STREAM_ID = '3b241101-e2bb-4255-8caf-4136c566a962';
 
@@ -39,7 +48,7 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
       yield { type: 'delta' as const, content: 'Hi' };
     },
   };
-  const storage = openStorage({ path: ':memory:' });
+  const storage = openStorage({ path: ':memory:', cipher: testCipher });
   const runtime: AgentRuntime = createAgentRuntime({
     modelProvider: provider,
     tools: createToolRegistry([]),
@@ -69,12 +78,20 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
     openExternal: async () => undefined,
   });
 
+  const config = createRuntimeConfig({ storage, env: {}, encryptionAvailable: () => true });
+  const settings = createSettingsService({
+    config,
+    ollama: {} as never,
+    chooseFolder: async () => '/home/user/Backups',
+  });
+
   const chat = new ChatController({ runtime, newId: () => STREAM_ID });
   registerIpcHandlers(ipc, {
     runtime,
     chat,
     dashboard,
     researchTools,
+    settings,
     getAppInfo: () => (overrides.appInfo ?? appInfo) as AppInfo,
     isTrustedSender: (url) => url.startsWith('file://'),
   });
@@ -311,5 +328,50 @@ describe('dashboard IPC', () => {
     };
     expect(status.tables.find((t) => t.name === 'settings')?.rows).toBe(1);
     expect(JSON.stringify(status)).not.toContain('dark');
+  });
+
+  it('serves settings: get, validate, update, reset - and never returns secrets', async () => {
+    const { invoke, storage } = setup();
+    const view = (await invoke(IpcChannels.settingsGet, trusted)) as {
+      values: Record<string, unknown>;
+      entries: Record<string, { source: string }>;
+    };
+    expect(view.values['ollama.baseUrl']).toBe('http://127.0.0.1:11434');
+    expect(view.entries['ollama.baseUrl']?.source).toBe('default');
+
+    await expect(
+      invoke(IpcChannels.settingsValidate, trusted, { 'model.temperature': 7 }),
+    ).resolves.toMatchObject({ ok: false, errors: { 'model.temperature': expect.any(String) } });
+    await expect(
+      invoke(IpcChannels.settingsUpdate, trusted, { 'model.temperature': 0.4 }),
+    ).resolves.toMatchObject({ status: 'saved', changed: ['model.temperature'] });
+    await expect(invoke(IpcChannels.settingsUpdate, trusted, 'nope')).rejects.toThrow();
+    // The backup folder can only be set through the folder picker.
+    await expect(
+      invoke(IpcChannels.settingsUpdate, trusted, { 'backup.defaultDirectory': '/etc' }),
+    ).resolves.toMatchObject({ status: 'invalid' });
+    await expect(invoke(IpcChannels.settingsChooseBackupFolder, trusted)).resolves.toMatchObject({
+      status: 'saved',
+      view: { values: { 'backup.defaultDirectory': '/home/user/Backups' } },
+    });
+
+    const secret = await invoke(IpcChannels.settingsSetSecret, trusted, {
+      key: 'ollama.authToken',
+      value: 'tok-123456',
+    });
+    expect(JSON.stringify(secret)).not.toContain('tok-123456');
+    expect(secret).toMatchObject({ view: { secrets: { 'ollama.authToken': { set: true } } } });
+    expect(JSON.stringify(await invoke(IpcChannels.settingsGet, trusted))).not.toContain(
+      'tok-123456',
+    );
+    // Stored encrypted, not in plaintext.
+    expect(JSON.stringify(storage.settings.list())).not.toContain('tok-123456');
+    await expect(
+      invoke(IpcChannels.settingsSetSecret, trusted, { key: 'other.secret', value: 'x' }),
+    ).rejects.toThrow();
+
+    await expect(
+      invoke(IpcChannels.settingsReset, trusted, { keys: ['model.temperature'] }),
+    ).resolves.toMatchObject({ status: 'saved', view: { values: { 'model.temperature': null } } });
   });
 });

@@ -20,6 +20,8 @@ const ICONS: Record<Section, string> = {
     'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zm0 0v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
   'research-tools':
     'M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1z',
+  settings:
+    'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm8.5 3a8.5 8.5 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.2-1.3L15.4 2h-4l-.4 2.4a8 8 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a8.5 8.5 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.2 1.3l.4 2.4h4l.4-2.4a8 8 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.1-.4.1-.9.1-1.3z',
 };
 
 const badge = (section: Section): { text: string; tone: string } | null => {
@@ -35,6 +37,7 @@ const modelLine = computed(() => {
   if (!h) return { text: 'Checking model…', tone: 'neutral' };
   if (h.status === 'ready') return { text: h.model, tone: 'ok' };
   if (h.status === 'model-missing') return { text: `${h.model} not installed`, tone: 'warn' };
+  if (h.reason === 'disconnected') return { text: 'Disconnected', tone: 'warn' };
   return { text: 'Ollama offline', tone: 'error' };
 });
 </script>

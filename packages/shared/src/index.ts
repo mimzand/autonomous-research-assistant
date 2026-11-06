@@ -45,6 +45,8 @@ export {
   type ReportsApi,
   type ResearchToolsApi,
   type StorageApi,
+  type SettingsApi,
+  type OllamaApi,
   type TasksApi,
 } from './ipc.js';
 export {
@@ -138,3 +140,4 @@ export {
 } from './research-tools.js';
 export { REDACTED, redactText, redactValue } from './redact.js';
 export { describeReadiness, type ReadinessIssue } from './readiness.js';
+export * from './settings.js';

@@ -55,6 +55,7 @@ import {
   ResearchPlanSchema,
   ResearchRequestSchema,
   ResearchTaskInputSchema,
+  TaskModelConfigSchema,
   ReviewSchema,
   SourceEvidenceSchema,
   type Analysis,
@@ -62,6 +63,7 @@ import {
   type ResearchLimits,
   type ResearchRequest,
   type ResearchTaskInput,
+  type TaskModelConfig,
 } from './schemas.js';
 
 export { PAUSED_MESSAGE } from './failures.js';
@@ -98,11 +100,24 @@ export interface ResearchEvent {
 
 export interface ResearchAgentDeps {
   readonly storage: Storage;
+  /** The live provider: follows the current settings. */
   readonly modelProvider: ModelProvider;
+  /**
+   * Task isolation. When present, a task captures the model configuration
+   * when it starts (stored in the task input) and uses a provider built from
+   * that capture for its whole life, including Resume and Retry after a
+   * settings change or a restart. New tasks use the latest settings.
+   */
+  readonly taskModels?: {
+    capture(): TaskModelConfig;
+    providerFor(captured: TaskModelConfig): ModelProvider;
+  };
+  /** Whether web search is configured now. Defaults to "the web_search tool exists". */
+  readonly searchConfigured?: () => boolean;
   readonly tools: ToolRegistry;
   readonly onEvent?: (event: ResearchEvent) => void;
-  /** Defaults for limits not given in a request. */
-  readonly defaults?: Partial<ResearchLimits>;
+  /** Defaults for limits not given in a request (read when a task starts). */
+  readonly defaults?: Partial<ResearchLimits> | (() => Partial<ResearchLimits>);
   readonly now?: () => Date;
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -256,8 +271,21 @@ const RETRYABLE_MODEL = new Set(['invalid-response', 'timeout', 'http-error', 'u
  * continues at the first unfinished step and never repeats completed ones.
  */
 export function createResearchAgent(deps: ResearchAgentDeps) {
-  const { storage, modelProvider, tools } = deps;
+  const { storage, modelProvider: liveProvider, tools } = deps;
   const now = deps.now ?? (() => new Date());
+  const defaults = () => (typeof deps.defaults === 'function' ? deps.defaults() : deps.defaults);
+  /** Providers built from a task's captured model configuration, per running task. */
+  const taskProviders = new Map<string, ModelProvider>();
+
+  function providerFor(task: TaskRecord): ModelProvider {
+    const captured = (task.input as { model?: unknown }).model;
+    if (!deps.taskModels || captured === undefined) return liveProvider;
+    const cached = taskProviders.get(task.id);
+    if (cached) return cached;
+    const provider = deps.taskModels.providerFor(TaskModelConfigSchema.parse(captured));
+    taskProviders.set(task.id, provider);
+    return provider;
+  }
   const sleep = deps.sleep ?? defaultSleep;
   const running = new Map<string, { controller: AbortController; done: Promise<void> }>();
   /** Hosts that failed at network level since the last successful fetch, per task. */
@@ -387,6 +415,7 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
     signal: AbortSignal,
   ): Promise<z.output<S>> {
     const limits = taskInput(task).limits;
+    const modelProvider = providerFor(task);
     let messages = prompt;
     for (let attempt = 0; ; attempt++) {
       const deadline = AbortSignal.timeout(limits.modelTimeoutMs);
@@ -869,7 +898,7 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
             : [];
         });
         const lastModel =
-          storage.modelUsage.listByTask(task.id).at(-1)?.model ?? modelProvider.defaultModel;
+          storage.modelUsage.listByTask(task.id).at(-1)?.model ?? providerFor(task).defaultModel;
         const selected = outputOf(steps, 'select', SelectOutput);
         const unusable = steps.flatMap((s) => {
           if (s.status !== 'failed' && !(s.kind === 'evidence' && s.status === 'skipped'))
@@ -1113,7 +1142,10 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           // Database unavailable; startup recovery marks it interrupted.
         }
       })
-      .finally(() => running.delete(taskId));
+      .finally(() => {
+        running.delete(taskId);
+        taskProviders.delete(taskId);
+      });
     running.set(taskId, { controller, done });
   }
 
@@ -1137,7 +1169,7 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
   return {
     /** Whether the tools the workflow needs are registered (search needs SEARXNG_URL). */
     readiness(): { ok: true } | { ok: false; message: string } {
-      if (!tools.get('web_search')) {
+      if (!(deps.searchConfigured ? deps.searchConfigured() : tools.get('web_search'))) {
         return {
           ok: false,
           message: 'Web search is not configured. Set SEARXNG_URL in .env and restart the app.',
@@ -1160,8 +1192,16 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
       const requested = Object.fromEntries(
         Object.entries(parsed.limits ?? {}).filter(([key]) => key in (request.limits ?? {})),
       );
-      const limits = ResearchLimitsSchema.parse({ ...deps.defaults, ...requested });
+      const limits = ResearchLimitsSchema.parse({ ...defaults(), ...requested });
+      // Task isolation: the configuration captured here is used for the whole task.
+      const taskModels = deps.taskModels;
+      const captured = taskModels?.capture();
+      const modelProvider =
+        taskModels && captured ? taskModels.providerFor(captured) : liveProvider;
       const health = await modelProvider.checkHealth({ signal: AbortSignal.timeout(15_000) });
+      if (health.status === 'unreachable' && health.reason === 'disconnected') {
+        throw new ResearchStartError(health.error);
+      }
       if (health.status === 'unreachable') {
         throw new ResearchStartError(
           // The provider's message usually names the address already; do not repeat it.
@@ -1177,7 +1217,12 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
       const task = storage.transaction((repos) => {
         const created = repos.tasks.create({
           title: `Research: ${short(goal, 140)}`,
-          input: { kind: RESEARCH_TASK_KIND, goal, limits },
+          input: {
+            kind: RESEARCH_TASK_KIND,
+            goal,
+            limits,
+            ...(captured && { model: captured }),
+          },
         });
         repos.steps.append(created.id, {
           kind: 'plan',
@@ -1190,9 +1235,14 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         task.id,
         'info',
         'task.started',
-        `Research started with the local model ${health.model}.`,
+        `Research started with the local model ${health.model} at ${health.baseUrl}.`,
         {
-          data: { goal: short(goal, 300), limits: { ...limits } },
+          data: {
+            goal: short(goal, 300),
+            limits: { ...limits },
+            model: health.model,
+            server: health.baseUrl,
+          },
         },
       );
       emit(task.id, 'task', { message: 'Started' });

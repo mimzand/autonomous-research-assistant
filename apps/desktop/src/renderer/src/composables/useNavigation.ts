@@ -1,6 +1,7 @@
 import { computed, reactive } from 'vue';
 
-export type Section = 'chat' | 'tasks' | 'knowledge' | 'reports' | 'storage' | 'research-tools';
+export type Section =
+  'chat' | 'tasks' | 'knowledge' | 'reports' | 'storage' | 'research-tools' | 'settings';
 
 export const SECTIONS: readonly { id: Section; label: string; description: string }[] = [
   { id: 'chat', label: 'Chat', description: 'Local model playground' },
@@ -13,6 +14,7 @@ export const SECTIONS: readonly { id: Section; label: string; description: strin
     label: 'Research Tools',
     description: 'Run search, fetch and file extraction by hand',
   },
+  { id: 'settings', label: 'Settings', description: 'Ollama, models, web search and more' },
 ];
 
 const state = reactive({

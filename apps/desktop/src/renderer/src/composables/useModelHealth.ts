@@ -13,6 +13,7 @@ const checking = ref(false);
 const bridgeError = ref<string | null>(null);
 let subscribers = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
+let stopSettings: (() => void) | undefined;
 
 async function refresh(): Promise<void> {
   if (checking.value) return;
@@ -34,12 +35,19 @@ export function useModelHealth() {
     if (subscribers === 1) {
       void refresh();
       timer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+      // A new server, model or connection state in Settings: check again right away.
+      stopSettings = window.api.settings.onChanged(({ changed }) => {
+        if (changed.some((k) => k.startsWith('ollama.') || k === 'model.name')) void refresh();
+      });
     }
   });
 
   onBeforeUnmount(() => {
     subscribers--;
-    if (subscribers === 0) clearInterval(timer);
+    if (subscribers === 0) {
+      clearInterval(timer);
+      stopSettings?.();
+    }
   });
 
   // Read-only views: only `refresh` changes the state.

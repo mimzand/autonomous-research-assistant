@@ -68,9 +68,13 @@ export {
   type WebToolDeps,
 } from './web/tools.js';
 export {
+  createReconfigurableWebServices,
+  createSearxngClient,
   createWebServices,
   createWebToolsFromConfig,
   loadWebConfig,
+  WebConfigSchema,
+  type ReconfigurableWebServices,
   type WebServices,
   type WebConfig,
   type WebEnv,

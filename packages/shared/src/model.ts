@@ -6,6 +6,8 @@ export const ModelUnavailableReasonSchema = z.enum([
   'timeout',
   'invalid-response',
   'http-error',
+  /** The user disconnected from Ollama in Settings. */
+  'disconnected',
 ]);
 export type ModelUnavailableReason = z.infer<typeof ModelUnavailableReasonSchema>;
 

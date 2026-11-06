@@ -52,15 +52,30 @@ function defaultPortFor(protocol: string): string {
   return protocol === 'https:' ? '443' : '80';
 }
 
+/**
+ * Default generation options sent with every request unless the request sets
+ * them itself. Unset options are not sent, so the model's own defaults apply.
+ */
+export const OllamaGenerationDefaultsSchema = z.strictObject({
+  temperature: z.number().min(0).max(2).optional(),
+  topP: z.number().gt(0).max(1).optional(),
+  topK: z.int().min(1).max(1000).optional(),
+  numPredict: z.int().min(1).max(131_072).optional(),
+  repeatPenalty: z.number().min(0).max(2).optional(),
+});
+export type OllamaGenerationDefaults = z.infer<typeof OllamaGenerationDefaultsSchema>;
+
 export const OllamaConfigSchema = z.object({
+  /** May include a path prefix (reverse proxy), e.g. https://example.com/ollama. */
   baseUrl: z.url({ protocol: /^https?$/ }),
   model: z.string().trim().min(1),
   numCtx: z.int().min(512).max(262_144),
   requestTimeoutMs: z.int().min(100).max(600_000),
   generateTimeoutMs: z.int().min(1000).max(3_600_000),
   streamIdleTimeoutMs: z.int().min(1000).max(3_600_000),
+  generation: OllamaGenerationDefaultsSchema.default({}),
 });
-export type OllamaConfig = z.infer<typeof OllamaConfigSchema>;
+export type OllamaConfig = z.output<typeof OllamaConfigSchema>;
 
 /** Environment variables this package reads. */
 export interface OllamaEnv {

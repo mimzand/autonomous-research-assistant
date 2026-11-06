@@ -363,7 +363,12 @@ Full threat model, controls and their tests: [docs/security.md](docs/security.md
 
 ## Configuration
 
-Settings come from environment variables. The installed app also reads
+**Use the Settings page** (sidebar → Settings) to change the Ollama server, the model,
+generation options, web search and limits while the app runs; values are saved in SQLite
+and no restart is needed. Details, defaults, validation rules and remote-server security:
+[docs/settings.md](docs/settings.md).
+
+Environment variables only provide the **defaults** (saved Settings values win). The installed app also reads
 `%APPDATA%\Autonomous Research Assistant\settings.env`. Only `OLLAMA_*`, `SEARXNG_*`,
 `WEB_*` and `RESEARCH_*` keys are applied from that file. In development the app also reads `.env`
 (from `apps/desktop/` or the repository root); real environment variables take

@@ -2,7 +2,12 @@ import { createServer } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { createToolRegistry } from '../registry.js';
-import { createWebToolsFromConfig, loadWebConfig } from './config.js';
+import {
+  createReconfigurableWebServices,
+  createSearxngClient,
+  createWebToolsFromConfig,
+  loadWebConfig,
+} from './config.js';
 import { buildDocx, buildPdf, paragraph } from './extract/test-documents.js';
 import { createWebFetcher, detectKind, type FetchedDocument, type WebFetcher } from './fetcher.js';
 import { type HttpResponse, type SafeHttpClient, WebError } from './http-client.js';
@@ -567,11 +572,88 @@ describe('configured tools (real HTTP clients)', () => {
       fetchTimeoutMs: 20_000,
       searchTimeoutMs: 15_000,
       maxDownloadBytes: 15 * 1024 * 1024,
+      maxTextChars: 1_000_000,
+      maxPdfPages: 300,
     });
     expect(() => loadWebConfig({ SEARXNG_URL: 'file:///etc' })).toThrow();
     expect(() => loadWebConfig({ WEB_FETCH_TIMEOUT_MS: 'soon' })).toThrow();
     expect(
       createWebToolsFromConfig(loadWebConfig({}), memoryStore().store).map((t) => t.name),
     ).toEqual(['fetch_source']);
+  });
+});
+
+describe('reconfigurable web services (Settings)', () => {
+  function searxng(answer: string) {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({ results: [{ url: `https://example.org/${answer}`, title: answer }] }),
+      );
+    });
+    return new Promise<{ origin: string; close: () => void }>((resolve) =>
+      server.listen(0, '127.0.0.1', () =>
+        resolve({
+          origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+          close: () => server.close(),
+        }),
+      ),
+    );
+  }
+
+  it('starts without SearXNG, then uses a URL set at run time, then another', async () => {
+    const a = await searxng('a');
+    const b = await searxng('b');
+    try {
+      const services = createReconfigurableWebServices(loadWebConfig({}));
+      const registry = createToolRegistry(
+        createWebTools({ ...services, store: memoryStore().store }),
+      );
+      // The tool is always registered; it explains how to configure search.
+      expect(services.isSearchConfigured()).toBe(false);
+      expect(await registry.execute('web_search', { query: 'x' }, ctx())).toMatchObject({
+        ok: false,
+        error: { code: 'not-configured', message: expect.stringMatching(/Settings/) },
+      });
+
+      services.update({ ...services.config(), searxngUrl: a.origin });
+      expect(services.isSearchConfigured()).toBe(true);
+      expect(await registry.execute('web_search', { query: 'x' }, ctx())).toMatchObject({
+        ok: true,
+        value: { results: [{ url: 'https://example.org/a' }] },
+      });
+
+      services.update({ ...services.config(), searxngUrl: b.origin });
+      expect(await registry.execute('web_search', { query: 'x' }, ctx())).toMatchObject({
+        ok: true,
+        value: { results: [{ url: 'https://example.org/b' }] },
+      });
+      // The fetcher still never reaches the (private) SearXNG address.
+      expect(
+        await registry.execute('fetch_source', { url: `${b.origin}/search` }, ctx()),
+      ).toMatchObject({ ok: false, error: { code: 'blocked-url' } });
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it('rejects an invalid configuration and keeps the previous one', () => {
+    const services = createReconfigurableWebServices(loadWebConfig({}));
+    expect(() => services.update({ ...services.config(), fetchTimeoutMs: 5 })).toThrow();
+    expect(services.config().fetchTimeoutMs).toBe(20_000);
+  });
+
+  it('tests a candidate SearXNG URL without saving it', async () => {
+    const a = await searxng('a');
+    try {
+      const health = await createSearxngClient(a.origin, {
+        safeSearch: 1,
+        searchTimeoutMs: 2000,
+      }).checkHealth();
+      expect(health).toMatchObject({ provider: 'searxng', endpoint: a.origin });
+    } finally {
+      a.close();
+    }
   });
 });

@@ -1,16 +1,23 @@
 import { join } from 'node:path';
-import { createAgentRuntime, createSourceStore, loadResearchConfig } from '@rka/agent-runtime';
-import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
-import { IpcEvents, ResearchProgressEventSchema } from '@rka/shared';
-import {
-  createToolRegistry,
-  createWebServices,
-  createWebToolsFromConfig,
-  loadWebConfig,
-} from '@rka/tools';
+import { existsSync, statSync } from 'node:fs';
+import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
+import { createOllamaProvider } from '@rka/model-provider';
+import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
+import { createReconfigurableWebServices, createToolRegistry, createWebTools } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
+import { createRuntimeConfig } from './config/runtime-config.js';
+import {
+  createOllamaSettingsService,
+  ollamaApplier,
+  taskModelsFor,
+  toOllamaConfig,
+  toResearchDefaults,
+  toWebConfig,
+  webApplier,
+} from './config/services.js';
+import { createSettingsService } from './config/settings-service.js';
 import { createDashboardService } from './dashboard.js';
 import { backupDialogOptions } from './backup-dialog.js';
 import { loadDevEnvFile, loadSettingsFile } from './env.js';
@@ -41,16 +48,20 @@ if (settings?.ignored.length) {
   console.warn(`Ignored unsupported keys in ${settingsPath}: ${settings.ignored.join(', ')}`);
 }
 
+/** The saved backup folder when it still exists, otherwise Documents. */
+function backupDirectory(saved: string | null, documents: string): string {
+  try {
+    return saved && existsSync(saved) && statSync(saved).isDirectory() ? saved : documents;
+  } catch {
+    return documents;
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
 function bootstrap(): void {
-  const ollamaConfig = loadOllamaConfig(process.env);
-  const webConfig = loadWebConfig(process.env);
-  // RESEARCH_* retry limits and timeouts; an invalid value stops startup with a clear error.
-  const researchDefaults = loadResearchConfig(process.env);
-
   // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
   // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
   const { storage, recovery } = openAppStorage({
@@ -64,20 +75,43 @@ function bootstrap(): void {
   }
   app.on('will-quit', () => storage.close());
 
+  // Runtime Configuration Manager: built-in defaults < environment (.env,
+  // settings.env, process environment; an invalid value stops startup) <
+  // values saved in Settings (SQLite). Changes apply without a restart.
+  const config = createRuntimeConfig({
+    storage,
+    env: process.env,
+    encryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+  });
+
+  // Ollama: one live provider that follows the settings. The access token is
+  // read per request in the main process only; Disconnect is session-only.
+  let ollamaConnected = true;
+  const modelProvider = createOllamaProvider(toOllamaConfig(config.getSettings()), {
+    getAuthToken: () => config.getSecret('ollama.authToken'),
+    isConnected: () => ollamaConnected,
+  });
+  config.register(ollamaApplier(modelProvider));
+
   // Web research tools. fetch_source can only reach public addresses; web_search
-  // is offered only when SEARXNG_URL points at a SearXNG instance.
-  const webServices = createWebServices(webConfig);
+  // needs a SearXNG URL (Settings → Research & Web Search).
+  const webServices = createReconfigurableWebServices(toWebConfig(config.getSettings()));
+  config.register(webApplier(webServices));
   const sourceStore = createSourceStore(storage);
-  const tools = createToolRegistry(createWebToolsFromConfig(webConfig, sourceStore, webServices));
-  if (!webConfig.searxngUrl) {
-    console.info('Web search is off: set SEARXNG_URL to a SearXNG instance to enable it.');
+  const tools = createToolRegistry(createWebTools({ ...webServices, store: sourceStore }));
+  if (!webServices.isSearchConfigured()) {
+    console.info('Web search is off: set the SearXNG URL in Settings to enable it.');
   }
 
   const runtime = createAgentRuntime({
-    modelProvider: createOllamaProvider(ollamaConfig),
+    modelProvider,
     tools,
     storage,
-    researchDefaults,
+    // Read when each task starts, so Settings changes apply to new tasks.
+    researchDefaults: () => toResearchDefaults(config.getSettings()),
+    // A running task keeps the model configuration it started with.
+    taskModels: taskModelsFor(modelProvider),
+    searchConfigured: () => webServices.isSearchConfigured(),
     // Research progress is pushed to every window (validated against the shared contract).
     onResearchEvent: (event) => {
       const parsed = ResearchProgressEventSchema.safeParse(event);
@@ -93,7 +127,10 @@ function bootstrap(): void {
     runtime,
     chooseBackupPath: async () => {
       const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      const options = backupDialogOptions(app.getPath('documents'), new Date());
+      const options = backupDialogOptions(
+        backupDirectory(config.getSetting('backup.defaultDirectory'), app.getPath('documents')),
+        new Date(),
+      );
       const result = parent
         ? await dialog.showSaveDialog(parent, options)
         : await dialog.showSaveDialog(options);
@@ -103,7 +140,7 @@ function bootstrap(): void {
 
   const focusedWindow = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   const researchTools = createResearchToolsService({
-    config: webConfig,
+    config: () => webServices.config(),
     services: webServices,
     tools,
     storage,
@@ -128,11 +165,49 @@ function bootstrap(): void {
     },
   });
 
+  const ollamaSettings = createOllamaSettingsService({
+    config,
+    provider: modelProvider,
+    connection: {
+      get: () => ollamaConnected,
+      set: (connected) => {
+        ollamaConnected = connected;
+      },
+    },
+    recordUsage: (usage) =>
+      storage.modelUsage.record({ provider: 'ollama', purpose: 'settings:test-model', ...usage }),
+  });
+  const settingsService = createSettingsService({
+    config,
+    ollama: ollamaSettings,
+    chooseFolder: async (current) => {
+      const options: Electron.OpenDialogOptions = {
+        title: 'Choose the default backup folder',
+        properties: ['openDirectory', 'createDirectory'],
+        defaultPath: backupDirectory(current, app.getPath('documents')),
+      };
+      const parent = focusedWindow();
+      const result = parent
+        ? await dialog.showOpenDialog(parent, options)
+        : await dialog.showOpenDialog(options);
+      return result.canceled ? null : (result.filePaths[0] ?? null);
+    },
+  });
+  // Typed change events: every window gets the new state (validated against the contract).
+  config.onChange(({ changed }) => {
+    const event = SettingsChangedEventSchema.parse({ changed, view: config.view() });
+    console.info(`Settings changed: ${changed.join(', ')}`);
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IpcEvents.settingsChanged, event);
+    }
+  });
+
   registerIpcHandlers(ipcMain, {
     runtime,
     chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
     dashboard,
     researchTools,
+    settings: settingsService,
     isTrustedSender: (url) => isAppUrl(url, urlPolicy),
     getAppInfo: () => ({
       name: app.getName(),
@@ -165,8 +240,8 @@ function bootstrap(): void {
 
   // Startup check: Ollama reachable and the model installed. Never downloads a model;
   // the window shows the exact command to run when something is missing.
-  void checkStartup(() => runtime.getModelHealth(), webConfig.searxngUrl !== null).then((result) =>
-    console.info(`Startup check: ${result.summary}`),
+  void checkStartup(() => runtime.getModelHealth(), webServices.isSearchConfigured()).then(
+    (result) => console.info(`Startup check: ${result.summary}`),
   );
 }
 

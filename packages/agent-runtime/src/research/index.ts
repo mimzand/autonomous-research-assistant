@@ -18,8 +18,10 @@ export {
   ResearchLimitsSchema,
   ResearchPlanSchema,
   ResearchRequestSchema,
+  TaskModelConfigSchema,
   type ResearchLimits,
   type ResearchRequest,
+  type TaskModelConfig,
 } from './schemas.js';
 export {
   groundClaims,

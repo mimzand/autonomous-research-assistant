@@ -27,8 +27,9 @@ function shipped(dir: string): string[] {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return shipped(path);
     const isSource = /\.(ts|vue)$/.test(entry.name);
+    // Separator-independent (Windows paths use backslashes).
     const isTestOnly =
-      /\.test\.ts$/.test(entry.name) || /(^|\/)(testing|test-fixtures)\.ts$/.test(path);
+      /\.test\.ts$/.test(entry.name) || /^(testing|test-fixtures)\.ts$/.test(entry.name);
     return isSource && !isTestOnly ? [path] : [];
   });
 }

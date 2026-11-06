@@ -33,6 +33,7 @@ describe('loadOllamaConfig', () => {
       requestTimeoutMs: 5000,
       generateTimeoutMs: 300_000,
       streamIdleTimeoutMs: 120_000,
+      generation: {},
     });
   });
 

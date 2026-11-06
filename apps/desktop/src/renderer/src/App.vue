@@ -8,6 +8,7 @@ import ChatPage from './pages/ChatPage.vue';
 import KnowledgePage from './pages/KnowledgePage.vue';
 import ReportsPage from './pages/ReportsPage.vue';
 import ResearchToolsPage from './pages/ResearchToolsPage.vue';
+import SettingsPage from './pages/SettingsPage.vue';
 import StoragePage from './pages/StoragePage.vue';
 import TaskDetailPage from './pages/TaskDetailPage.vue';
 import TasksPage from './pages/TasksPage.vue';
@@ -16,6 +17,14 @@ const appInfo = ref<AppInfo | null>(null);
 const nav = useNavigation();
 
 onMounted(async () => {
+  try {
+    // Start page from Settings (read once when the app opens).
+    const settings = await window.api.settings.get();
+    const start = settings.startedWith.startSection;
+    if (nav.section.value === 'chat' && start !== 'chat') nav.go(start);
+  } catch {
+    // Settings unavailable: stay on the default page.
+  }
   try {
     appInfo.value = await window.api.getAppInfo();
   } catch {
@@ -32,7 +41,7 @@ onMounted(async () => {
       <div class="startup-slot"><StartupChecks /></div>
       <!-- Chat stays mounted so an ongoing conversation or stream survives navigation. -->
       <ChatPage v-show="nav.section.value === 'chat'" />
-      <KeepAlive :max="7">
+      <KeepAlive :max="8">
         <TaskDetailPage
           v-if="nav.section.value === 'tasks' && nav.taskId.value"
           :key="`task-${nav.taskId.value}`"
@@ -46,6 +55,7 @@ onMounted(async () => {
           v-else-if="nav.section.value === 'research-tools'"
           key="research-tools"
         />
+        <SettingsPage v-else-if="nav.section.value === 'settings'" key="settings" />
       </KeepAlive>
     </main>
   </div>

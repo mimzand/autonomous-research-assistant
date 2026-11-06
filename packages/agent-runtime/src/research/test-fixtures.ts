@@ -334,6 +334,7 @@ export function harness(
     web?: ReturnType<typeof fakeWeb>;
     noSearch?: boolean;
     extraTools?: ToolDefinition[];
+    runtime?: Partial<Parameters<typeof createAgentRuntime>[0]>;
   } = {},
 ) {
   const storage = options.storage ?? openStorage({ path: ':memory:' });
@@ -354,6 +355,7 @@ export function harness(
     storage,
     onResearchEvent: (e) => events.push(e),
     researchDefaults: { retryBackoffMs: 0 },
+    ...options.runtime,
   });
   const start = async (
     goal = 'How efficient are heat pumps and what do they cost?',

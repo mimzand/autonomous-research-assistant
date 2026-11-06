@@ -1,3 +1,4 @@
+import { type SettingsView } from '@rka/shared';
 import { describe, expect, it } from 'vitest';
 import {
   formatBytes,
@@ -9,6 +10,7 @@ import {
   shortHash,
 } from './format';
 import { renderMarkdown } from './markdown';
+import { buildPatch, definition, describeValue, dirtyKeys, fromInput, origin } from './settings';
 import { TASK_FILTERS, TASK_STATUS_META } from './status';
 import { describeInterruption, interruptionDetail } from './task-recovery';
 
@@ -167,5 +169,61 @@ describe('task recovery text', () => {
       }),
     ).toBe('Waiting for Ollama: connect ECONNREFUSED.');
     expect(interruptionDetail({ kind: 'paused', message: 'Paused by the user.' })).toBeNull();
+  });
+});
+
+describe('settings helpers', () => {
+  const view = {
+    values: {},
+    entries: {
+      'model.name': { source: 'environment', defaultValue: 'qwen3:8b', envVar: 'OLLAMA_MODEL' },
+      'model.temperature': { source: 'saved', defaultValue: null, envVar: null },
+      'model.numCtx': { source: 'default', defaultValue: 4096, envVar: null },
+    },
+    secrets: {},
+    encryptionAvailable: true,
+    pendingRestart: [],
+    startedWith: { startSection: 'chat' },
+  } as unknown as SettingsView;
+
+  it('parses inputs by kind and allows empty for nullable settings', () => {
+    expect(fromInput(definition('model.temperature'), '')).toEqual({ ok: true, value: null });
+    expect(fromInput(definition('model.temperature'), '0,7')).toEqual({ ok: true, value: 0.7 });
+    expect(fromInput(definition('model.numCtx'), '')).toMatchObject({ ok: false });
+    expect(fromInput(definition('model.numCtx'), '8192.5')).toMatchObject({ ok: false });
+    expect(fromInput(definition('model.numCtx'), 'abc')).toMatchObject({ ok: false });
+    expect(fromInput(definition('searxng.safeSearch'), '2')).toEqual({ ok: true, value: 2 });
+    expect(fromInput(definition('general.showStartupChecks'), false)).toEqual({
+      ok: true,
+      value: false,
+    });
+  });
+
+  it('describes values with units and null labels', () => {
+    expect(describeValue(definition('model.generateTimeoutMs'), 300_000)).toBe('300 s');
+    expect(describeValue(definition('web.maxDownloadBytes'), 15 * 1024 * 1024)).toBe('15 MB');
+    expect(describeValue(definition('model.temperature'), null)).toBe('Model default');
+    expect(describeValue(definition('searxng.safeSearch'), 1)).toBe('Moderate');
+  });
+
+  it('distinguishes default, environment and customized values', () => {
+    expect(origin(view, 'model.numCtx').label).toBe('Default');
+    expect(origin(view, 'model.name').label).toBe('From OLLAMA_MODEL');
+    expect(origin(view, 'model.temperature').label).toBe('Customized');
+  });
+
+  it('tracks unsaved edits and builds a patch', () => {
+    const values = { 'model.numCtx': 4096, 'model.temperature': null } as never;
+    const drafts = { 'model.numCtx': '4096', 'model.temperature': '0.5' };
+    expect(dirtyKeys(['model.numCtx', 'model.temperature'], drafts, values)).toEqual([
+      'model.temperature',
+    ]);
+    expect(buildPatch(['model.temperature'], drafts)).toEqual({
+      patch: { 'model.temperature': 0.5 },
+      errors: {},
+    });
+    expect(buildPatch(['model.numCtx'], { 'model.numCtx': 'x' }).errors).toHaveProperty(
+      'model.numCtx',
+    );
   });
 });

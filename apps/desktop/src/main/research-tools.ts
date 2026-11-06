@@ -53,7 +53,8 @@ const SELECTION_TTL_MS = 15 * 60_000;
 const MAX_CACHED_RESULTS = 20;
 
 export interface ResearchToolsDeps {
-  readonly config: WebConfig;
+  /** Web settings; a function when they can change at run time (Settings page). */
+  readonly config: WebConfig | (() => WebConfig);
   readonly services: WebServices;
   /** The agent's registry: web_search runs through the real tool contract. */
   readonly tools: ToolRegistry;
@@ -101,8 +102,9 @@ function metadataRecord(metadata: FetchedDocument['metadata']): Record<string, s
  */
 export function createResearchToolsService(deps: ResearchToolsDeps) {
   const now = deps.now ?? (() => Date.now());
-  const { config, services, storage, sourceStore } = deps;
-  const maxFileBytes = config.maxDownloadBytes;
+  const { services, storage, sourceStore } = deps;
+  const cfg = (): WebConfig => (typeof deps.config === 'function' ? deps.config() : deps.config);
+  const searchReady = () => Boolean(services.searchProvider && cfg().searxngUrl);
 
   const running = new Map<string, AbortController>();
   const selections = new Map<string, Selection>();
@@ -194,10 +196,12 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
 
   return {
     status(): ResearchToolsStatus {
+      const config = cfg();
+      const maxFileBytes = config.maxDownloadBytes;
       return ResearchToolsStatusSchema.parse({
         search: {
-          configured: Boolean(services.searchProvider),
-          provider: services.searchProvider?.id ?? null,
+          configured: searchReady(),
+          provider: searchReady() ? (services.searchProvider?.id ?? null) : null,
           endpoint: config.searxngUrl ? new URL(config.searxngUrl).origin : null,
         },
         limits: {
@@ -212,11 +216,13 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
     },
 
     async checkSearch(): Promise<SearchHealth> {
+      const config = cfg();
       const provider = services.searchProvider;
       if (!provider || !config.searxngUrl) {
         return SearchHealthSchema.parse({
           status: 'not-configured',
-          message: 'Set SEARXNG_URL (e.g. http://127.0.0.1:8080) and restart the app.',
+          message:
+            'Set the SearXNG URL (e.g. http://127.0.0.1:8080) in Settings → Research & Web Search.',
         });
       }
       try {
@@ -234,14 +240,13 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
     async search(payload: unknown): Promise<ToolSearchResult> {
       const request = parse(ToolSearchRequestSchema, payload);
       const started = now();
-      if (!deps.tools.get('web_search')) {
+      if (!deps.tools.get('web_search') || !searchReady()) {
         return ToolSearchResultSchema.parse({
           status: 'error',
           durationMs: 0,
           error: {
             code: 'not-configured',
-            message:
-              'Web search is off. Set SEARXNG_URL to a SearXNG instance and restart the app.',
+            message: 'Web search is off. Set the SearXNG URL in Settings → Research & Web Search.',
           },
         });
       }
@@ -347,6 +352,7 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
           },
         });
       }
+      const maxFileBytes = cfg().maxDownloadBytes;
       if (size > maxFileBytes) {
         return PickFileResultSchema.parse({
           status: 'rejected',
@@ -354,7 +360,7 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
           size,
           error: {
             code: 'too-large',
-            message: `The file is ${size} bytes; the limit is ${maxFileBytes} bytes (WEB_MAX_DOWNLOAD_BYTES).`,
+            message: `The file is ${size} bytes; the limit is ${maxFileBytes} bytes (Settings → Research & Web Search → Maximum fetched content size).`,
           },
         });
       }
@@ -378,6 +384,7 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
           error: { code: 'no-selection', message: 'Choose the file again (selection expired).' },
         });
       }
+      const { maxDownloadBytes: maxFileBytes, maxTextChars } = cfg();
       try {
         const source = await track(request.requestId, async (signal) => {
           // Read at most limit + 1 bytes: the file may have grown since it was chosen.
@@ -395,6 +402,7 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
           const readMs = elapsed();
           const doc = await extractLocalDocument(selection.name, bytes, {
             maxBytes: maxFileBytes,
+            maxTextChars,
             signal,
           });
           return view('file', selection.name, doc, {

@@ -23,6 +23,10 @@ export type ResponseFormat = z.infer<typeof ResponseFormatSchema>;
 export const GenerationOptionsSchema = z.strictObject({
   temperature: z.number().min(0).max(2).optional(),
   topP: z.number().gt(0).max(1).optional(),
+  /** Only the K most likely tokens are considered. */
+  topK: z.int().min(1).max(1000).optional(),
+  /** Penalises repeated tokens (1 = off). */
+  repeatPenalty: z.number().min(0).max(2).optional(),
   seed: z.int().optional(),
   /** Maximum tokens to generate. */
   maxTokens: z.int().positive().optional(),

@@ -23,7 +23,9 @@ export type WebErrorCode =
   | 'unsupported-content'
   | 'extraction-failed'
   /** The search service answered but none of its engines could reach the internet. */
-  | 'engines-unreachable';
+  | 'engines-unreachable'
+  /** The service is not configured (e.g. no SearXNG URL in Settings). */
+  | 'not-configured';
 
 export class WebError extends Error {
   override readonly name = 'WebError';
