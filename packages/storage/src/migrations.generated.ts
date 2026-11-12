@@ -42,4 +42,17 @@ export const MIGRATIONS: readonly EmbeddedMigration[] = [
       'CREATE INDEX `task_logs_step_idx` ON `task_logs` (`step_id`);',
     ],
   },
+  {
+    tag: '0002_adk_sessions',
+    hash: 'e8b037668bb22e9a30c9647bf7e3ef6cf17e4b59756f531686a3302ced8f031c',
+    statements: [
+      'CREATE TABLE `adk_app_state` (\n\t`app_name` text PRIMARY KEY NOT NULL,\n\t`state` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n);',
+      'CREATE TABLE `adk_events` (\n\t`app_name` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`session_id` text NOT NULL,\n\t`id` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`invocation_id` text NOT NULL,\n\t`author` text,\n\t`timestamp_ms` integer NOT NULL,\n\t`event` text NOT NULL,\n\t`byte_length` integer NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`app_name`, `user_id`, `session_id`, `id`),\n\tFOREIGN KEY (`app_name`,`user_id`,`session_id`) REFERENCES `adk_sessions`(`app_name`,`user_id`,`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT "adk_events_seq_check" CHECK("adk_events"."seq" >= 1)\n);',
+      'CREATE UNIQUE INDEX `adk_events_session_seq_uq` ON `adk_events` (`app_name`,`user_id`,`session_id`,`seq`);',
+      'CREATE INDEX `adk_events_invocation_idx` ON `adk_events` (`app_name`,`user_id`,`session_id`,`invocation_id`);',
+      'CREATE TABLE `adk_sessions` (\n\t`app_name` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`id` text NOT NULL,\n\t`state` text NOT NULL,\n\t`update_time_ms` integer NOT NULL,\n\t`event_count` integer DEFAULT 0 NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`app_name`, `user_id`, `id`),\n\tCONSTRAINT "adk_sessions_event_count_check" CHECK("adk_sessions"."event_count" >= 0)\n);',
+      'CREATE INDEX `adk_sessions_user_update_idx` ON `adk_sessions` (`app_name`,`user_id`,`update_time_ms`);',
+      'CREATE TABLE `adk_user_state` (\n\t`app_name` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`state` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`app_name`, `user_id`)\n);',
+    ],
+  },
 ];

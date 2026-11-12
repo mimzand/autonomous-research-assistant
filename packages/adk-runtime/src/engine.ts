@@ -33,6 +33,14 @@ export {
   type InvocationStatus,
   type ToolOutcome,
 } from './tools/outcomes.js';
+export {
+  isStaleSessionError,
+  SessionDataError,
+  SqliteSessionService,
+  StaleSessionError,
+  type SqliteSessionServiceOptions,
+} from './sessions/sqlite-session-service.js';
+export { findIncompleteInvocations } from './sessions/history.js';
 export { runAdkSelfCheck, type AdkSelfCheckResult } from './self-check.js';
 export {
   finalResponseText,

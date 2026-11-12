@@ -2,11 +2,13 @@ import {
   type BaseAgent,
   type BaseSessionService,
   type BaseTool,
+  InMemorySessionService,
   isLlmAgent,
   type LlmAgent,
   Runner,
 } from './adk.js';
 import { isLocalLlm } from './local-llm.js';
+import { SqliteSessionService } from './sessions/sqlite-session-service.js';
 import { isRegistryTool, type RegistryTool } from './tools/registry-tool.js';
 
 /** An ADK agent or runner configuration this app does not allow. */
@@ -96,11 +98,21 @@ export interface GuardedRunnerOptions {
 }
 
 /**
- * The only way the app creates an ADK Runner. Checks the agent tree and never
- * passes plugins or artifact, memory or credential services (which could write
+ * The only way the app creates an ADK Runner. Checks the agent tree, admits
+ * only the in-memory or the app's SQLite session service, and never passes plugins or artifact, memory or credential services (which could write
  * files, call cloud services or hold credentials).
  */
 export function createGuardedRunner(options: GuardedRunnerOptions): Runner {
+  // Only the in-memory service or the app's own SQLite service: never ADK's
+  // Database/Vertex AI services (other databases, cloud storage).
+  if (
+    !(options.sessionService instanceof InMemorySessionService) &&
+    !(options.sessionService instanceof SqliteSessionService)
+  ) {
+    throw new AdkSecurityError(
+      'The session service must be InMemorySessionService or SqliteSessionService.',
+    );
+  }
   assertSafeAgent(options.agent, {
     ...(options.allowedTools && { allowedTools: options.allowedTools }),
     ...(options.registryTools && { registryTools: options.registryTools }),

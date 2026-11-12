@@ -263,6 +263,9 @@ importers:
       '@rka/shared':
         specifier: workspace:*
         version: link:../shared
+      '@rka/storage':
+        specifier: workspace:*
+        version: link:../storage
       '@rka/tools':
         specifier: workspace:*
         version: link:../tools

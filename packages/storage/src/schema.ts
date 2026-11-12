@@ -11,8 +11,10 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  foreignKey,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -238,6 +240,86 @@ export const taskLogs = sqliteTable(
   ],
 );
 
+// -----------------------------------------------------------------------------
+// Google ADK sessions (migration 0002). Infrastructure only: no production
+// feature writes these tables yet. Rows are keyed exactly like ADK keys them
+// (app name, user id, session id), so a session is only reachable with all
+// three. The JSON columns hold ADK's own plain-data session state and events;
+// the adk-runtime package validates and (de)serialises them.
+// -----------------------------------------------------------------------------
+
+/** An ADK session: its own (session-scoped) state and its update clock. */
+export const adkSessions = sqliteTable(
+  'adk_sessions',
+  {
+    appName: text('app_name').notNull(),
+    userId: text('user_id').notNull(),
+    id: text('id').notNull(),
+    /** Session-scoped state only (no `app:`, `user:` or `temp:` keys). */
+    state: text('state', { mode: 'json' }).$type<Record<string, JsonValue>>().notNull(),
+    /** ADK `lastUpdateTime` (epoch ms): the timestamp of the last appended event. */
+    updateTimeMs: integer('update_time_ms').notNull(),
+    /** Number of stored events; the next event gets `event_count + 1` as its seq. */
+    eventCount: integer('event_count').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ name: 'adk_sessions_pk', columns: [t.appName, t.userId, t.id] }),
+    index('adk_sessions_user_update_idx').on(t.appName, t.userId, t.updateTimeMs),
+    check('adk_sessions_event_count_check', sql`${t.eventCount} >= 0`),
+  ],
+);
+
+/** One non-partial ADK event, in append order (`seq`) within its session. */
+export const adkEvents = sqliteTable(
+  'adk_events',
+  {
+    appName: text('app_name').notNull(),
+    userId: text('user_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    id: text('id').notNull(),
+    seq: integer('seq').notNull(),
+    invocationId: text('invocation_id').notNull(),
+    author: text('author'),
+    /** ADK event timestamp (epoch ms). */
+    timestampMs: integer('timestamp_ms').notNull(),
+    /** The serialised ADK event (plain JSON data). */
+    event: text('event', { mode: 'json' }).$type<Record<string, JsonValue>>().notNull(),
+    byteLength: integer('byte_length').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ name: 'adk_events_pk', columns: [t.appName, t.userId, t.sessionId, t.id] }),
+    foreignKey({
+      name: 'adk_events_session_fk',
+      columns: [t.appName, t.userId, t.sessionId],
+      foreignColumns: [adkSessions.appName, adkSessions.userId, adkSessions.id],
+    }).onDelete('cascade'),
+    uniqueIndex('adk_events_session_seq_uq').on(t.appName, t.userId, t.sessionId, t.seq),
+    index('adk_events_invocation_idx').on(t.appName, t.userId, t.sessionId, t.invocationId),
+    check('adk_events_seq_check', sql`${t.seq} >= 1`),
+  ],
+);
+
+/** ADK `app:` state, shared by all users and sessions of an app. */
+export const adkAppState = sqliteTable('adk_app_state', {
+  appName: text('app_name').primaryKey(),
+  state: text('state', { mode: 'json' }).$type<Record<string, JsonValue>>().notNull(),
+  ...timestamps,
+});
+
+/** ADK `user:` state, shared by all sessions of one user in an app. */
+export const adkUserState = sqliteTable(
+  'adk_user_state',
+  {
+    appName: text('app_name').notNull(),
+    userId: text('user_id').notNull(),
+    state: text('state', { mode: 'json' }).$type<Record<string, JsonValue>>().notNull(),
+    ...timestamps,
+  },
+  (t) => [primaryKey({ name: 'adk_user_state_pk', columns: [t.appName, t.userId] })],
+);
+
 export const schema = {
   tasks,
   taskSteps,
@@ -248,6 +330,10 @@ export const schema = {
   settings,
   approvals,
   taskLogs,
+  adkSessions,
+  adkEvents,
+  adkAppState,
+  adkUserState,
 };
 
 export type TaskRecord = typeof tasks.$inferSelect;
@@ -260,3 +346,5 @@ export type SettingRecord = typeof settings.$inferSelect;
 export type ApprovalRecord = typeof approvals.$inferSelect;
 export type TaskLogRecord = typeof taskLogs.$inferSelect;
 export type LogLevel = (typeof LOG_LEVELS)[number];
+export type AdkSessionRecord = typeof adkSessions.$inferSelect;
+export type AdkEventRecord = typeof adkEvents.$inferSelect;

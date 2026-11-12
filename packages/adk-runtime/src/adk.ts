@@ -20,10 +20,23 @@ export {
   BaseSessionService,
   BaseTool,
   StreamingMode,
+  // Phase 5: needed by SqliteSessionService to restore events and read the
+  // state prefixes. StaleSessionError is deliberately NOT imported: ADK exports
+  // it through database_session_service.js, and importing it makes the bundler
+  // keep that module and, with it, the code executors, LocalEnvironment and
+  // MikroORM. SqliteSessionService defines a compatible error instead.
+  createEvent,
+  State,
 } from '@google/adk';
 
 export type {
   BaseAgent,
+  CreateSessionRequest,
+  DeleteSessionRequest,
+  GetSessionRequest,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  AppendEventRequest,
   BaseLlmConnection,
   Event,
   LlmRequest,

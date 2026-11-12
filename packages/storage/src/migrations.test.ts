@@ -11,6 +11,10 @@ import { tempDir } from './testing.js';
 
 const drizzleDir = join(import.meta.dirname, '..', 'drizzle');
 const TABLES = [
+  'adk_app_state',
+  'adk_events',
+  'adk_sessions',
+  'adk_user_state',
   'approvals',
   'model_usage',
   'reports',
@@ -88,6 +92,60 @@ describe('migrations', () => {
     expect(listAppliedMigrations(upgraded.sqlite).map((m) => m.tag)).toEqual([
       '0000_initial',
       '0001_task_logs',
+      '0002_adk_sessions',
+    ]);
+  });
+
+  it('upgrades a 0001 database to 0002 (ADK sessions) without touching existing tables or data', () => {
+    const { dbPath, cleanup } = tempDir();
+    cleanups.push(cleanup);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const old = new BetterSqlite3(dbPath);
+    runMigrations(old, MIGRATIONS.slice(0, 2));
+    old
+      .prepare(
+        "insert into tasks (id, title, input, status, created_at, updated_at) values ('t1', 'Old task', '{\"question\":\"q\"}', 'completed', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+      )
+      .run();
+    old
+      .prepare(
+        "insert into task_logs (id, task_id, seq, level, event, message, created_at, updated_at) values ('l1', 't1', 1, 'info', 'task.note', 'before upgrade', '2026-11-01T00:00:01Z', '2026-11-01T00:00:01Z')",
+      )
+      .run();
+    const schemaBefore = old
+      .prepare(
+        "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+      )
+      .all();
+    const dataBefore = {
+      tasks: old.prepare('select * from tasks').all(),
+      logs: old.prepare('select * from task_logs').all(),
+    };
+    old.close();
+
+    const upgraded = openStorage({ path: dbPath });
+    cleanups.unshift(() => upgraded.close());
+    const sqlite = upgraded.sqlite;
+    expect(
+      sqlite
+        .prepare(
+          "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+        )
+        .all(),
+    ).toEqual(schemaBefore);
+    expect(sqlite.prepare('select * from tasks').all()).toEqual(dataBefore.tasks);
+    expect(sqlite.prepare('select * from task_logs').all()).toEqual(dataBefore.logs);
+    expect(tables(sqlite)).toEqual(['__migrations', ...TABLES]);
+    // The new tables work after the upgrade.
+    upgraded.adkSessions.create({
+      key: { appName: 'app', userId: 'u', sessionId: 's' },
+      nowMs: 1,
+    });
+    expect(upgraded.adkSessions.get({ appName: 'app', userId: 'u', sessionId: 's' })).toBeDefined();
+    expect(listAppliedMigrations(sqlite).map((m) => m.tag)).toEqual([
+      '0000_initial',
+      '0001_task_logs',
+      '0002_adk_sessions',
     ]);
   });
 

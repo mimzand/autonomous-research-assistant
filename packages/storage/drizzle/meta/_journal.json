@@ -15,6 +15,13 @@
       "when": 1793872445054,
       "tag": "0001_task_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794476394553,
+      "tag": "0002_adk_sessions",
+      "breakpoints": true
     }
   ]
 }

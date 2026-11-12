@@ -20,6 +20,7 @@
     "@google/adk": "2.4.0",
     "@rka/model-provider": "workspace:*",
     "@rka/shared": "workspace:*",
+    "@rka/storage": "workspace:*",
     "@rka/tools": "workspace:*"
   },
   "devDependencies": {

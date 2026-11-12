@@ -17,7 +17,7 @@ import {
   UnsafeLocalCodeExecutor,
 } from '@google/adk';
 import { describe, expect, it } from 'vitest';
-import { InMemorySessionService, LlmAgent, type LlmResponse } from './adk.js';
+import { BaseSessionService, InMemorySessionService, LlmAgent, type LlmResponse } from './adk.js';
 import { AdkSecurityError, assertSafeAgent, createGuardedRunner } from './guards.js';
 import { LocalLlm } from './local-llm.js';
 
@@ -164,6 +164,22 @@ describe('createGuardedRunner', () => {
     expect(runner.credentialService).toBeUndefined();
     // PluginManager keeps its plugins in a private set.
     expect((runner.pluginManager as unknown as { plugins: Set<unknown> }).plugins.size).toBe(0);
+  });
+
+  it('admits only the in-memory or SQLite session service', () => {
+    class OtherSessionService extends InMemorySessionService {}
+    const fake = Object.create(BaseSessionService.prototype) as BaseSessionService;
+    expect(() =>
+      createGuardedRunner({ appName: 'test', agent: agent(), sessionService: fake }),
+    ).toThrow(/session service must be/);
+    // Subclasses of the in-memory service are still in-memory.
+    expect(() =>
+      createGuardedRunner({
+        appName: 'test',
+        agent: agent(),
+        sessionService: new OtherSessionService(),
+      }),
+    ).not.toThrow();
   });
 
   it('refuses unsafe agents before a runner exists', () => {

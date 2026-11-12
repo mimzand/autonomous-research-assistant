@@ -121,6 +121,9 @@ describe('ADK integration guards', () => {
         'LlmAgent',
         'Runner',
         'StreamingMode',
+        // Phase 5: SqliteSessionService (event restore, state prefixes).
+        'State',
+        'createEvent',
         'isBaseLlm',
         'isLlmAgent',
       ].sort(),
