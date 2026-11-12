@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ollama": "pnpm --filter @rka/model-provider test:live",
+    "test:adk:ollama": "pnpm --filter @rka/adk-runtime test:live",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build"
   },
   "devDependencies": {

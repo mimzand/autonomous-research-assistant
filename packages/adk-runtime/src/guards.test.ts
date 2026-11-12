@@ -113,6 +113,45 @@ describe('assertSafeAgent', () => {
   });
 });
 
+describe('Phase 3 guard rules', () => {
+  it('accepts the OllamaLlm adapter as a local model', async () => {
+    const { OllamaLlm } = await import('./ollama/ollama-llm.js');
+    const { createOllamaProvider, loadOllamaConfig } = await import('@rka/model-provider');
+    const llm = new OllamaLlm({ provider: createOllamaProvider(loadOllamaConfig({})) });
+    expect(() => assertSafeAgent(agent({ model: llm }))).not.toThrow();
+  });
+
+  it('rejects outputKey (ADK would store unvalidated output in session state)', () => {
+    rejects(() => agent({ outputKey: 'plan' }), /must not use outputKey/);
+  });
+
+  it('allowedTools admits exactly the listed tool instances (test-only)', () => {
+    const calc = new FunctionTool({
+      name: 'calculator',
+      description: 'c',
+      execute: () => Promise.resolve(1),
+    });
+    const other = new FunctionTool({
+      name: 'calculator',
+      description: 'c',
+      execute: () => Promise.resolve(1),
+    });
+    expect(() => assertSafeAgent(agent({ tools: [calc] }), { allowedTools: [calc] })).not.toThrow();
+    expect(() => assertSafeAgent(agent({ tools: [other] }), { allowedTools: [calc] })).toThrow(
+      /must not have tools/,
+    );
+    expect(() =>
+      assertSafeAgent(agent({ tools: [GOOGLE_SEARCH] }), { allowedTools: [calc] }),
+    ).toThrow(/must not have tools/);
+    // Still no code executors or cloud models, even with an allowlist.
+    expect(() =>
+      assertSafeAgent(agent({ tools: [calc], codeExecutor: new UnsafeLocalCodeExecutor() }), {
+        allowedTools: [calc],
+      }),
+    ).toThrow(/code executor/);
+  });
+});
+
 describe('createGuardedRunner', () => {
   it('builds a runner without plugins or artifact, memory and credential services', () => {
     const runner = createGuardedRunner({

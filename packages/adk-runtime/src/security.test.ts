@@ -134,6 +134,14 @@ describe('ADK integration guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('never lets shipped code admit tools to an agent (allowedTools is test-only)', () => {
+    const offenders = files
+      .filter((file) => !file.replace(/\\/g, '/').endsWith('packages/adk-runtime/src/guards.ts'))
+      .filter((file) => /\ballowedTools\b/.test(code(file)))
+      .map(rel);
+    expect(offenders).toEqual([]);
+  });
+
   it('keeps the entry point free of ADK so it is only loaded after env sanitisation', () => {
     const entry = code(join(repo, 'packages/adk-runtime/src/index.ts'));
     const runtime = code(join(repo, 'packages/adk-runtime/src/runtime.ts'));

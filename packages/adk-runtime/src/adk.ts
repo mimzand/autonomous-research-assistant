@@ -24,9 +24,26 @@ export {
 export type {
   BaseAgent,
   BaseLlmConnection,
+  BaseTool,
   Event,
   LlmRequest,
   LlmResponse,
   RunConfig,
   Session,
 } from '@google/adk';
+
+import type { LlmRequest, LlmResponse } from '@google/adk';
+
+/*
+ * Google GenAI types, derived from ADK's own request/response types so that
+ * no app module imports @google/genai (a security test enforces that).
+ */
+export type Content = LlmRequest['contents'][number];
+export type Part = NonNullable<Content['parts']>[number];
+export type GenerateContentConfig = NonNullable<LlmRequest['config']>;
+export type GenaiSchema = Extract<
+  NonNullable<GenerateContentConfig['responseSchema']>,
+  { type?: unknown }
+>;
+export type GenaiFinishReason = NonNullable<LlmResponse['finishReason']>;
+export type UsageMetadata = NonNullable<LlmResponse['usageMetadata']>;

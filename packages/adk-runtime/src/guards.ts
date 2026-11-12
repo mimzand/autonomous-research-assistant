@@ -1,6 +1,7 @@
 import {
   type BaseAgent,
   type BaseSessionService,
+  type BaseTool,
   isLlmAgent,
   type LlmAgent,
   Runner,
@@ -19,10 +20,17 @@ export class AdkSecurityError extends Error {
  * - every agent sets its own model, and that model is a LocalLlm instance
  *   (never a model name: names resolve through ADK's registry to Gemini),
  * - no code executor and no planner,
- * - no tools (model-driven tool use is not part of this app),
+ * - no `outputKey` (ADK would store unvalidated model output in session state),
+ * - no tools: model-driven tool use is not part of this app. The only
+ *   exception is `allowedTools`, an explicit list of tool instances for the
+ *   isolated tool-calling tests. No shipped code passes it (guard test).
  * - the same rules apply to every sub-agent.
  */
-export function assertSafeAgent(agent: BaseAgent, path: string = agent.name): void {
+export function assertSafeAgent(
+  agent: BaseAgent,
+  options: AgentGuardOptions = {},
+  path: string = agent.name,
+): void {
   if (!isLlmAgent(agent)) {
     throw new AdkSecurityError(`Agent "${path}" must be an LlmAgent.`);
   }
@@ -38,12 +46,28 @@ export function assertSafeAgent(agent: BaseAgent, path: string = agent.name): vo
   if (llm.planner !== undefined) {
     throw new AdkSecurityError(`Agent "${path}" must not have a planner.`);
   }
-  if (llm.tools.length > 0) {
+  if (llm.outputKey !== undefined) {
     throw new AdkSecurityError(
-      `Agent "${path}" must not have tools (model-driven tool use is disabled).`,
+      `Agent "${path}" must not use outputKey: validate the final output with structuredOutput() instead.`,
     );
   }
-  for (const sub of llm.subAgents) assertSafeAgent(sub, `${path}/${sub.name}`);
+  const allowed = options.allowedTools ?? [];
+  for (const tool of llm.tools) {
+    if (!allowed.includes(tool as BaseTool)) {
+      throw new AdkSecurityError(
+        `Agent "${path}" must not have tools (model-driven tool use is disabled).`,
+      );
+    }
+  }
+  for (const sub of llm.subAgents) assertSafeAgent(sub, options, `${path}/${sub.name}`);
+}
+
+export interface AgentGuardOptions {
+  /**
+   * Test-only: the exact tool instances an agent may carry. Used by the
+   * isolated ADK tool-calling tests; production code never sets it.
+   */
+  readonly allowedTools?: readonly BaseTool[];
 }
 
 function describeModel(model: unknown): string {
@@ -57,6 +81,8 @@ export interface GuardedRunnerOptions {
   readonly appName: string;
   readonly agent: BaseAgent;
   readonly sessionService: BaseSessionService;
+  /** Test-only, see AgentGuardOptions. */
+  readonly allowedTools?: readonly BaseTool[];
 }
 
 /**
@@ -65,7 +91,10 @@ export interface GuardedRunnerOptions {
  * files, call cloud services or hold credentials).
  */
 export function createGuardedRunner(options: GuardedRunnerOptions): Runner {
-  assertSafeAgent(options.agent);
+  assertSafeAgent(
+    options.agent,
+    options.allowedTools ? { allowedTools: options.allowedTools } : {},
+  );
   return new Runner({
     appName: options.appName,
     agent: options.agent,
