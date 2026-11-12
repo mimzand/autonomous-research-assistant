@@ -73,6 +73,16 @@ describe('security guards', () => {
     expect(inspect.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(temp']);
   });
 
+  it('never lets the model call tools in the app (tool calling stays off)', () => {
+    // Model-driven tool use is not enabled in Chat or Research: no shipped code
+    // turns on the provider's tool calling, and the test harness that executes
+    // tools is never imported by shipped code.
+    expect(offenders(/\ballowToolCalls\s*:/)).toEqual([]);
+    expect(offenders(/testing\/tool-harness/)).toEqual([]);
+    const entry = readFileSync(join(repo, 'packages/model-provider/src/index.ts'), 'utf8');
+    expect(entry).not.toMatch(/from '\.\/testing\//);
+  });
+
   it('never evaluates dynamic code', () => {
     expect(offenders(/\beval\s*\(|new\s+Function\s*\(|vm\.run/)).toEqual([]);
   });
