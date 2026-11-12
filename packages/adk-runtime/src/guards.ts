@@ -7,6 +7,7 @@ import {
   Runner,
 } from './adk.js';
 import { isLocalLlm } from './local-llm.js';
+import { isRegistryTool, type RegistryTool } from './tools/registry-tool.js';
 
 /** An ADK agent or runner configuration this app does not allow. */
 export class AdkSecurityError extends Error {
@@ -21,9 +22,11 @@ export class AdkSecurityError extends Error {
  *   (never a model name: names resolve through ADK's registry to Gemini),
  * - no code executor and no planner,
  * - no `outputKey` (ADK would store unvalidated model output in session state),
- * - no tools: model-driven tool use is not part of this app. The only
- *   exception is `allowedTools`, an explicit list of tool instances for the
- *   isolated tool-calling tests. No shipped code passes it (guard test).
+ * - no tools, except instances the caller lists explicitly:
+ *   - `registryTools`: RegistryTool instances (the ToolRegistry bridge), checked
+ *     by type and by identity. Production Chat and Research pass none.
+ *   - `allowedTools`: test-only tool instances (e.g. an ADK FunctionTool in the
+ *     isolated tests). No shipped code passes it (guard test).
  * - the same rules apply to every sub-agent.
  */
 export function assertSafeAgent(
@@ -52,8 +55,11 @@ export function assertSafeAgent(
     );
   }
   const allowed = options.allowedTools ?? [];
+  const registry = options.registryTools ?? [];
   for (const tool of llm.tools) {
-    if (!allowed.includes(tool as BaseTool)) {
+    const permitted =
+      allowed.includes(tool as BaseTool) || (isRegistryTool(tool) && registry.includes(tool));
+    if (!permitted) {
       throw new AdkSecurityError(
         `Agent "${path}" must not have tools (model-driven tool use is disabled).`,
       );
@@ -68,6 +74,8 @@ export interface AgentGuardOptions {
    * isolated ADK tool-calling tests; production code never sets it.
    */
   readonly allowedTools?: readonly BaseTool[];
+  /** The RegistryTool instances an agent may carry (explicit allowlist, by identity). */
+  readonly registryTools?: readonly RegistryTool[];
 }
 
 function describeModel(model: unknown): string {
@@ -83,6 +91,8 @@ export interface GuardedRunnerOptions {
   readonly sessionService: BaseSessionService;
   /** Test-only, see AgentGuardOptions. */
   readonly allowedTools?: readonly BaseTool[];
+  /** See AgentGuardOptions. */
+  readonly registryTools?: readonly RegistryTool[];
 }
 
 /**
@@ -91,10 +101,10 @@ export interface GuardedRunnerOptions {
  * files, call cloud services or hold credentials).
  */
 export function createGuardedRunner(options: GuardedRunnerOptions): Runner {
-  assertSafeAgent(
-    options.agent,
-    options.allowedTools ? { allowedTools: options.allowedTools } : {},
-  );
+  assertSafeAgent(options.agent, {
+    ...(options.allowedTools && { allowedTools: options.allowedTools }),
+    ...(options.registryTools && { registryTools: options.registryTools }),
+  });
   return new Runner({
     appName: options.appName,
     agent: options.agent,

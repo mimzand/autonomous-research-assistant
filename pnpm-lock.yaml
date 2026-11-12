@@ -260,6 +260,12 @@ importers:
       '@rka/model-provider':
         specifier: workspace:*
         version: link:../model-provider
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@rka/tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       zod:
         specifier: 4.6.7

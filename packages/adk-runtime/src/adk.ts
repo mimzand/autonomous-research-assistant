@@ -18,13 +18,13 @@ export {
   Runner,
   InMemorySessionService,
   BaseSessionService,
+  BaseTool,
   StreamingMode,
 } from '@google/adk';
 
 export type {
   BaseAgent,
   BaseLlmConnection,
-  BaseTool,
   Event,
   LlmRequest,
   LlmResponse,
@@ -32,7 +32,7 @@ export type {
   Session,
 } from '@google/adk';
 
-import type { LlmRequest, LlmResponse } from '@google/adk';
+import type { BaseTool as AdkBaseTool, LlmRequest, LlmResponse } from '@google/adk';
 
 /*
  * Google GenAI types, derived from ADK's own request/response types so that
@@ -47,3 +47,5 @@ export type GenaiSchema = Extract<
 >;
 export type GenaiFinishReason = NonNullable<LlmResponse['finishReason']>;
 export type UsageMetadata = NonNullable<LlmResponse['usageMetadata']>;
+export type FunctionDeclaration = NonNullable<ReturnType<AdkBaseTool['_getDeclaration']>>;
+export type ToolRunRequest = Parameters<AdkBaseTool['runAsync']>[0];

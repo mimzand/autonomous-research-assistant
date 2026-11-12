@@ -115,6 +115,8 @@ describe('ADK integration guards', () => {
         'ADK_VERSION',
         'BaseLlm',
         'BaseSessionService',
+        // Phase 4: base class of RegistryTool (the only BaseTool subclass, see below).
+        'BaseTool',
         'InMemorySessionService',
         'LlmAgent',
         'Runner',
@@ -140,6 +142,17 @@ describe('ADK integration guards', () => {
       .filter((file) => /\ballowedTools\b/.test(code(file)))
       .map(rel);
     expect(offenders).toEqual([]);
+  });
+
+  it('defines no ADK tool other than RegistryTool, and no app code wires tools to an agent yet', () => {
+    const subclasses = files.filter((file) => /extends\s+BaseTool\b/.test(code(file))).map(rel);
+    expect(subclasses).toEqual(['packages/adk-runtime/src/tools/registry-tool.ts']);
+    // Production Chat and Research (agent-runtime, desktop) must not create or admit bridged tools.
+    const wiring = files
+      .filter((file) => !rel(file).startsWith('packages/adk-runtime/'))
+      .filter((file) => /createRegistryTools|registryTools|RegistryTool\b/.test(code(file)))
+      .map(rel);
+    expect(wiring).toEqual([]);
   });
 
   it('keeps the entry point free of ADK so it is only loaded after env sanitisation', () => {

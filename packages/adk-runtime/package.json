@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "@google/adk": "2.4.0",
-    "@rka/model-provider": "workspace:*"
+    "@rka/model-provider": "workspace:*",
+    "@rka/shared": "workspace:*",
+    "@rka/tools": "workspace:*"
   },
   "devDependencies": {
     "zod": "4.6.7"
