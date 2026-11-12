@@ -5,6 +5,7 @@ import { createOllamaProvider } from '@rka/model-provider';
 import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
 import { createReconfigurableWebServices, createToolRegistry, createWebTools } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
+import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
@@ -242,6 +243,12 @@ function bootstrap(): void {
   // the window shows the exact command to run when something is missing.
   void checkStartup(() => runtime.getModelHealth(), webServices.isSearchConfigured()).then(
     (result) => console.info(`Startup check: ${result.summary}`),
+  );
+
+  // ADK migration (phase 1): load ADK after the window is up and run its offline
+  // self-check. Chat and research do not use ADK yet.
+  void probeAdkRuntime().then(({ ok, summary }) =>
+    ok ? console.info(`ADK runtime: ${summary}`) : console.warn(`ADK runtime: ${summary}`),
   );
 }
 

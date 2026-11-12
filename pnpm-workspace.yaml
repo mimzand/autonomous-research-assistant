@@ -15,3 +15,14 @@ allowBuilds:
   # Optional dependency of electron-builder for Squirrel.Windows installers; this
   # project builds NSIS installers, so its install script is not needed.
   electron-winstaller: false
+  # Transitive dependencies of @google/adk (via @google/genai, gRPC/protobuf).
+  # @google/genai's only install-time script is a no-op `echo`; protobufjs'
+  # postinstall only prints a version-scheme warning. Neither is needed.
+  '@google/genai': false
+  protobufjs: false
+
+# @google/adk lists dockerode as an optional dependency for its container code
+# executor. Code execution is prohibited in this app (see packages/adk-runtime),
+# so dockerode and its native SSH stack (ssh2, cpu-features) are never installed.
+ignoredOptionalDependencies:
+  - dockerode

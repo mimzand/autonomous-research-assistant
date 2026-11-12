@@ -20,6 +20,7 @@
     "better-sqlite3": "13.0.3"
   },
   "devDependencies": {
+    "@rka/adk-runtime": "workspace:*",
     "@rka/agent-runtime": "workspace:*",
     "@rka/model-provider": "workspace:*",
     "@rka/shared": "workspace:*",

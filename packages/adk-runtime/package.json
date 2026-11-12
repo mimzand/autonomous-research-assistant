@@ -1,0 +1,21 @@
+{
+  "name": "@rka/adk-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Google ADK (TypeScript) integration boundary: environment sanitisation, the single ADK import facade and security guards. Ollama only - no cloud models, tools or code execution.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google/adk": "2.4.0"
+  }
+}

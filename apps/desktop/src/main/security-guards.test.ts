@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 const repo = join(import.meta.dirname, '..', '..', '..', '..');
 const roots = [
   'apps/desktop/src',
+  'packages/adk-runtime/src',
   'packages/agent-runtime/src',
   'packages/model-provider/src',
   'packages/storage/src',
