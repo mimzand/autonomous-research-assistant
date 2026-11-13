@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { type SafeHttpClient, WebError } from './http-client.js';
 import { decodeText, parseContentType, truncate } from './extract/decode.js';
 import { extractDocx, isZip } from './extract/docx.js';
-import { extractHtml } from './extract/html.js';
+import { explainEmptyHtml, extractHtml, looksLikeAccessChallenge } from './extract/html.js';
 import { extractPdf, isPdf } from './extract/pdf.js';
 import { canonicalizeUrl, parsePublicUrl } from './url.js';
 
@@ -26,6 +26,8 @@ export interface FetchedDocument {
   readonly title: string | null;
   readonly text: string;
   readonly truncated: boolean;
+  /** Why `text` is empty, when it is (shown in the error; never evidence). */
+  readonly emptyReason?: string;
   /** Time spent downloading (incl. redirects) and extracting, in ms. */
   readonly timings: { readonly downloadMs: number; readonly extractMs: number };
   readonly metadata: {
@@ -101,6 +103,8 @@ export interface ExtractedDocument {
   readonly text: string;
   readonly truncated: boolean;
   readonly metadata: FetchedDocument['metadata'];
+  /** Why `text` is empty, when it is. */
+  readonly emptyReason?: string;
 }
 
 export interface ExtractOptions {
@@ -111,6 +115,11 @@ export interface ExtractOptions {
   readonly maxTextChars?: number;
   readonly maxPdfPages?: number;
   readonly signal?: AbortSignal;
+  /**
+   * Refuse HTML that is an access check (bot protection / CAPTCHA page)
+   * instead of the document (web downloads; see looksLikeAccessChallenge).
+   */
+  readonly rejectAccessChallenges?: boolean;
 }
 
 /**
@@ -126,8 +135,21 @@ export async function extractDocument(
   let title: string | null = null;
   let text: string;
   let metadata: FetchedDocument['metadata'] = {};
+  let emptyReason: string | undefined;
   if (kind === 'html') {
-    const html = extractHtml(decodeText(bytes, options.charset, true), options.baseUrl);
+    const raw = decodeText(bytes, options.charset, true);
+    let html = extractHtml(raw, options.baseUrl);
+    if (options.rejectAccessChallenges && looksLikeAccessChallenge(raw, html)) {
+      throw new WebError(
+        'access-blocked',
+        `The site answered with an access check (bot protection or CAPTCHA page${html.title ? `: "${html.title.slice(0, 80)}"` : ''}) instead of the page. It was not used; open the page in a browser if you need it.`,
+      );
+    }
+    if (!html.text.trim() && html.skipped.form > 0) {
+      // Some sites wrap the whole page in one <form> (e.g. ASP.NET WebForms).
+      html = extractHtml(raw, options.baseUrl, { includeForms: true });
+    }
+    if (!html.text.trim()) emptyReason = explainEmptyHtml(bytes.length, html);
     title = html.title;
     text = html.text;
     metadata = {
@@ -163,6 +185,14 @@ export async function extractDocument(
   } else {
     text = decodeText(bytes, options.charset).replace(/\r\n?/g, '\n').trim();
   }
+  if (!text.trim() && !emptyReason) {
+    emptyReason =
+      kind === 'pdf'
+        ? 'the PDF has no text layer (scanned PDFs are not supported)'
+        : bytes.length === 0
+          ? 'the server returned an empty response (0 bytes)'
+          : `the ${kind === 'docx' ? 'Word document' : 'text file'} contains no text`;
+  }
   const limited = truncate(text, maxTextChars);
   return {
     kind,
@@ -170,6 +200,7 @@ export async function extractDocument(
     text: limited.text,
     truncated: limited.truncated || (metadata.extractedPages ?? 0) < (metadata.pages ?? 0),
     metadata,
+    ...(emptyReason && { emptyReason }),
   };
 }
 
@@ -203,6 +234,7 @@ export function createWebFetcher(
         ...(options.maxTextChars !== undefined && { maxTextChars: options.maxTextChars }),
         ...(options.maxPdfPages !== undefined && { maxPdfPages: options.maxPdfPages }),
         ...(fetchOptions.signal && { signal: fetchOptions.signal }),
+        rejectAccessChallenges: true,
       });
 
       return {
@@ -220,6 +252,7 @@ export function createWebFetcher(
         text: extracted.text,
         truncated: extracted.truncated,
         metadata: extracted.metadata,
+        ...(extracted.emptyReason && { emptyReason: extracted.emptyReason }),
         timings: {
           downloadMs: Math.round(downloaded - started),
           extractMs: Math.round(performance.now() - downloaded),

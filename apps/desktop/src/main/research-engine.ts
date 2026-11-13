@@ -1,5 +1,5 @@
 import { loadAdkRuntime, type AdkRuntime } from '@rka/adk-runtime';
-import { type TaskModelConfig } from '@rka/agent-runtime';
+import { TaskModelConfigSchema, type TaskModelConfig } from '@rka/agent-runtime';
 import {
   ModelProviderError,
   type CallOptions,
@@ -9,6 +9,7 @@ import {
   type ModelProvider,
   type OllamaProvider,
 } from '@rka/model-provider';
+import { ollamaConnectionLabel, type ResearchTaskInfo } from '@rka/shared';
 import { z } from 'zod';
 import { taskModelsFor } from './config/services.js';
 
@@ -52,6 +53,35 @@ export function parseResearchEngine(raw: string | undefined): {
   return {
     engine: DEFAULT_RESEARCH_ENGINE,
     warning: `Ignoring ${RESEARCH_ENGINE_ENV}=${JSON.stringify(value.slice(0, 40))}: use "legacy" or "adk". New research tasks use the legacy engine.`,
+  };
+}
+
+/**
+ * What the task details show about a research task: its pinned engine and the
+ * endpoint it captured, read from the task's stored input only. Tasks without a
+ * pin, and tasks from before task isolation (no captured model), are legacy
+ * tasks: ADK has only ever been used when pinned, so nothing is guessed.
+ */
+export function researchTaskInfo(input: unknown): ResearchTaskInfo | null {
+  if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'research') {
+    return null;
+  }
+  const captured = TaskModelConfigSchema.safeParse((input as { model?: unknown }).model);
+  if (!captured.success) {
+    return { engine: 'legacy', engineLabel: 'Legacy', model: null, location: 'Ollama' };
+  }
+  const pin = pinnedEngine(captured.data);
+  const engine = typeof pin === 'string' ? pin : 'unknown';
+  return {
+    engine,
+    engineLabel:
+      engine === 'adk'
+        ? 'Google ADK'
+        : engine === 'legacy'
+          ? 'Legacy'
+          : `Unknown (${typeof pin === 'string' ? pin : pin.unknown})`,
+    model: captured.data.name,
+    location: ollamaConnectionLabel(captured.data.url),
   };
 }
 

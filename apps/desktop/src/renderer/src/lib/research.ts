@@ -44,7 +44,14 @@ const HINTS: Record<string, { title: string; hint: string }> = {
     title: 'Unsupported content',
     hint: 'Only HTML, PDF, DOCX and plain text can be extracted. Other types are never opened.',
   },
-  'extraction-failed': { title: 'Extraction failed', hint: 'The document could not be read.' },
+  'extraction-failed': {
+    title: 'No readable text',
+    hint: 'The page or document was downloaded but no text could be read (see the reason).',
+  },
+  'access-blocked': {
+    title: 'Access check',
+    hint: 'The site answered with a bot-protection or CAPTCHA page. It is not bypassed and not used.',
+  },
   'not-configured': {
     title: 'Search is off',
     hint: 'Set SEARXNG_URL in .env and restart the app.',

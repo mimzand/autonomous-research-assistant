@@ -134,6 +134,21 @@ export const TaskProgressSchema = z.object({
 });
 export type TaskProgress = z.infer<typeof TaskProgressSchema>;
 
+/**
+ * How a research task runs, from its persisted configuration (never from the
+ * current Settings): the pinned engine and the endpoint captured at creation.
+ */
+export const ResearchTaskInfoSchema = z.object({
+  engine: z.enum(['legacy', 'adk', 'unknown']),
+  /** "Legacy", "Google ADK", or "Unknown (…)" for a pin this version does not know. */
+  engineLabel: z.string(),
+  /** Model captured when the task was created (null for tasks from before task isolation). */
+  model: z.string().nullable(),
+  /** "Local Ollama", "Remote Ollama", or "Ollama" when the endpoint is unknown. */
+  location: z.string(),
+});
+export type ResearchTaskInfo = z.infer<typeof ResearchTaskInfoSchema>;
+
 export const TaskDetailsSchema = z.object({
   task: TaskViewSchema,
   /** Step progress for research tasks; null for other task types. */
@@ -144,6 +159,8 @@ export const TaskDetailsSchema = z.object({
   pendingApprovalCount: z.int().nonnegative(),
   usage: z.array(ModelUsageTotalSchema),
   recovery: TaskRecoveryInfoSchema,
+  /** Research tasks only (null otherwise). */
+  research: ResearchTaskInfoSchema.nullable(),
 });
 export type TaskDetails = z.infer<typeof TaskDetailsSchema>;
 

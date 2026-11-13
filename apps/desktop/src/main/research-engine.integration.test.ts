@@ -27,9 +27,11 @@ import {
 } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRuntimeConfig } from './config/runtime-config.js';
+import { createDashboardService } from './dashboard.js';
 import { taskModelsFor } from './config/services.js';
 import {
   PINNED_ENGINE_KEY,
+  researchTaskInfo,
   researchTaskModelsFor,
   type ResearchEngine,
 } from './research-engine.js';
@@ -638,7 +640,7 @@ describe('D/E/L. structured output is validated by the existing Zod schemas', ()
     expect(out.adk.snap).toEqual(out.legacy.snap);
     expect(out.adk.snap.task.status).toBe('failed');
     expect(out.adk.snap.task.error).toMatch(
-      /Write report\) failed: .*Local model failed \(invalid-response\): Model output does not match the schema/,
+      /Write report\) failed: .*Model failed \(invalid-response\): Model output does not match the schema/,
     );
     const report = out.adk.snap.steps.find((s) => s.kind === 'report');
     expect(report).toMatchObject({ status: 'failed', output: null });
@@ -984,6 +986,121 @@ describe('Phase 7.4.2. Research engine from Settings → Agent Engines', () => {
     expect(pinOf(restored, next)).toBeUndefined();
     expect(pinOf(restored, adkTask)).toBe('adk'); // the earlier ADK task stays pinned
     expect(restored.adk.generates).toBe(0);
+  });
+});
+
+// --- Phase 7.5: engine visibility and goal completeness on both engines -----------------------
+
+describe('Phase 7.5. the task details show the pinned engine (never the current Settings)', () => {
+  const infoOf = (h: ReturnType<typeof harness>, id: string) =>
+    createDashboardService({
+      storage: h.storage,
+      runtime: h.runtime,
+      chooseBackupPath: () => Promise.resolve(null),
+    }).getTask({ id })?.research;
+
+  it('legacy and ADK tasks, with the captured model and endpoint', async () => {
+    const h = harness({ settingsEnv: {} });
+    const legacy = await h.run();
+    h.chooseResearchEngine('adk');
+    const adk = await h.run();
+    expect(infoOf(h, legacy)).toEqual({
+      engine: 'legacy',
+      engineLabel: 'Legacy',
+      model: 'qwen3:8b',
+      location: 'Local Ollama',
+    });
+    expect(infoOf(h, adk)).toMatchObject({ engine: 'adk', engineLabel: 'Google ADK' });
+  });
+
+  it('Settings changed after creation, Pause/Resume and crash recovery do not change what is shown', async () => {
+    const path = tempDb();
+    script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+    const first = harness({ path, settingsEnv: {} });
+    first.chooseResearchEngine('adk');
+    const id = await first.start();
+    while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+    first.runtime.tasks.pause(id);
+    await first.runtime.tasks.whenIdle();
+    first.chooseResearchEngine('legacy');
+    expect(infoOf(first, id)?.engine).toBe('adk');
+    first.storage.close(); // restart
+
+    script = {};
+    const second = harness({ path, settingsEnv: { RESEARCH_ENGINE: 'legacy' } });
+    second.storage.recovery.recoverInterruptedTasks();
+    expect(infoOf(second, id)?.engine).toBe('adk');
+    second.runtime.tasks.resume(id);
+    await second.runtime.tasks.whenIdle();
+    expect(second.storage.tasks.require(id).status).toBe('completed');
+    expect(infoOf(second, id)?.engine).toBe('adk');
+  });
+
+  it('older tasks: no pin → legacy; no captured model → legacy with a neutral location; unknown pin is not guessed', () => {
+    expect(researchTaskInfo({ kind: 'research', goal: 'g', limits: {} })).toEqual({
+      engine: 'legacy',
+      engineLabel: 'Legacy',
+      model: null,
+      location: 'Ollama',
+    });
+    const model = { provider: 'ollama', name: 'm:1', url: 'https://example-tunnel.ngrok-free.dev' };
+    expect(researchTaskInfo({ kind: 'research', model: { ...model, config: {} } })).toMatchObject({
+      engine: 'legacy',
+      location: 'Remote Ollama',
+    });
+    expect(
+      researchTaskInfo({
+        kind: 'research',
+        model: { ...model, config: { researchEngine: 'turbo' } },
+      }),
+    ).toMatchObject({ engine: 'unknown', engineLabel: 'Unknown (turbo)' });
+    expect(researchTaskInfo({ kind: 'persistence-check' })).toBeNull();
+  });
+});
+
+describe('Phase 7.5. goal completeness runs identically on both engines', () => {
+  const requirements = [
+    { requirement: 'List two advantages of heat pumps', evidence: ['E1', 'E4'], coverage: 'full' },
+    { requirement: 'Give the noise level', evidence: [], coverage: 'none' },
+  ];
+  it('same requests, same stored results: check, one bounded correction, verification', async () => {
+    const out = await both(async (h) => {
+      script = {
+        'compare-findings': () => ({ json: { ...ANALYSIS, requirements } }),
+        'check-goal': () => ({
+          json: {
+            requirements: [
+              { id: 'R1', status: 'partial', paragraphs: ['P1'], note: 'Only one advantage.' },
+              { id: 'R2', status: 'not-satisfied', paragraphs: [], note: '' },
+            ],
+          },
+        }),
+        'complete-report': () => ({
+          json: {
+            paragraphs: [
+              {
+                requirement: 'R1',
+                text: 'Two advantages: high efficiency in mild climates and usable heat in the cold.',
+                evidence: ['E1', 'E4'],
+              },
+            ],
+          },
+        }),
+        'review-report': (_n, body) =>
+          body.messages.some((m) => m.content.includes('Two advantages'))
+            ? { json: { verdicts: [{ id: 'P5', verdict: 'supported', note: 'ok' }] } }
+            : undefined,
+      };
+      return h.run();
+    });
+    expect(normalised(out.adk.chats)).toEqual(normalised(out.legacy.chats));
+    expect(out.adk.snap).toEqual(out.legacy.snap);
+    expect(modelCalls(out.legacy.chats).filter((t) => t === 'complete-report')).toHaveLength(1);
+    const report = out.legacy.snap.reports[0]?.content ?? '';
+    expect(report).toContain('- **Satisfied:** List two advantages of heat pumps');
+    expect(report).toContain('- **Insufficient evidence:** Give the noise level');
+    expect(report).toContain('## Requested details');
+    expect(out.adk.adk.generates).toBeGreaterThan(0);
   });
 });
 

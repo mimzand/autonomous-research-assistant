@@ -34,7 +34,13 @@ export const MAX_TOKENS = {
   analyze: 1500,
   report: 2000,
   review: 800,
+  /** Phase 7.5 goal completeness (review step): check, correction, its claim review. */
+  goalCheck: 600,
+  goalCorrection: 800,
+  goalReview: 400,
 } as const;
+/** Goal completeness adds at most these calls per task (one each, no loop). */
+export const MAX_GOAL_CALLS = 3;
 /** ReportDraftSchema: summary ≤ 4 paragraphs, ≤ 6 sections × ≤ 6 paragraphs; review batches of 8. */
 export const MAX_REPORT_PARAGRAPHS = 4 + 6 * 6;
 export const REVIEW_BATCH = 8;
@@ -217,6 +223,8 @@ export function computeWorkload(
     | 'overallTimeoutMs'
     | 'cooldownMs'
   >,
+  /** Phase 7.5 goal-completeness calls; false only to describe pre-7.5 runs. */
+  goalCompleteness = true,
 ): Workload {
   const order: { engine: 'legacy' | 'adk'; warmup: boolean; run: number }[] = [];
   for (let i = 0; i < o.warmup; i++)
@@ -227,15 +235,20 @@ export function computeWorkload(
   }
   const sources = BENCH_RESEARCH_LIMITS.maxSources;
   const reviewCalls = Math.ceil(MAX_REPORT_PARAGRAPHS / REVIEW_BATCH);
-  const maxCalls = 1 + sources + 1 + 1 + reviewCalls;
-  const typicalCalls = 1 + sources + 1 + 1 + 1;
+  const goalCalls = goalCompleteness ? MAX_GOAL_CALLS : 0;
+  const maxCalls = 1 + sources + 1 + 1 + reviewCalls + goalCalls;
+  // Typically the goal check runs once; corrections only when a requirement is unmet.
+  const typicalCalls = 1 + sources + 1 + 1 + 1 + (goalCompleteness ? 1 : 0);
   const attempts = 1 + o.modelRetries;
   const tokensOnce =
     MAX_TOKENS.plan +
     sources * MAX_TOKENS.evidence +
     MAX_TOKENS.analyze +
     MAX_TOKENS.report +
-    reviewCalls * MAX_TOKENS.review;
+    reviewCalls * MAX_TOKENS.review +
+    (goalCompleteness
+      ? MAX_TOKENS.goalCheck + MAX_TOKENS.goalCorrection + MAX_TOKENS.goalReview
+      : 0);
   const tasks = order.length;
   const scheduledAttempts = tasks * maxCalls * attempts;
   const scheduledTokens = tasks * tokensOnce * attempts;
@@ -263,17 +276,20 @@ export function computeWorkload(
 
 /** The workload of the phase 7.1 benchmark (unbounded original design) for the given runs. */
 export function originalBenchmarkWorkload(runs: number, warmup: number) {
-  const w = computeWorkload({
-    runs,
-    warmup,
-    modelRetries: 1,
-    maxCalls: Number.MAX_SAFE_INTEGER,
-    maxCompletionTokens: Number.MAX_SAFE_INTEGER,
-    requestTimeoutMs: 300_000,
-    taskTimeoutMs: Number.MAX_SAFE_INTEGER,
-    overallTimeoutMs: Number.MAX_SAFE_INTEGER,
-    cooldownMs: 0,
-  });
+  const w = computeWorkload(
+    {
+      runs,
+      warmup,
+      modelRetries: 1,
+      maxCalls: Number.MAX_SAFE_INTEGER,
+      maxCompletionTokens: Number.MAX_SAFE_INTEGER,
+      requestTimeoutMs: 300_000,
+      taskTimeoutMs: Number.MAX_SAFE_INTEGER,
+      overallTimeoutMs: Number.MAX_SAFE_INTEGER,
+      cooldownMs: 0,
+    },
+    false, // the phase 7.1 code had no goal-completeness calls
+  );
   return {
     tasks: w.tasks,
     typicalCalls: w.tasks * w.perTask.typicalCalls,

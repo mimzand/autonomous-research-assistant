@@ -188,11 +188,12 @@ describe('workload', () => {
   it('per-task maxima follow the Research limits and call sites', () => {
     const w = computeWorkload(fakeOptions({ runs: 2, warmup: 1, modelRetries: 1 }));
     expect(w.tasks).toBe(6);
+    // Phase 7.5: + at most 3 goal-completeness calls (600 + 800 + 400 tokens), typically 1.
     expect(w.perTask).toEqual({
-      typicalCalls: 6,
-      maxCalls: 10,
-      maxAttempts: 20,
-      maxCompletionTokens: 21_600,
+      typicalCalls: 7,
+      maxCalls: 13,
+      maxAttempts: 26,
+      maxCompletionTokens: 25_200,
     });
   });
 
@@ -200,7 +201,7 @@ describe('workload', () => {
     const w = computeWorkload(
       fakeOptions({ runs: 3, warmup: 1, maxCalls: 14, maxCompletionTokens: 20_000 }),
     );
-    expect(w.scheduled.maxAttempts).toBe(80);
+    expect(w.scheduled.maxAttempts).toBe(104);
     expect(w.bounded).toEqual({ maxAttempts: 14, maxCompletionTokens: 20_000 });
   });
 
@@ -230,7 +231,7 @@ describe('workload', () => {
     const tokens = Object.fromEntries(
       [
         ...workflow.matchAll(
-          /(ResearchPlanSchema|SourceEvidenceSchema|AnalysisSchema|ReportDraftSchema|ReviewSchema),\s*(\d+),/g,
+          /(ResearchPlanSchema|SourceEvidenceSchema|AnalysisSchema|ReportDraftSchema|ReviewSchema|GoalCheckSchema|GoalCorrectionSchema),\s*(\d+),/g,
         ),
       ].map((m) => [m[1], Number(m[2])]),
     );
@@ -240,7 +241,10 @@ describe('workload', () => {
       AnalysisSchema: MAX_TOKENS.analyze,
       ReportDraftSchema: MAX_TOKENS.report,
       ReviewSchema: MAX_TOKENS.review,
+      GoalCheckSchema: MAX_TOKENS.goalCheck,
+      GoalCorrectionSchema: MAX_TOKENS.goalCorrection,
     });
+    expect(workflow).toContain(`const GOAL_REVIEW_MAX_TOKENS = ${String(MAX_TOKENS.goalReview)};`);
     expect(workflow).toContain(`const REVIEW_BATCH = ${String(REVIEW_BATCH)};`);
     const report =
       /ReportDraftSchema = z\.object\(\{[\s\S]*?summary: z\.array\(ParagraphSchema\)\.min\(1\)\.max\((\d+)\)[\s\S]*?paragraphs: z\.array\(ParagraphSchema\)\.min\(1\)\.max\((\d+)\)[\s\S]*?\.max\((\d+)\)/.exec(

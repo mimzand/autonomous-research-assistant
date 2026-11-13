@@ -134,9 +134,10 @@ export function createFetchSourceTool(deps: { fetcher: WebFetcher; store: Source
 
       const doc = await deps.fetcher.fetch(checked.value.href, { signal });
       if (!doc.text.trim()) {
+        // The reason depends on what was downloaded; PDF advice only for PDFs.
         throw new WebError(
           'extraction-failed',
-          `No readable text found at ${doc.finalUrl} (${doc.kind}). Scanned PDFs are not supported.`,
+          `No readable text found at ${doc.finalUrl} (${doc.kind}, HTTP ${doc.status}, ${doc.byteLength} bytes): ${doc.emptyReason ?? 'no text could be extracted'}.`,
         );
       }
       const duplicate = findDuplicate(deps.store, taskId, {

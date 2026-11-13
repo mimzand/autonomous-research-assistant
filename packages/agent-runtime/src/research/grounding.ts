@@ -1,4 +1,10 @@
-import { type Analysis, type ReportDraft, type SourceEvidence } from './schemas.js';
+import {
+  type Analysis,
+  type AnalysisInput,
+  type ReportDraft,
+  type RequirementStatus,
+  type SourceEvidence,
+} from './schemas.js';
 
 /*
  * Grounding rules (deterministic, no model involved):
@@ -105,7 +111,7 @@ export function knownIds(ids: readonly string[], known: ReadonlySet<string>): st
 
 /** Removes invented evidence ids; drops findings/contradictions left without support. */
 export function cleanAnalysis(
-  analysis: Analysis,
+  analysis: AnalysisInput,
   evidenceIds: ReadonlySet<string>,
   questionIds: ReadonlySet<string>,
 ): { analysis: Analysis; droppedFindings: number } {
@@ -126,7 +132,14 @@ export function cleanAnalysis(
     question: g.question && questionIds.has(g.question) ? g.question : null,
     description: oneLine(g.description),
   }));
-  return { analysis: { findings, contradictions, gaps }, droppedFindings };
+  // A requirement is only as covered as its valid evidence: none left → 'none'.
+  const requirements = (analysis.requirements ?? []).flatMap((r) => {
+    const requirement = oneLine(r.requirement);
+    if (!requirement) return [];
+    const evidence = knownIds(r.evidence, evidenceIds);
+    return [{ requirement, evidence, coverage: evidence.length ? r.coverage : ('none' as const) }];
+  });
+  return { analysis: { findings, contradictions, gaps, requirements }, droppedFindings };
 }
 
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
@@ -198,12 +211,23 @@ export interface RenderInput {
   readonly title: string;
   readonly paragraphs: readonly DraftParagraph[];
   readonly verdicts: ReadonlyMap<string, { verdict: Verdict; note: string }>;
-  readonly analysis: Analysis;
+  readonly analysis: AnalysisInput;
   readonly evidence: readonly EvidenceItem[];
   readonly sources: readonly SourceRef[];
   readonly questions: readonly { id: string; question: string }[];
   readonly generatedAt: string;
   readonly model: string;
+  /**
+   * Where the model ran, from the endpoint captured for the task (e.g. "Local
+   * Ollama", "Remote Ollama", or "Ollama" when unknown). Never from current Settings.
+   */
+  readonly modelLocation: string;
+  /** Goal requirements and their final status (Phase 7.5); absent on older tasks. */
+  readonly requirements?: readonly {
+    readonly requirement: string;
+    readonly status: RequirementStatus;
+    readonly note: string;
+  }[];
 }
 
 export interface RenderedReport {
@@ -222,8 +246,19 @@ export interface RenderedReport {
     readonly gaps: number;
     readonly citedSources: number;
     readonly unusableSources: number;
+    /** Distinct sources that contributed verified evidence. */
+    readonly usableSources: number;
+    readonly requirementsMet: number;
+    readonly requirementsTotal: number;
   };
 }
+
+const REQUIREMENT_LABEL: Record<RequirementStatus, string> = {
+  satisfied: 'Satisfied',
+  partial: 'Partly satisfied',
+  'not-satisfied': 'Not satisfied',
+  'insufficient-evidence': 'Insufficient evidence',
+};
 
 /** Builds the final Markdown report from verified pieces. */
 export function renderReport(input: RenderInput): RenderedReport {
@@ -277,12 +312,16 @@ export function renderReport(input: RenderInput): RenderedReport {
     return `${prefix}${p.text} ${citations}${notes.length ? ` ${notes.join(' ')}` : ''}`;
   };
 
+  // Usable = distinct sources that contributed verified evidence (not merely selected).
+  const usable = new Set(
+    input.evidence.filter((e) => sourceById.has(e.sourceId)).map((e) => e.sourceId),
+  ).size;
   const lines: string[] = [];
   const title = sanitizeProse(input.title) || 'Research report';
   lines.push(`# ${title}`, '');
   lines.push(`> **Research goal:** ${escapeInline(input.goal)}`, '>');
   lines.push(
-    `> Generated ${input.generatedAt.slice(0, 16).replace('T', ' ')} UTC by the local model \`${input.model.replace(/`/g, '')}\` from ${input.sources.length} source(s). ` +
+    `> Generated ${input.generatedAt.slice(0, 16).replace('T', ' ')} UTC by the model \`${oneLine(input.model).replace(/`/g, '')}\` via ${escapeInline(input.modelLocation)} from ${usable} usable source(s). ` +
       'Every statement cites the sources it is based on; statements the review could not support were removed. Verify important facts before relying on them.',
     '',
   );
@@ -314,9 +353,28 @@ export function renderReport(input: RenderInput): RenderedReport {
       return citations ? `- ${sanitizeProse(c.description)} ${citations}` : null;
     })
     .filter(Boolean);
-  if (contradictionLines.length) contradictionLines.forEach((l) => lines.push(l as string));
-  else lines.push('- No contradictions between the sources were found.');
+  // A cross-source comparison needs at least two usable sources; never claim it succeeded otherwise.
+  if (usable === 0) {
+    lines.push('- Not applicable — no usable source evidence.');
+  } else if (usable === 1) {
+    lines.push('- Not applicable — only one usable source, so sources could not be compared.');
+    contradictionLines.forEach((l) => lines.push(`${l as string} *(within the single source)*`));
+  } else if (contradictionLines.length) {
+    contradictionLines.forEach((l) => lines.push(l as string));
+  } else {
+    lines.push(`- No contradictions were found between the ${usable} usable sources.`);
+  }
   lines.push('');
+
+  const requirements = input.requirements ?? [];
+  if (requirements.length) {
+    lines.push('## Goal coverage', '');
+    for (const r of requirements) {
+      const note = r.note ? ` — ${escapeInline(r.note)}` : '';
+      lines.push(`- **${REQUIREMENT_LABEL[r.status]}:** ${escapeInline(r.requirement)}${note}`);
+    }
+    lines.push('');
+  }
 
   lines.push('## Gaps and open questions', '');
   const questionText = new Map(input.questions.map((q) => [q.id, q.question]));
@@ -376,6 +434,9 @@ export function renderReport(input: RenderInput): RenderedReport {
       gaps: gaps.length + unanswered.length,
       citedSources: order.length,
       unusableSources: input.unusable?.length ?? 0,
+      usableSources: usable,
+      requirementsMet: requirements.filter((r) => r.status === 'satisfied').length,
+      requirementsTotal: requirements.length,
     },
   };
 }

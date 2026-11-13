@@ -22,6 +22,11 @@ export type WebErrorCode =
   | 'network-error'
   | 'unsupported-content'
   | 'extraction-failed'
+  /**
+   * The site answered with an access check (bot protection / CAPTCHA page)
+   * instead of the document. Never bypassed and never used as evidence.
+   */
+  | 'access-blocked'
   /** The search service answered but none of its engines could reach the internet. */
   | 'engines-unreachable'
   /** The service is not configured (e.g. no SearXNG URL in Settings). */
