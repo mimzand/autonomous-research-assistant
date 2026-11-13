@@ -75,15 +75,27 @@ Expected:
 
 ## 4. Test the packaged app
 
-Automated, in CI or the cloud sandbox: the packaged Linux build of the same configuration
-is driven over the DevTools protocol, because the fuses disable `--inspect`.
+Automated: `pnpm smoke:packaged` starts the **packaged executable** (not the dev server)
+with a temporary user-data folder (`--user-data-dir`) and a fake Ollama and SearXNG on
+127.0.0.1. It drives the real preload API over the Chromium DevTools protocol; the fuses
+disable Node's `--inspect`, not `--remote-debugging-port`. It never touches the real
+profile, contacts no real Ollama or website, and runs no model.
 
-| Suite                                                                                                                                        | Checks |
-| -------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `e2e-packaged`: release checks (startup checks, CSP, isolation, navigation lock, settings.env allow-list, fuses, data location, asar layout) | 17     |
-| `e2e-agent` on the packaged app: full research run, pause/resume, cancel, restart                                                            | 27     |
-| `e2e-reliability` on the packaged app: Ollama stops mid-run, malformed report then Retry, start refused                                      | 14     |
-| `e2e-chat` on the packaged app                                                                                                               | 26     |
+```powershell
+pnpm package:win                       # or pnpm package:dir (unpacked app only)
+pnpm smoke:packaged                    # defaults to apps/desktop/release/win-unpacked
+```
+
+| Checks (46)                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package: asar layout; no sources, maps, tests, `.env` or bench; one runtime dependency; only `better-sqlite3` unpacked, with this OS's binary only; ADK bundled; production CSP; no credentials, keys or tunnel endpoints (17)                                                                                                                                                          |
+| Security at run time: `ELECTRON_RUN_AS_NODE` and `--inspect` ignored (fuses); `settings.env` ignores `NODE_OPTIONS`; no `require`/`process` in the page; frozen `window.api`; CSP blocks `fetch` and inline scripts; `window.open` denied; navigation blocked                                                                                                                           |
+| Behaviour: renderer from `file://…/app.asar`; SQLite in the user-data folder; Settings IPC, environment overrides, defaults; Legacy and ADK Chat; Research task with the ADK engine pinned; forced kill → recovered as interrupted; integrity check; cancel; quit and reopen; **no network request by Chromium itself** (net log of every run; e.g. no spell-check dictionary download) |
+
+A Windows package cross-built on Linux can only be checked statically:
+`node apps/desktop/scripts/smoke-packaged.mjs apps/desktop/release/win-unpacked --target=win32-x64 --static-only`.
+Research, recovery and the Legacy/ADK engines are tested in depth by the in-process and
+real-process suites (`pnpm test`, including `src/main/lifecycle/process-crash.test.ts`).
 
 **Manual, on Windows**, using the Windows checklist below. It must be done on a real
 Windows 10 or 11 machine, ideally a fresh Windows user account.
@@ -140,8 +152,7 @@ Copy this list into the release issue and tick each item.
 
 ### Automated tests of the packaged app
 
-- [ ] `e2e-packaged`: 17/17
-- [ ] `e2e-agent`, `e2e-reliability` and `e2e-chat` against the packaged build all pass
+- [ ] `pnpm smoke:packaged` on Windows (`release/win-unpacked`): all checks pass
 
 ### Windows: install
 

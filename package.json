@@ -15,6 +15,7 @@
     "preview": "pnpm --filter @rka/desktop preview",
     "package:win": "pnpm --filter @rka/desktop package:win",
     "package:dir": "pnpm --filter @rka/desktop package:dir",
+    "smoke:packaged": "pnpm --filter @rka/desktop smoke:packaged",
     "typecheck": "tsc -p tsconfig.json && pnpm -r --workspace-concurrency=1 typecheck",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",

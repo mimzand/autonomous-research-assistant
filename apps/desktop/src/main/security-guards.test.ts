@@ -161,3 +161,86 @@ describe('security guards', () => {
     expect(config).toMatch(/npmRebuild: false/);
   });
 });
+
+describe('Windows packaging configuration (Phase 7.7)', () => {
+  const config = readFileSync(join(repo, 'apps/desktop/electron-builder.yml'), 'utf8');
+  const pkg = JSON.parse(readFileSync(join(repo, 'apps/desktop/package.json'), 'utf8')) as {
+    productName: string;
+    dependencies: Record<string, string>;
+  };
+
+  /** The items of every `files:` list (top level and per platform). */
+  function fileLists(): string[][] {
+    const lines = config.split(/\r?\n/);
+    const lists: string[][] = [];
+    lines.forEach((line, i) => {
+      const m = /^(\s*)files:\s*$/.exec(line);
+      if (!m) return;
+      const items: string[] = [];
+      for (const next of lines.slice(i + 1)) {
+        const item = /^\s*-\s*'?([^']*)'?\s*$/.exec(next);
+        if (item?.[1] !== undefined) items.push(item[1]);
+        else if (next.trim() && !next.trim().startsWith('#')) break;
+      }
+      lists.push(items);
+    });
+    return lists;
+  }
+
+  it('every files list includes the build explicitly (an only-"!" list would ship the whole app folder)', () => {
+    const lists = fileLists();
+    expect(lists.length).toBeGreaterThanOrEqual(3); // top level, win, linux
+    for (const items of lists) {
+      expect(items, JSON.stringify(items)).toContain('out/**/*');
+      expect(items).toContain('package.json');
+      expect(
+        items.every((i) => i.startsWith('!') || ['out/**/*', 'package.json'].includes(i)),
+      ).toBe(true);
+    }
+  });
+
+  it('keeps the identity that decides the data folder and the upgrade path', () => {
+    expect(config).toMatch(/^appId: com\.rka\.autonomous-research-assistant$/m);
+    expect(config).toMatch(/^productName: Autonomous Research Assistant$/m);
+    expect(pkg.productName).toBe('Autonomous Research Assistant');
+    expect(config).toMatch(/^ {2}executableName: Autonomous Research Assistant$/m);
+  });
+
+  it('per-user NSIS installer, x64, no elevation, keeps user data, no auto-update, no signing secrets', () => {
+    for (const line of [
+      'perMachine: false',
+      'allowElevation: false',
+      'deleteAppDataOnUninstall: false',
+      'target: nsis',
+      'arch: [x64]',
+      'publish: null',
+    ]) {
+      expect(config).toContain(line);
+    }
+    expect(config).not.toMatch(/CSC_LINK\s*:|certificatePassword|certificateFile/);
+  });
+
+  it('ships one runtime dependency, unpacked from the asar, without build-only files', () => {
+    expect(Object.keys(pkg.dependencies)).toEqual(['better-sqlite3']);
+    expect(config).toContain("- '**/node_modules/better-sqlite3/**/*.node'");
+    expect(config).toContain("- '!**/node_modules/node-addon-api/**'");
+    expect(config).toMatch(/^asar: true$/m);
+  });
+
+  it('Chromium downloads no spell-check dictionaries (no runtime request to Google)', () => {
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).toContain('session.defaultSession.setSpellCheckerEnabled(false);');
+    expect(main).toContain('session.defaultSession.setSpellCheckerLanguages([]);');
+    const window = readFileSync(join(repo, 'apps/desktop/src/main/window.ts'), 'utf8');
+    expect(window).toContain('spellcheck: false');
+  });
+
+  it('loads the renderer from the package in production (dev server URL only when not packaged)', () => {
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).toMatch(
+      /const devServerUrl = app\.isPackaged \? undefined : process\.env\['ELECTRON_RENDERER_URL'\];/,
+    );
+    const window = readFileSync(join(repo, 'apps/desktop/src/main/window.ts'), 'utf8');
+    expect(window).toMatch(/loadFile\(rendererIndexPath\(\)\)/);
+  });
+});

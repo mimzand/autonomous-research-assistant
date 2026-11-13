@@ -262,6 +262,12 @@ function bootstrap(): void {
   );
   // No device access either (USB, HID, serial, Bluetooth).
   session.defaultSession.setDevicePermissionHandler(() => false);
+  // No network access by Chromium itself: the session spellchecker would otherwise
+  // download Hunspell dictionaries from Google's CDN at startup (redirector.gvt1.com),
+  // even though the windows set spellcheck: false. Disabling it is not enough; with no
+  // languages nothing is downloaded (checked with --log-net-log in smoke:packaged).
+  session.defaultSession.setSpellCheckerEnabled(false);
+  session.defaultSession.setSpellCheckerLanguages([]);
 
   // Packaged builds have no menu: no reload, no DevTools shortcuts.
   if (app.isPackaged) Menu.setApplicationMenu(null);
