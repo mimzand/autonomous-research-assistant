@@ -14,10 +14,10 @@ import { z } from 'zod';
  * Both engines take the renderer-supplied turns and produce the same
  * GenerateChunk stream, so ChatController, IPC and the renderer do not change.
  *
- * The flag is a main-process setting only (not in the Settings page or the
- * IPC settings view): the `AGENT_ENGINE` variable in settings.env (installed
- * app), .env (development) or the process environment. It is read when each
- * Chat request starts; a request keeps the engine it started with.
+ * Source: the effective `engine.chat` setting — `AGENT_ENGINE` when set and
+ * valid (an override), else the value saved in Settings → Agent Engines, else
+ * "legacy" (main/config/env-overrides.ts). It is read when each Chat request
+ * starts; a request keeps the engine it started with.
  */
 
 export const AgentEngineSchema = z.enum(['legacy', 'adk']);
@@ -79,7 +79,7 @@ export function adkChatEngine(
           `ADK chat engine unavailable: ${error instanceof Error ? error.name : 'error'}`,
         );
         throw new Error(
-          `The ADK chat engine could not be started. Set ${AGENT_ENGINE_ENV}=legacy to use the legacy engine.`,
+          `The ADK chat engine could not be started. Choose Legacy for Chat in Settings → Agent Engines to use the legacy engine.`,
           { cause: error },
         );
       }
@@ -116,6 +116,8 @@ export function createAppChatEngines(deps: {
   readonly runtime: Pick<AgentRuntime, 'streamChat'>;
   readonly provider: OllamaProvider;
   readonly env?: NodeJS.ProcessEnv;
+  /** Current engine choice (the app passes the effective setting); default: `AGENT_ENGINE` from `env`. */
+  readonly readFlag?: () => string | undefined;
   readonly loadAdk?: () => Promise<AdkRuntime>;
   readonly log?: (message: string) => void;
 }): () => ChatEngine {
@@ -123,7 +125,7 @@ export function createAppChatEngines(deps: {
   return createChatEngineSelector({
     legacy: legacyChatEngine(deps.runtime),
     adk: adkChatEngine(deps.provider, deps.loadAdk),
-    readFlag: () => env[AGENT_ENGINE_ENV],
+    readFlag: deps.readFlag ?? (() => env[AGENT_ENGINE_ENV]),
     ...(deps.log && { log: deps.log }),
   });
 }

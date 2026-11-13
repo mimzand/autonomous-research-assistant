@@ -4,7 +4,11 @@
  * safety notice and the planned workload; nothing contacts Ollama.
  */
 import { renameSync, writeFileSync } from 'node:fs';
-import { loadOllamaConfig, type OllamaConfig } from '@rka/model-provider';
+import {
+  loadOllamaConfig,
+  ollamaTransportOptionsFromEnv,
+  type OllamaConfig,
+} from '@rka/model-provider';
 import { startFakeOllama, type FakeOllama } from './fake-ollama.js';
 import { describePlan, parseBenchOptions } from './plan.js';
 import { openProgressLog } from './progress.js';
@@ -56,6 +60,9 @@ export async function benchMain(
     }
     const result = await runBenchmark(o, {
       ollama: config,
+      ...(o.mode === 'live' && {
+        transport: { ngrokBypassHosts: ollamaTransportOptionsFromEnv(env).ngrokBypassHosts },
+      }),
       progress,
       signal: controller.signal,
       ...(fake && { chatBodies: fake.chatBodies }),

@@ -13,8 +13,33 @@ Each setting has three possible sources, lowest to highest:
    (installed app) or the process environment. These are read once at startup with the
    same validation as before; an invalid value stops the app with a message naming it.
 3. **Saved in Settings.** Values you save are stored in the local SQLite database (the
-   existing `settings` table, keys `settings.<key>`), loaded at every start, and always
-   win over the environment.
+   existing `settings` table, keys `settings.<key>`), loaded at every start, and win over
+   environment defaults.
+
+**Exception — environment overrides.** For four settings an explicitly set environment
+variable wins over the saved value:
+
+| Setting         | Variable          | Order (highest first)                   |
+| --------------- | ----------------- | --------------------------------------- |
+| Ollama URL      | `OLLAMA_HOST`     | environment → saved → `127.0.0.1:11434` |
+| Active model    | `OLLAMA_MODEL`    | environment → saved → `qwen3:8b`        |
+| Chat engine     | `AGENT_ENGINE`    | environment → saved → `legacy`          |
+| Research engine | `RESEARCH_ENGINE` | environment → saved → `legacy`          |
+
+- Only a **non-empty, valid** value is an override. An unset or empty variable changes
+  nothing. An invalid value (e.g. `OLLAMA_HOST=ftp://…`, `AGENT_ENGINE=turbo`) is **not
+  used**: the saved value or default stays active, and the error is shown under the field
+  and in the log. An `OLLAMA_HOST` with a user name/password, query or fragment is refused
+  (credentials are never echoed).
+- An overridden field is **read-only** and labelled **Overridden by `VAR`**; the saved
+  value, if any, is shown as the inactive fallback. Nothing is saved over it. Remove the
+  variable and **restart the app** to use or change the value in Settings again.
+- The environment never bypasses **Require HTTPS for remote servers**: a plain-HTTP remote
+  `OLLAMA_HOST` is not used while it is on, and it cannot be turned on while such an
+  override is active.
+- Not overridable (security): the HTTPS requirement, the access token (Settings only,
+  encrypted), and `OLLAMA_NGROK_BYPASS_HOSTS` (a main-process trust list, never shown or
+  editable in Settings).
 
 The page shows the source of every value: **Default**, **From `VAR`** (environment) or
 **Customized** (saved). **Reset** deletes the saved value, so the setting falls back to the
@@ -108,6 +133,25 @@ model's own default (shown under AI Models → Details).
 | -------------------------------- | -------------------------------- | ------- | ------------ | -------------- | ----------- |
 | Require HTTPS for remote servers | `security.requireHttpsForRemote` | `false` | —            | on / off       | immediately |
 
+### Agent Engines
+
+| Setting         | Key               | Default  | Env variable      | Allowed values    | Applies     |
+| --------------- | ----------------- | -------- | ----------------- | ----------------- | ----------- |
+| Chat engine     | `engine.chat`     | `legacy` | `AGENT_ENGINE`    | `legacy` or `adk` | immediately |
+| Research engine | `engine.research` | `legacy` | `RESEARCH_ENGINE` | `legacy` or `adk` | new tasks   |
+
+- **Legacy** is the existing runtime; **Google ADK** runs the same Ollama server, model
+  and settings through Google ADK. The model never calls tools on its own with either
+  engine, and ADK sessions are not persisted.
+- **Precedence:** `AGENT_ENGINE` / `RESEARCH_ENGINE`, when set and valid, override the
+  value saved here (see "Environment overrides" above); otherwise the saved value, else
+  `legacy`. A value entered here must be exactly `legacy` or `adk`.
+- **Chat:** each new message uses the saved engine; a reply that is already streaming
+  finishes (or is cancelled) on the engine it started with.
+- **Research:** the engine is read once when a task is created and stored with the task.
+  Pause/Resume, Retry and recovery after a crash always use the task's own engine, never
+  the current setting. Tasks created before engines existed are legacy tasks.
+
 ### Advanced
 
 | Setting                     | Key                          | Default    | Env variable                    | Allowed values    | Applies            |
@@ -170,6 +214,22 @@ Then choose a model under AI Models.
 Never expose an unauthenticated Ollama port to the internet: anyone could use your GPU,
 read prompts or pull and delete models.
 
+### HTTPS tunnels (ngrok)
+
+A company Ollama behind an HTTPS tunnel works like any HTTPS reverse proxy: enter
+`https://<tunnel>.ngrok-free.dev` (no port; HTTPS uses 443). Free ngrok tunnels can answer
+API clients with a browser-warning page instead of Ollama's reply. To skip it, list the
+tunnel's exact host name in **`OLLAMA_NGROK_BYPASS_HOSTS`** (environment, `.env` or
+`settings.env`; comma-separated host names, no scheme, port, path or wildcards). The app
+then sends `ngrok-skip-browser-warning: true` **only** to those hosts and **only** over
+HTTPS. It is a startup-time trust list read by the main process: it cannot be changed from
+the Settings page or the renderer, and it is not stored in SQLite. Restart the app after
+changing it.
+
+A tunnel is public: anyone who knows its address can reach the server unless the tunnel
+or a proxy requires authentication. Prompts and answers go to that server, so use only
+endpoints your organisation operates, and prefer one that requires the access token.
+
 ### Remote connection safeguards
 
 - URLs are validated (see above) and only the configured server is contacted; the
@@ -182,6 +242,8 @@ read prompts or pull and delete models.
 - Every request has a timeout (Connection timeout, Request timeout, Streaming idle
   timeout) and clear error messages.
 - No proxy settings and no arbitrary URL fetching are offered.
+- The ngrok warning-bypass header is sent only to hosts in `OLLAMA_NGROK_BYPASS_HOSTS`
+  over HTTPS, never globally and never after a redirect (redirects are refused).
 
 ## Model discovery
 

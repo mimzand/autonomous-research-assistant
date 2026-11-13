@@ -39,13 +39,50 @@ export function resolveOllamaBaseUrl(hostValue: string | undefined): string {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return OLLAMA_DEFAULT_BASE_URL;
 
   const host = WILDCARD_HOSTS.has(url.hostname) ? '127.0.0.1' : url.hostname;
+  const hasScheme = withScheme === raw;
+  // A path prefix (reverse proxy, e.g. https://example.com/ollama) is kept.
+  const path = hasScheme && url.pathname !== '/' ? url.pathname.replace(/\/+$/, '') : '';
   // URL drops default ports (80/443), so only an explicit port is kept as-is.
-  const explicitPort = /:\d+$/.test(raw);
+  const authority = withScheme.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0] ?? '';
+  const explicitPort = /:\d+$/.test(authority);
+  if (!explicitPort && url.protocol === 'https:') {
+    // Ollama itself never serves HTTPS: an https:// address is a reverse proxy or
+    // tunnel on the standard port 443 (as the Ollama CLI treats OLLAMA_HOST).
+    return `https://${host}${path}`;
+  }
   const port = explicitPort
     ? url.port || defaultPortFor(url.protocol)
     : String(OLLAMA_DEFAULT_PORT);
+  return `${url.protocol}//${host}:${port}${path}`;
+}
 
-  return `${url.protocol}//${host}:${port}`;
+/** Environment variable listing the ngrok tunnel host names that get ngrok's browser-warning bypass header. */
+export const OLLAMA_NGROK_BYPASS_HOSTS_ENV = 'OLLAMA_NGROK_BYPASS_HOSTS';
+
+const HOSTNAME = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
+
+/**
+ * Parses OLLAMA_NGROK_BYPASS_HOSTS: a comma-separated list of exact DNS host
+ * names (no scheme, port, path, wildcard or IP address). Only these hosts, and
+ * only over HTTPS, receive the `ngrok-skip-browser-warning` header.
+ */
+export function parseNgrokBypassHosts(raw: string | undefined): {
+  hosts: string[];
+  invalid: string[];
+} {
+  const hosts: string[] = [];
+  const invalid: string[] = [];
+  for (const entry of (raw ?? '').split(',')) {
+    const value = entry.trim().toLowerCase();
+    if (!value) continue;
+    const isIp = /^[\d.]+$/.test(value) || value.includes(':');
+    if (HOSTNAME.test(value) && !isIp) {
+      if (!hosts.includes(value)) hosts.push(value);
+    } else {
+      invalid.push(entry.trim().slice(0, 80));
+    }
+  }
+  return { hosts, invalid };
 }
 
 function defaultPortFor(protocol: string): string {
@@ -108,4 +145,16 @@ export function loadOllamaConfig(env: OllamaEnv): OllamaConfig {
 function parseIntOr(value: string | undefined, fallback: number): number {
   if (value === undefined || value.trim() === '') return fallback;
   return Number(value);
+}
+
+/**
+ * Transport options for createOllamaProvider that come from the environment
+ * (main process and live tests). `invalid` lists rejected entries for a warning.
+ */
+export function ollamaTransportOptionsFromEnv(env: Record<string, string | undefined>): {
+  ngrokBypassHosts: string[];
+  invalid: string[];
+} {
+  const { hosts, invalid } = parseNgrokBypassHosts(env[OLLAMA_NGROK_BYPASS_HOSTS_ENV]);
+  return { ngrokBypassHosts: hosts, invalid };
 }

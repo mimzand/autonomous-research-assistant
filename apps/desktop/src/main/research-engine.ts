@@ -21,8 +21,9 @@ import { taskModelsFor } from './config/services.js';
  * Everything else - the step machine, prompts, Zod validation, retries,
  * checkpoints, tools and usage records - is the same Research code.
  *
- * Source: the `RESEARCH_ENGINE` variable (settings.env, .env or the process
- * environment), independent of Chat's `AGENT_ENGINE`.
+ * Source: the effective `engine.research` setting — `RESEARCH_ENGINE` when set
+ * and valid (an override), else the value saved in Settings → Agent Engines,
+ * else "legacy" (main/config/env-overrides.ts). Independent of the Chat engine.
  *
  * Pinning: the engine is read once, when a task starts, and stored with the
  * task's captured model configuration (`task.input.model.config`, already an
@@ -143,7 +144,7 @@ class LazyAdkResearchModel implements ModelProvider {
         );
         // Not retried and never replaced by the legacy engine: the task's step fails visibly.
         throw new Error(
-          'The ADK research engine could not be started. This task was started with the ADK engine; fix the installation or start a new task with RESEARCH_ENGINE=legacy.',
+          'The ADK research engine could not be started. This task was started with the ADK engine; fix the installation or start a new task with the Legacy research engine (Settings → Agent Engines).',
           { cause: error },
         );
       }

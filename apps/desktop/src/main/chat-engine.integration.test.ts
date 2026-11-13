@@ -27,6 +27,7 @@ import { openStorage, type Storage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chatUsageRecorder } from './app-storage.js';
+import { createRuntimeConfig } from './config/runtime-config.js';
 import { ChatController } from './chat.js';
 import { AGENT_ENGINE_ENV, createAppChatEngines, type AgentEngine } from './chat-engine.js';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
@@ -125,6 +126,8 @@ interface HarnessOptions {
   readonly host?: string;
   readonly config?: Partial<OllamaConfig>;
   readonly loadAdk?: () => Promise<AdkRuntime>;
+  /** Phase 7.4.2: the engine comes from Settings (RuntimeConfig with this environment), as in main/index.ts. */
+  readonly settingsEnv?: NodeJS.ProcessEnv;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -146,6 +149,14 @@ function harness(options: HarnessOptions = {}) {
   const legacyCalls = vi.fn();
   const env: Record<string, string | undefined> = { [AGENT_ENGINE_ENV]: options.engine };
   const logs: string[] = [];
+  const settings = options.settingsEnv
+    ? createRuntimeConfig({
+        storage,
+        env: options.settingsEnv,
+        encryptionAvailable: () => false,
+        warn: (m) => logs.push(m),
+      })
+    : undefined;
   const selectEngine = createAppChatEngines({
     runtime: {
       streamChat: (turns, o) => {
@@ -155,6 +166,7 @@ function harness(options: HarnessOptions = {}) {
     },
     provider,
     env,
+    ...(settings && { readFlag: () => settings.getSettings()['engine.chat'] }),
     log: (m) => logs.push(m),
     ...(options.loadAdk && { loadAdk: options.loadAdk }),
   });
@@ -200,7 +212,20 @@ function harness(options: HarnessOptions = {}) {
     senderDestroyed = true;
     destroyed.forEach((fn) => fn());
   };
-  return { storage, provider, chat, env, logs, legacyCalls, events, start, stop, run, closeWindow };
+  return {
+    storage,
+    provider,
+    chat,
+    env,
+    settings,
+    logs,
+    legacyCalls,
+    events,
+    start,
+    stop,
+    run,
+    closeWindow,
+  };
 }
 
 /** Events with the (random) stream id normalised, for comparing engines. */
@@ -579,7 +604,7 @@ describe('I. errors map to the same Chat error contract', () => {
         streamId: 'S',
         code: 'generation-failed',
         message:
-          'The ADK chat engine could not be started. Set AGENT_ENGINE=legacy to use the legacy engine.',
+          'The ADK chat engine could not be started. Choose Legacy for Chat in Settings → Agent Engines to use the legacy engine.',
       },
     ]);
     expect(JSON.stringify(h.events)).not.toContain('/secret/path');
@@ -655,6 +680,93 @@ describe('J/K. runtime settings and the flag are captured per request', () => {
     await h.run([{ role: 'user', content: 'Back' }]);
     expect(h.legacyCalls).toHaveBeenCalledTimes(2);
     expect(h.logs).toEqual(['Chat engine: legacy', 'Chat engine: adk', 'Chat engine: legacy']);
+  });
+});
+
+// --- Phase 7.4.2: the engine chosen in Settings ---------------------------------------------
+
+describe('Phase 7.4.2. Chat engine from Settings → Agent Engines', () => {
+  it('default (nothing saved, no AGENT_ENGINE): legacy', async () => {
+    handler = reply(['ok']);
+    const h = harness({ settingsEnv: {} });
+    await h.run([{ role: 'user', content: 'Hi' }]);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(1);
+    expect(h.logs).toEqual(['Chat engine: legacy']);
+  });
+
+  it('a saved choice applies to the next request without a restart; a running reply keeps its engine', async () => {
+    handler = reply(['a', 'b', 'c'], 40);
+    const h = harness({ settingsEnv: {} });
+    await h.start([{ role: 'user', content: 'Hi' }]);
+    while (!h.events.some((e) => e.type === 'delta')) await sleep(5);
+    // Settings → Save while the legacy reply is streaming.
+    expect(h.settings?.updateSettings({ 'engine.chat': 'adk' })).toMatchObject({
+      status: 'saved',
+    });
+    await h.chat.whenIdle();
+    expect(normal(h.events).map((e) => e.type)).toEqual(['delta', 'delta', 'delta', 'done']);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(1);
+
+    handler = reply(['adk']);
+    await h.run([{ role: 'user', content: 'Next' }]);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(1); // served by ADK
+    expect(h.settings?.updateSettings({ 'engine.chat': 'legacy' })).toMatchObject({
+      status: 'saved',
+    });
+    await h.run([{ role: 'user', content: 'Back' }]);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(2);
+    expect(h.logs).toEqual(['Chat engine: legacy', 'Chat engine: adk', 'Chat engine: legacy']);
+  });
+
+  it('cancelling a reply works the same after switching engines in Settings', async () => {
+    for (const engine of ENGINES) {
+      handler = reply(['a', 'b', 'c', 'd', 'e'], 60);
+      const h = harness({ settingsEnv: {} });
+      h.settings?.updateSettings({ 'engine.chat': engine });
+      const started = await h.start([{ role: 'user', content: 'Hi' }]);
+      if (started.status !== 'started') throw new Error('not started');
+      while (!h.events.some((e) => e.type === 'delta')) await sleep(5);
+      await h.stop(started.streamId);
+      await h.chat.whenIdle();
+      expect(h.events.at(-1), engine).toMatchObject({ type: 'cancelled' });
+    }
+  });
+
+  it('an invalid choice is rejected and the engine in use does not change', async () => {
+    handler = reply(['ok']);
+    const h = harness({ settingsEnv: {} });
+    h.settings?.updateSettings({ 'engine.chat': 'adk' });
+    for (const bad of ['turbo', '', 'ADK ', null, 1]) {
+      expect(h.settings?.updateSettings({ 'engine.chat': bad }), String(bad)).toMatchObject({
+        status: 'invalid',
+      });
+    }
+    await h.run([{ role: 'user', content: 'Hi' }]);
+    expect(h.legacyCalls).not.toHaveBeenCalled(); // still ADK (the saved choice)
+  });
+
+  it('an invalid AGENT_ENGINE is not applied (reported), and Settings can still choose ADK', async () => {
+    handler = reply(['ok']);
+    const h = harness({ settingsEnv: { AGENT_ENGINE: 'turbo' } });
+    expect(h.logs).toEqual([expect.stringMatching(/^AGENT_ENGINE="turbo" is not used/)]);
+    await h.run([{ role: 'user', content: 'Hi' }]);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(1);
+    h.settings?.updateSettings({ 'engine.chat': 'adk' });
+    await h.run([{ role: 'user', content: 'Again' }]);
+    expect(h.legacyCalls).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Configuration precedence: AGENT_ENGINE override', () => {
+  it('AGENT_ENGINE overrides the saved choice for new requests; Settings cannot switch it while set', async () => {
+    handler = reply(['ok']);
+    const h = harness({ settingsEnv: { AGENT_ENGINE: 'adk' } });
+    expect(h.settings?.updateSettings({ 'engine.chat': 'legacy' })).toMatchObject({
+      status: 'invalid',
+    });
+    await h.run([{ role: 'user', content: 'Hi' }]);
+    expect(h.legacyCalls).not.toHaveBeenCalled(); // ADK, from the override
+    expect(h.logs).toEqual(['Chat engine: adk']);
   });
 });
 

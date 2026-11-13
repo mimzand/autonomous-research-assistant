@@ -26,6 +26,7 @@ import {
   type WebSearchProvider,
 } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createRuntimeConfig } from './config/runtime-config.js';
 import { taskModelsFor } from './config/services.js';
 import {
   PINNED_ENGINE_KEY,
@@ -352,6 +353,11 @@ interface HarnessOptions {
   /** Phase 6 behaviour (no engine pinning), to create pre-Phase-7 tasks. */
   readonly prePhase7?: boolean;
   readonly afterGenerate?: () => void;
+  /**
+   * Phase 7.4.2: the engine comes from the app's Settings (RuntimeConfig on the
+   * same database, with this environment) as in main/index.ts, not from `flag`.
+   */
+  readonly settingsEnv?: NodeJS.ProcessEnv;
 }
 
 /** The Research wiring of main/index.ts, with counters for the ADK path. */
@@ -363,6 +369,14 @@ function harness(options: HarnessOptions = {}) {
     { getAuthToken: () => 'research-test-token' },
   );
   const flag = { value: options.engine };
+  const settings = options.settingsEnv
+    ? createRuntimeConfig({
+        storage,
+        env: options.settingsEnv,
+        encryptionAvailable: () => false,
+        warn: () => undefined,
+      })
+    : undefined;
   const adk = { loads: 0, generates: 0 };
   const loadAdk = async (): Promise<AdkRuntime> => {
     adk.loads++;
@@ -380,7 +394,7 @@ function harness(options: HarnessOptions = {}) {
   const base = options.prePhase7
     ? taskModelsFor(provider)
     : researchTaskModelsFor(provider, {
-        readFlag: () => flag.value,
+        readFlag: settings ? () => settings.getSettings()['engine.research'] : () => flag.value,
         loadAdk,
         log: (m) => logs.push(m),
       });
@@ -424,7 +438,24 @@ function harness(options: HarnessOptions = {}) {
     await runtime.tasks.whenIdle();
     return id;
   };
-  return { storage, provider, runtime, web, flag, adk, logs, start, run };
+  /** Settings → Agent Engines → Save (validated and persisted like the IPC path). */
+  const chooseResearchEngine = (engine: string) => {
+    if (!settings) throw new Error('harness without settings');
+    return settings.updateSettings({ 'engine.research': engine });
+  };
+  return {
+    storage,
+    provider,
+    runtime,
+    web,
+    flag,
+    settings,
+    chooseResearchEngine,
+    adk,
+    logs,
+    start,
+    run,
+  };
 }
 
 /** Everything Research stored for a task, with ids and timestamps normalised. */
@@ -835,6 +866,124 @@ describe('G/H/N. the engine is pinned to the task', () => {
     expect(
       h.storage.modelUsage.listByTask(id).filter((u) => u.purpose === 'research:review'),
     ).toHaveLength(1);
+  });
+});
+
+// --- Phase 7.4.2: the engine chosen in Settings --------------------------------------------
+
+describe('Phase 7.4.2. Research engine from Settings → Agent Engines', () => {
+  const pinOf = (h: ReturnType<typeof harness>, id: string) =>
+    (h.storage.tasks.require(id).input as { model: { config: Record<string, unknown> } }).model
+      .config[PINNED_ENGINE_KEY];
+
+  it('default (nothing saved, no RESEARCH_ENGINE): legacy, no pin, ADK never loaded', async () => {
+    const h = harness({ settingsEnv: {} });
+    const id = await h.run();
+    expect(h.storage.tasks.require(id).status).toBe('completed');
+    expect(pinOf(h, id)).toBeUndefined();
+    expect(h.adk).toEqual({ loads: 0, generates: 0 });
+  });
+
+  it('the saved choice applies to new tasks and is pinned at creation; invalid choices are rejected', async () => {
+    const h = harness({ settingsEnv: {} });
+    expect(h.chooseResearchEngine('turbo')).toMatchObject({ status: 'invalid' });
+    expect(h.chooseResearchEngine('adk')).toMatchObject({ status: 'saved' });
+    const id = await h.run();
+    expect(pinOf(h, id)).toBe('adk');
+    expect(h.adk.generates).toBe(7);
+  });
+
+  it('changing Settings does not touch a paused task; it resumes on its pinned engine', async () => {
+    script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+    const h = harness({ settingsEnv: {} });
+    h.chooseResearchEngine('adk');
+    const id = await h.start();
+    while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+    h.runtime.tasks.pause(id);
+    await h.runtime.tasks.whenIdle();
+    const before = h.adk.generates;
+    const inputBefore = JSON.stringify(h.storage.tasks.require(id).input);
+
+    expect(h.chooseResearchEngine('legacy')).toMatchObject({ status: 'saved' });
+    script = {};
+    h.runtime.tasks.resume(id);
+    await h.runtime.tasks.whenIdle();
+    expect(h.storage.tasks.require(id).status).toBe('completed');
+    expect(h.adk.generates - before).toBe(3); // compare, report, review on ADK
+    expect(JSON.stringify(h.storage.tasks.require(id).input)).toBe(inputBefore);
+  });
+
+  it('crash recovery: an ADK task resumes on ADK after a restart where Settings say legacy (and the reverse)', async () => {
+    for (const [created, after] of [
+      ['adk', 'legacy'],
+      ['legacy', 'adk'],
+    ] as const) {
+      const path = tempDb();
+      chats = [];
+      script = { 'write-report': () => ({ hangMs: 5000 }) };
+      const first = harness({ path, settingsEnv: {} });
+      first.chooseResearchEngine(created);
+      const id = await first.start();
+      while (!chats.some((b) => taskOf(b) === 'write-report')) await sleep(5);
+      first.storage.close(); // the app dies mid-call
+      await sleep(20);
+
+      script = {};
+      chats = [];
+      // Restart: the saved choice is reloaded from the database, then changed.
+      const second = harness({ path, settingsEnv: {} });
+      expect(second.settings?.getSettings()['engine.research']).toBe(created);
+      second.chooseResearchEngine(after);
+      second.storage.recovery.recoverInterruptedTasks();
+      expect(second.runtime.tasks.resume(id)).toMatchObject({ ok: true });
+      await second.runtime.tasks.whenIdle();
+      expect(second.storage.tasks.require(id).status, created).toBe('completed');
+      expect(modelCalls(chats), created).toEqual(['write-report', 'review-report']);
+      expect(second.adk.generates, created).toBe(created === 'adk' ? 2 : 0);
+    }
+  });
+
+  it('retry of a failed task keeps its engine after Settings change', async () => {
+    script = { 'review-report': () => ({ json: { verdicts: 'not a list' } }) };
+    const h = harness({ settingsEnv: {} });
+    h.chooseResearchEngine('adk');
+    const id = await h.run();
+    expect(h.storage.tasks.require(id).status).toBe('failed');
+    script = {};
+    h.chooseResearchEngine('legacy');
+    const before = h.adk.generates;
+    expect(h.runtime.tasks.retry(id)).toMatchObject({ ok: true });
+    await h.runtime.tasks.whenIdle();
+    expect(h.storage.tasks.require(id).status).toBe('completed');
+    expect(h.adk.generates - before).toBe(1);
+    expect(h.storage.reports.listByTask(id)).toHaveLength(1);
+  });
+
+  it('RESEARCH_ENGINE overrides the saved choice for new tasks only; removing it restores the saved choice', async () => {
+    const path = tempDb();
+    const first = harness({ path, settingsEnv: {} });
+    first.chooseResearchEngine('legacy');
+    const legacyTask = await first.run();
+    first.storage.close();
+
+    // Restart with RESEARCH_ENGINE=adk: new tasks use ADK, the legacy task keeps legacy.
+    const overridden = harness({ path, settingsEnv: { RESEARCH_ENGINE: 'adk' } });
+    expect(overridden.settings?.getSettings()['engine.research']).toBe('adk');
+    expect(overridden.chooseResearchEngine('legacy')).toMatchObject({ status: 'invalid' });
+    const adkTask = await overridden.run();
+    expect(pinOf(overridden, adkTask)).toBe('adk');
+    expect(pinOf(overridden, legacyTask)).toBeUndefined(); // untouched
+    expect(overridden.adk.generates).toBe(7);
+    overridden.storage.close();
+
+    // Restart without the variable: the saved choice (legacy) is active again.
+    const restored = harness({ path, settingsEnv: {} });
+    expect(restored.settings?.getSettings()['engine.research']).toBe('legacy');
+    expect(restored.settings?.view().entries['engine.research']?.source).toBe('saved');
+    const next = await restored.run();
+    expect(pinOf(restored, next)).toBeUndefined();
+    expect(pinOf(restored, adkTask)).toBe('adk'); // the earlier ADK task stays pinned
+    expect(restored.adk.generates).toBe(0);
   });
 });
 

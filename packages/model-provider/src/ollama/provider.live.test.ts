@@ -8,9 +8,14 @@ import { z } from 'zod';
 import { loadOllamaConfig } from '../config.js';
 import { generateObject } from '../structured.js';
 import { OllamaProvider } from './provider.js';
+import { ollamaTransportOptionsFromEnv } from '../config.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const config = loadOllamaConfig(process.env);
-const ollama = new OllamaProvider(config);
+const ollama = new OllamaProvider(config, liveTransport);
 const deterministic = { temperature: 0, seed: 42 } as const;
 
 describe(`live Ollama at ${config.baseUrl} (${config.model})`, () => {

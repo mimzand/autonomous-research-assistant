@@ -66,6 +66,8 @@ describe('loading settings', () => {
       source: 'default',
       defaultValue: 'qwen3:8b',
       envVar: null,
+      overridden: false,
+      envError: null,
     });
     expect(view.secrets).toEqual({ 'ollama.authToken': { set: false } });
   });
@@ -119,7 +121,7 @@ describe('loading settings', () => {
     expect(loadResearchConfig({})).toEqual({});
   });
 
-  it('uses environment variables as defaults and says which variable set them', () => {
+  it('uses environment variables as defaults (or overrides) and says which variable set them', () => {
     const env = {
       OLLAMA_HOST: '192.168.1.100:11434',
       OLLAMA_MODEL: 'llama3.2:3b',
@@ -136,10 +138,15 @@ describe('loading settings', () => {
     expect(config.view().entries['model.name']).toMatchObject({
       source: 'environment',
       envVar: 'OLLAMA_MODEL',
+      overridden: true, // ENV_OVERRIDE_KEYS: an override, not a default
     });
+    expect(config.view().entries['searxng.url']).toMatchObject({
+      source: 'environment',
+      envVar: 'SEARXNG_URL',
+      overridden: false,
+    });
+    // OLLAMA_HOST / OLLAMA_MODEL are overrides (env-overrides.ts), not defaults.
     expect(environmentDefaults(env).vars).toEqual({
-      'model.name': 'OLLAMA_MODEL',
-      'ollama.baseUrl': 'OLLAMA_HOST',
       'searxng.url': 'SEARXNG_URL',
       'research.maxSources': 'RESEARCH_MAX_SOURCES',
     });
@@ -312,13 +319,13 @@ describe('updating settings', () => {
 
 describe('resetting settings', () => {
   it('resets one setting to the environment value, or all settings', () => {
-    const { config, storage } = setup({ env: { OLLAMA_MODEL: 'env-model:1b' } });
-    config.updateSettings({ 'model.name': 'llama3.2:3b', 'model.temperature': 0.5 });
-    expect(config.resetSetting('model.name')).toMatchObject({
+    const { config, storage } = setup({ env: { RESEARCH_MAX_SOURCES: '4' } });
+    config.updateSettings({ 'research.maxSources': 9, 'model.temperature': 0.5 });
+    expect(config.resetSetting('research.maxSources')).toMatchObject({
       status: 'saved',
-      changed: ['model.name'],
+      changed: ['research.maxSources'],
     });
-    expect(config.getSetting('model.name')).toBe('env-model:1b');
+    expect(config.getSetting('research.maxSources')).toBe(4);
     expect(config.getSetting('model.temperature')).toBe(0.5);
     config.setSecret('ollama.authToken', 'tok');
     expect(config.resetSettings()).toMatchObject({
@@ -377,11 +384,12 @@ describe('restart', () => {
 
     const second = setup({
       storage: openStorage({ path, cipher: cipher() }),
-      env: { OLLAMA_MODEL: 'env-model:1b' },
+      env: { OLLAMA_NUM_CTX: '8192' },
     });
     expect(second.config.getSettings()).toMatchObject({
       'ollama.baseUrl': 'https://ollama.example.com',
-      'model.name': 'llama3.2:3b', // saved wins over the environment
+      'model.name': 'llama3.2:3b',
+      'model.numCtx': 8192, // environment default (nothing saved)
       'model.topK': 40,
       'general.startSection': 'tasks',
     });

@@ -57,6 +57,13 @@ export interface OllamaProviderOptions {
   readonly allowToolCalls?: boolean;
   /** Generates ids for tool calls the server sent without one. Injected for tests. */
   readonly newToolCallId?: () => string;
+  /**
+   * Exact host names of trusted ngrok tunnels (OLLAMA_NGROK_BYPASS_HOSTS,
+   * main process only). Requests to one of these hosts over HTTPS carry
+   * `ngrok-skip-browser-warning: true`; every other request does not.
+   * Redirects are never followed, so the header cannot reach another host.
+   */
+  readonly ngrokBypassHosts?: readonly string[];
 }
 
 /** What is known about a model's tool calling, without running it. */
@@ -585,6 +592,9 @@ export class OllamaProvider implements ModelProvider {
     const token = this.options.getAuthToken?.();
     // The token never travels over plain HTTP to another machine.
     if (token && canSendToken(config.baseUrl)) headers['authorization'] = `Bearer ${token}`;
+    if (sendsNgrokBypass(config.baseUrl, this.options.ngrokBypassHosts)) {
+      headers['ngrok-skip-browser-warning'] = 'true';
+    }
 
     let response: Response;
     try {
@@ -641,6 +651,17 @@ function toWireOptions(
     ...(maxTokens !== undefined && { num_predict: maxTokens }),
     ...(opts.stop !== undefined && { stop: opts.stop }),
   };
+}
+
+/** The ngrok header goes only to a listed host, only over HTTPS. */
+export function sendsNgrokBypass(baseUrl: string, hosts: readonly string[] | undefined): boolean {
+  if (!hosts || hosts.length === 0) return false;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === 'https:' && hosts.includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 /** Same rule as the Settings page: HTTPS, or a loopback address. */

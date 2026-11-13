@@ -2,6 +2,7 @@ import { loadResearchConfig } from '@rka/agent-runtime';
 import { loadOllamaConfig } from '@rka/model-provider';
 import {
   connectionAdvice,
+  isEnvOverrideKey,
   normalizeServerUrl,
   RESTART_REQUIRED_KEYS,
   SECRET_SETTING_KEYS,
@@ -21,6 +22,7 @@ import {
 } from '@rka/shared';
 import { type Storage } from '@rka/storage';
 import { loadWebConfig } from '@rka/tools';
+import { httpsPolicyError, resolveEnvOverrides } from './env-overrides.js';
 
 /*
  * Runtime Configuration Manager: the single owner of the app's settings.
@@ -30,6 +32,8 @@ import { loadWebConfig } from '@rka/tools';
  *   2. environment: .env / settings.env / process environment, read once at
  *      startup with the existing loaders (they also validate)
  *   3. values saved from the Settings page, in the SQLite `settings` table
+ *   (4. for ENV_OVERRIDE_KEYS only: an explicitly set, valid environment
+ *       variable overrides 3 while it is set; see env-overrides.ts)
  *
  * Changes are validated (Zod + cross-field rules), applied to the running
  * services, then persisted; if applying or persisting fails, everything is
@@ -81,7 +85,8 @@ export function environmentDefaults(env: NodeJS.ProcessEnv): {
   values: Partial<SettingsValues>;
   vars: Partial<Record<SettingKey, string>>;
 } {
-  const ollama = loadOllamaConfig(env);
+  // OLLAMA_HOST and OLLAMA_MODEL are overrides (env-overrides.ts), not defaults.
+  const ollama = loadOllamaConfig({ ...env, OLLAMA_HOST: undefined, OLLAMA_MODEL: undefined });
   const web = loadWebConfig(env);
   const research = loadResearchConfig(env);
   const all: Partial<SettingsValues> = {
@@ -111,7 +116,7 @@ export function environmentDefaults(env: NodeJS.ProcessEnv): {
   const vars: Partial<Record<SettingKey, string>> = {};
   for (const def of SETTING_DEFINITIONS) {
     const name = def.env;
-    if (!name || !env[name]?.trim() || !(def.key in all)) continue;
+    if (!name || isEnvOverrideKey(def.key) || !env[name]?.trim() || !(def.key in all)) continue;
     values[def.key] = all[def.key];
     vars[def.key] = name;
   }
@@ -147,6 +152,37 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
   const appliers: ConfigApplier[] = [];
   const listeners = new Set<(change: ConfigChange) => void>();
   let saved = readSaved();
+  /*
+   * Environment overrides (ENV_OVERRIDE_KEYS), resolved once at startup: they
+   * win over saved values while set. Invalid ones are not applied and are
+   * reported (log + Settings page). An OLLAMA_HOST that the HTTPS policy
+   * refuses is not applied either: the environment never bypasses it.
+   */
+  const overrideVars = new Map<SettingKey, string>();
+  const envErrors = new Map<SettingKey, string>();
+  const overrides: Partial<Record<SettingKey, unknown>> = {};
+  {
+    const requireHttps = SettingsValuesSchema.parse({ ...defaults, ...saved })[
+      'security.requireHttpsForRemote'
+    ];
+    for (const o of resolveEnvOverrides(deps.env)) {
+      overrideVars.set(o.key, o.envVar);
+      let error = o.error;
+      if (
+        !error &&
+        o.key === 'ollama.baseUrl' &&
+        violatesHttpsPolicy(String(o.value), requireHttps)
+      )
+        error = httpsPolicyError(o.envVar);
+      if (error) {
+        envErrors.set(o.key, error);
+        warn(error);
+      } else {
+        overrides[o.key] = o.value;
+      }
+    }
+  }
+  const isOverridden = (key: SettingKey) => key in overrides;
   let values = merge(saved);
   const changedThisSession = new Set<SettingKey>();
   const startSection = values['general.startSection'];
@@ -171,10 +207,11 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
   }
 
   function merge(savedValues: Partial<SettingsValues>): SettingsValues {
-    return SettingsValuesSchema.parse({ ...defaults, ...savedValues });
+    return SettingsValuesSchema.parse({ ...defaults, ...savedValues, ...overrides });
   }
 
   function source(key: SettingKey): SettingSource {
+    if (isOverridden(key)) return 'environment';
     if (key in saved) return 'saved';
     return environment.vars[key] ? 'environment' : 'default';
   }
@@ -196,6 +233,11 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
     for (const [rawKey, rawValue] of Object.entries(patch)) {
       if (!isKey(rawKey)) {
         errors[rawKey] = 'Unknown setting.';
+        continue;
+      }
+      if (isOverridden(rawKey)) {
+        errors[rawKey] =
+          `Set by the environment variable ${overrideVars.get(rawKey) ?? ''}. Remove the variable and restart the app to change it here.`;
         continue;
       }
       if (defsByKey.get(rawKey)?.dedicatedAction && !options.internal) {
@@ -307,7 +349,10 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
             {
               source: source(key),
               defaultValue: defaults[key] as never,
-              envVar: environment.vars[key] ?? null,
+              envVar: environment.vars[key] ?? overrideVars.get(key) ?? null,
+              overridden: isOverridden(key),
+              ...(key in saved && { savedValue: saved[key] as never }),
+              envError: envErrors.get(key) ?? null,
             },
           ]),
         ),

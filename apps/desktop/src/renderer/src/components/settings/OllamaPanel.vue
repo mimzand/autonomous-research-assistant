@@ -9,6 +9,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useModelHealth } from '../../composables/useModelHealth';
 import { notify, handleResult, useSettings } from '../../composables/useSettings';
 import { formatDateTime } from '../../lib/format';
+import { effectiveConnection } from '../../lib/settings';
 import SettingsForm from './SettingsForm.vue';
 
 /** Ollama server URL, connection test, Connect/Disconnect and the access token. */
@@ -92,6 +93,13 @@ const testedOther = computed(
         <strong data-testid="ollama-status-text">{{ status.text }}</strong>
         <span class="muted">{{ state?.url ?? view?.values['ollama.baseUrl'] }}</span>
       </div>
+      <p v-if="view" class="muted small" data-testid="ollama-effective">
+        In use: <code>{{ effectiveConnection(view).url }}</code> ({{
+          effectiveConnection(view).urlSource
+        }}) · model <code>{{ effectiveConnection(view).model }}</code> ({{
+          effectiveConnection(view).modelSource
+        }})
+      </p>
       <dl v-if="test?.ok" class="facts">
         <dt>Server version</dt>
         <dd data-testid="ollama-version">{{ test.version }}</dd>

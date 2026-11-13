@@ -13,11 +13,19 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadOllamaConfig, type OllamaConfig } from '../config.js';
 import { matchesModel, OllamaProvider } from './provider.js';
+import { ollamaTransportOptionsFromEnv } from '../config.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const base = loadOllamaConfig(process.env);
 const remote = process.env['OLLAMA_REMOTE_HOST']?.trim();
 const token = process.env['OLLAMA_TOKEN']?.trim();
-const provider = new OllamaProvider(base, { getAuthToken: () => token || undefined });
+const provider = new OllamaProvider(base, {
+  ...liveTransport,
+  getAuthToken: () => token || undefined,
+});
 
 describe(`runtime settings against live Ollama at ${base.baseUrl} (${base.model})`, () => {
   beforeAll(async () => {

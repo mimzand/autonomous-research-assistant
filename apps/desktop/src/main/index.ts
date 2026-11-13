@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
-import { createOllamaProvider } from '@rka/model-provider';
+import { createOllamaProvider, ollamaTransportOptionsFromEnv } from '@rka/model-provider';
 import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
 import { createReconfigurableWebServices, createToolRegistry, createWebTools } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
@@ -89,9 +89,23 @@ function bootstrap(): void {
   // Ollama: one live provider that follows the settings. The access token is
   // read per request in the main process only; Disconnect is session-only.
   let ollamaConnected = true;
+  // Trusted ngrok tunnels (OLLAMA_NGROK_BYPASS_HOSTS, main process only): only these
+  // hosts, over HTTPS, get ngrok's browser-warning bypass header.
+  const transport = ollamaTransportOptionsFromEnv(process.env);
+  if (transport.invalid.length > 0) {
+    console.warn(
+      `Ignored ${String(transport.invalid.length)} invalid OLLAMA_NGROK_BYPASS_HOSTS entr(y/ies): use exact host names, comma-separated.`,
+    );
+  }
+  if (transport.ngrokBypassHosts.length > 0) {
+    console.info(
+      `ngrok browser-warning bypass enabled for ${String(transport.ngrokBypassHosts.length)} trusted host(s).`,
+    );
+  }
   const modelProvider = createOllamaProvider(toOllamaConfig(config.getSettings()), {
     getAuthToken: () => config.getSecret('ollama.authToken'),
     isConnected: () => ollamaConnected,
+    ngrokBypassHosts: transport.ngrokBypassHosts,
   });
   config.register(ollamaApplier(modelProvider));
 
@@ -112,8 +126,11 @@ function bootstrap(): void {
     // Read when each task starts, so Settings changes apply to new tasks.
     researchDefaults: () => toResearchDefaults(config.getSettings()),
     // A running task keeps the model configuration it started with, including its
-    // Research engine (RESEARCH_ENGINE: "legacy" by default, or "adk"), across restarts.
-    taskModels: researchTaskModelsFor(modelProvider),
+    // Research engine (Settings → Agent Engines; default from RESEARCH_ENGINE, else
+    // "legacy"), across restarts. The setting is read only when a task is created.
+    taskModels: researchTaskModelsFor(modelProvider, {
+      readFlag: () => config.getSettings()['engine.research'],
+    }),
     searchConfigured: () => webServices.isSearchConfigured(),
     // Research progress is pushed to every window (validated against the shared contract).
     onResearchEvent: (event) => {
@@ -210,8 +227,13 @@ function bootstrap(): void {
     chat: new ChatController({
       runtime,
       onUsage: chatUsageRecorder(storage),
-      // Feature flag agent.engine (AGENT_ENGINE): "legacy" (default) or "adk".
-      selectEngine: createAppChatEngines({ runtime, provider: modelProvider }),
+      // Settings → Agent Engines (default from AGENT_ENGINE, else "legacy"); read when
+      // each Chat request starts, so a running reply keeps its engine.
+      selectEngine: createAppChatEngines({
+        runtime,
+        provider: modelProvider,
+        readFlag: () => config.getSettings()['engine.chat'],
+      }),
     }),
     dashboard,
     researchTools,
@@ -253,7 +275,7 @@ function bootstrap(): void {
   );
 
   // ADK migration (phase 1): load ADK after the window is up and run its offline
-  // self-check. Research does not use ADK; Chat uses it only when AGENT_ENGINE=adk.
+  // self-check. Chat and Research use it only when their engine is set to Google ADK.
   void probeAdkRuntime().then(({ ok, summary }) =>
     ok ? console.info(`ADK runtime: ${summary}`) : console.warn(`ADK runtime: ${summary}`),
   );

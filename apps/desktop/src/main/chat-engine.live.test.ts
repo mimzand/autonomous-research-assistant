@@ -10,7 +10,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentRuntime } from '@rka/agent-runtime';
-import { createOllamaProvider, loadOllamaConfig, type OllamaConfig } from '@rka/model-provider';
+import {
+  createOllamaProvider,
+  loadOllamaConfig,
+  type OllamaConfig,
+  ollamaTransportOptionsFromEnv,
+} from '@rka/model-provider';
 import { type ChatEvent, type ChatTurn } from '@rka/shared';
 import { openStorage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
@@ -18,6 +23,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { chatUsageRecorder } from './app-storage.js';
 import { ChatController, type ChatEventSink } from './chat.js';
 import { AGENT_ENGINE_ENV, createAppChatEngines, type AgentEngine } from './chat-engine.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const base = loadOllamaConfig(process.env);
 const dir = mkdtempSync(join(tmpdir(), 'rka-chat-live-'));
@@ -32,7 +41,7 @@ const log = (label: string, value: unknown) =>
   console.info(`[chat-live] ${label}: ${JSON.stringify(value)}`);
 
 function wire(engine: AgentEngine, config: Partial<OllamaConfig> = {}) {
-  const provider = createOllamaProvider({ ...base, ...config });
+  const provider = createOllamaProvider({ ...base, ...config }, liveTransport);
   const runtime = createAgentRuntime({
     modelProvider: provider,
     tools: createToolRegistry([]),

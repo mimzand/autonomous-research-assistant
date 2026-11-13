@@ -183,6 +183,8 @@ export interface RunnerDeps {
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Bound on waiting for a cancelled task to settle. */
   readonly cleanupGraceMs?: number;
+  /** Provider transport options (live mode: trusted ngrok hosts from the environment). */
+  readonly transport?: { readonly ngrokBypassHosts?: readonly string[] };
   /** ADK loader (default loadAdkRuntime). Injected in tests. */
   readonly loadAdk?: () => Promise<unknown>;
 }
@@ -392,7 +394,7 @@ export async function runBenchmark(o: BenchOptions, deps: RunnerDeps): Promise<B
     let id: string | null = null;
     let runtime: ReturnType<typeof createAgentRuntime> | null = null;
     try {
-      const provider = createOllamaProvider(deps.ollama);
+      const provider = createOllamaProvider(deps.ollama, deps.transport ?? {});
       const base = researchTaskModelsFor(provider, {
         readFlag: () => item.engine,
         log: () => undefined,

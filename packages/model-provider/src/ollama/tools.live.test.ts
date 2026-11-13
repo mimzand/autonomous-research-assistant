@@ -13,9 +13,14 @@ import { type ChatMessage } from '../schemas.js';
 import { calculator, runToolLoop } from '../testing/tool-harness.js';
 import { OllamaProvider, type OllamaToolSupport } from './provider.js';
 import { parseNdjson } from './ndjson.js';
+import { ollamaTransportOptionsFromEnv } from '../config.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const config = loadOllamaConfig(process.env);
-const ollama = new OllamaProvider(config, { allowToolCalls: true });
+const ollama = new OllamaProvider(config, { ...liveTransport, allowToolCalls: true });
 const deterministic = { temperature: 0, seed: 42 } as const;
 const question: ChatMessage[] = [
   { role: 'user', content: 'What is 125 multiplied by 48? Use the calculator tool.' },

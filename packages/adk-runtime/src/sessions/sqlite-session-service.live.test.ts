@@ -7,7 +7,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
+import {
+  createOllamaProvider,
+  loadOllamaConfig,
+  ollamaTransportOptionsFromEnv,
+} from '@rka/model-provider';
 import { openStorage } from '@rka/storage';
 import { afterAll, describe, expect, it } from 'vitest';
 import { type Event, LlmAgent } from '../adk.js';
@@ -16,9 +20,13 @@ import { OllamaLlm } from '../ollama/ollama-llm.js';
 import { finalResponseText } from '../structured.js';
 import { findIncompleteInvocations } from './history.js';
 import { SqliteSessionService } from './sqlite-session-service.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const config = loadOllamaConfig(process.env);
-const provider = createOllamaProvider(config);
+const provider = createOllamaProvider(config, liveTransport);
 const dir = mkdtempSync(join(tmpdir(), 'rka-adk-live-'));
 const dbPath = join(dir, 'sessions.db');
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

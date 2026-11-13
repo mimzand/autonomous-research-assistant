@@ -12,6 +12,7 @@ import {
   createOllamaProvider,
   loadOllamaConfig,
   type OllamaToolSupport,
+  ollamaTransportOptionsFromEnv,
 } from '@rka/model-provider';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -25,10 +26,14 @@ import {
 import { createGuardedRunner } from '../guards.js';
 import { finalResponseText, structuredOutput } from '../structured.js';
 import { OllamaLlm } from './ollama-llm.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const config = loadOllamaConfig(process.env);
-const plainProvider = createOllamaProvider(config);
-const toolProvider = createOllamaProvider(config, { allowToolCalls: true });
+const plainProvider = createOllamaProvider(config, liveTransport);
+const toolProvider = createOllamaProvider(config, { ...liveTransport, allowToolCalls: true });
 const deterministic = { temperature: 0, seed: 42 };
 const log = (label: string, value: unknown) =>
   console.info(`[adk-live] ${label}: ${JSON.stringify(value)}`);
@@ -216,6 +221,7 @@ describe(`live ADK + OllamaLlm at ${config.baseUrl} (${config.model})`, () => {
   it('a missing model is reported as OLLAMA_MODEL_NOT_FOUND', async () => {
     const missing = createOllamaProvider(
       loadOllamaConfig({ ...process.env, OLLAMA_MODEL: 'definitely-not-installed:1b' }),
+      liveTransport,
     );
     const events = await harness({ llm: new OllamaLlm({ provider: missing }) })('x');
     log('missing model', errors(events));

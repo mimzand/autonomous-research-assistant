@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ollamaConnectionLabel } from '@rka/shared';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { isSubmitKey } from '../chat/keyboard';
 import { createChatSession } from '../chat/session';
@@ -7,6 +8,10 @@ import { useModelHealth } from '../composables/useModelHealth';
 const { health, refresh: refreshHealth } = useModelHealth();
 const modelName = computed(() => health.value?.model ?? 'qwen3:8b');
 const modelReady = computed(() => health.value?.status === 'ready');
+// From the effective server URL reported by the main process (updates after Settings → Save).
+const connectionLabel = computed(() =>
+  health.value ? ollamaConnectionLabel(health.value.baseUrl) : 'Ollama',
+);
 
 const chat = createChatSession(window.api.chat, {
   model: () => modelName.value,
@@ -81,7 +86,7 @@ onBeforeUnmount(() => chat.dispose());
         <p class="model" data-testid="chat-model">
           <span class="dot" :data-ready="modelReady" aria-hidden="true"></span>
           <code>{{ modelName }}</code>
-          <span class="muted">· local via Ollama</span>
+          <span class="muted" data-testid="chat-connection">· {{ connectionLabel }}</span>
         </p>
       </div>
       <button
@@ -104,8 +109,14 @@ onBeforeUnmount(() => chat.dispose());
       data-testid="chat-log"
       @scroll="onScroll"
     >
-      <p v-if="messages.length === 0" class="empty">
-        Send a message to test the local model. Everything stays on this computer.
+      <p v-if="messages.length === 0" class="empty" data-testid="chat-empty">
+        <template v-if="connectionLabel === 'Remote Ollama'">
+          Send a message to test the model. Messages are sent to the Ollama server configured in
+          Settings.
+        </template>
+        <template v-else>
+          Send a message to test the local model. Everything stays on this computer.
+        </template>
       </p>
 
       <article

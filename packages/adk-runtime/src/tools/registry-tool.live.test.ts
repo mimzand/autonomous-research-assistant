@@ -7,6 +7,7 @@ import {
   createOllamaProvider,
   loadOllamaConfig,
   type OllamaToolSupport,
+  ollamaTransportOptionsFromEnv,
 } from '@rka/model-provider';
 import { createToolRegistry, defineTool } from '@rka/tools';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -21,9 +22,13 @@ import {
   UNTRUSTED_TOOL_OUTPUT_INSTRUCTION,
 } from './registry-tool.js';
 import { summarizeInvocation, ToolOutcomeTracker } from './outcomes.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const config = loadOllamaConfig(process.env);
-const provider = createOllamaProvider(config, { allowToolCalls: true });
+const provider = createOllamaProvider(config, { ...liveTransport, allowToolCalls: true });
 const log = (label: string, value: unknown) =>
   console.info(`[bridge-live] ${label}: ${JSON.stringify(value)}`);
 

@@ -11,7 +11,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
-import { createOllamaProvider, loadOllamaConfig, type OllamaConfig } from '@rka/model-provider';
+import {
+  createOllamaProvider,
+  loadOllamaConfig,
+  type OllamaConfig,
+  ollamaTransportOptionsFromEnv,
+} from '@rka/model-provider';
 import { openStorage } from '@rka/storage';
 import {
   createToolRegistry,
@@ -22,6 +27,10 @@ import {
 } from '@rka/tools';
 import { afterAll, describe, expect, it } from 'vitest';
 import { researchTaskModelsFor, type ResearchEngine } from './research-engine.js';
+/** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
+const liveTransport = {
+  ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,
+};
 
 const base = loadOllamaConfig(process.env);
 const dir = mkdtempSync(join(tmpdir(), 'rka-research-live-'));
@@ -91,7 +100,7 @@ function fixtureWeb() {
 }
 
 function wire(engine: ResearchEngine, config: Partial<OllamaConfig> = {}) {
-  const provider = createOllamaProvider({ ...base, ...config });
+  const provider = createOllamaProvider({ ...base, ...config }, liveTransport);
   const web = fixtureWeb();
   return createAgentRuntime({
     modelProvider: provider,
