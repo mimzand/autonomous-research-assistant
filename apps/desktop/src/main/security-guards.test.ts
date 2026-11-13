@@ -66,11 +66,25 @@ describe('security guards', () => {
     expect(
       offenders(/\b(rmSync|unlinkSync|rmdirSync|unlink|rmdir)\s*\(|fs\.rm\(|\.rm\(/, [
         'packages/storage/src/inspect.ts',
+        'apps/desktop/src/bench/runner.ts',
       ]),
     ).toEqual([]);
+    // The benchmark (dev tooling, not part of the app) removes only the temporary
+    // directories it created with mkdtempSync in the OS temp folder.
+    const bench = readFileSync(join(repo, 'apps/desktop/src/bench/runner.ts'), 'utf8');
+    expect(bench.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(root', 'rmSync(dir']);
+    expect(bench).toMatch(/const root = mkdtempSync\(join\(tmpdir\(\), 'rka-bench-'\)\)/);
+    expect(bench).toMatch(/const dir = mkdtempSync\(join\(root, 'task-'\)\)/);
     // inspect.ts removes only its own `<target>.partial-*` file after a failed backup.
     const inspect = readFileSync(join(repo, 'packages/storage/src/inspect.ts'), 'utf8');
     expect(inspect.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(temp']);
+  });
+
+  it('never ships the benchmark: no app code imports src/bench', () => {
+    const app = files.filter((f) => !rel(f).startsWith('apps/desktop/src/bench/'));
+    expect(
+      app.filter((f) => /from '[^']*\/bench\//.test(readFileSync(f, 'utf8'))).map(rel),
+    ).toEqual([]);
   });
 
   it('never lets the model call tools in the app (tool calling stays off)', () => {

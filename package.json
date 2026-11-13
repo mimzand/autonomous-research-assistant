@@ -26,6 +26,9 @@
     "test:adk:ollama": "pnpm --filter @rka/adk-runtime test:live",
     "test:chat:ollama": "pnpm --filter @rka/desktop test:live chat-engine",
     "test:research:ollama": "pnpm --filter @rka/desktop test:live research-engine",
+    "bench:research:ollama": "pnpm --filter @rka/desktop test:live research-benchmark",
+    "acceptance:db": "node packages/storage/scripts/acceptance-db.mjs",
+    "diag:adk-load": "node packages/adk-runtime/scripts/diag-adk-load.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build"
   },
   "devDependencies": {

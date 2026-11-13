@@ -180,7 +180,8 @@ type Reply =
   | { readonly json: unknown }
   | { readonly raw: string }
   | { readonly status: number; readonly error: string }
-  | { readonly hangMs: number; readonly then?: unknown };
+  | { readonly hangMs: number; readonly then?: unknown }
+  | { readonly drop: true };
 /** Per-task override: called with the attempt number (1, 2, ...) of that task. */
 type Script = Partial<Record<string, (attempt: number, body: ChatBody) => Reply | undefined>>;
 interface ChatBody {
@@ -269,6 +270,7 @@ beforeAll(async () => {
           if (res.destroyed) return;
           return json(res, answer(body, JSON.stringify(reply.then ?? defaultReply(task, body))));
         }
+        if ('drop' in reply) return void res.socket?.destroy(); // connection lost mid-request
         if ('status' in reply) return json(res, { error: reply.error }, reply.status);
         return json(res, answer(body, 'raw' in reply ? reply.raw : JSON.stringify(reply.json)));
       })();
@@ -856,5 +858,140 @@ describe('P/Q. no other hosts and no persistent ADK sessions', () => {
       });
     }
     expect(process.env['OTEL_SDK_DISABLED']).toBe('true');
+  });
+});
+
+// --- Phase 7.1: recovery, pinning and error integrity audit --------------------------------
+
+describe('Phase 7.1 audit: task data, unknown pins and failed calls', () => {
+  const inputOf = (h: ReturnType<typeof harness>, id: string) =>
+    JSON.stringify(h.storage.tasks.require(id).input);
+
+  it('resuming never rewrites a task’s stored input (pre-Phase 7, legacy and ADK tasks)', async () => {
+    for (const variant of ['pre-phase-7', 'legacy', 'adk'] as const) {
+      const path = tempDb();
+      chats = [];
+      attempts.clear();
+      script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+      const first = harness(
+        variant === 'pre-phase-7' ? { path, prePhase7: true } : { path, engine: variant },
+      );
+      const id = await first.start();
+      while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+      const before = inputOf(first, id);
+      first.storage.close();
+      await sleep(20);
+      script = {};
+      // Restart with the opposite flag.
+      const second = harness({ path, engine: variant === 'adk' ? 'legacy' : 'adk' });
+      second.storage.recovery.recoverInterruptedTasks();
+      second.runtime.tasks.resume(id);
+      await second.runtime.tasks.whenIdle();
+      expect(second.storage.tasks.require(id).status, variant).toBe('completed');
+      expect(inputOf(second, id), variant).toBe(before);
+      expect(second.adk.generates, variant).toBe(variant === 'adk' ? 3 : 0);
+    }
+  });
+
+  it('documents downgrade behaviour: pre-Phase 7 code resumes an ADK-pinned task on legacy (input untouched)', async () => {
+    script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+    const path = tempDb();
+    const first = harness({ path, engine: 'adk' });
+    const id = await first.start();
+    while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+    const before = inputOf(first, id);
+    first.storage.close();
+    await sleep(20);
+    script = {};
+    // The Phase 6 Research wiring (taskModelsFor) does not know the pin and ignores it.
+    const downgraded = harness({ path, prePhase7: true });
+    downgraded.storage.recovery.recoverInterruptedTasks();
+    downgraded.runtime.tasks.resume(id);
+    await downgraded.runtime.tasks.whenIdle();
+    expect(downgraded.storage.tasks.require(id).status).toBe('completed');
+    expect(downgraded.adk.generates).toBe(0); // ran on legacy
+    expect(inputOf(downgraded, id)).toBe(before); // the pin is still stored
+  });
+
+  it('a task pinned to an unknown engine fails closed: no model request, a clear error, input untouched', async () => {
+    script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+    const path = tempDb();
+    const first = harness({ path, engine: 'adk' });
+    const id = await first.start();
+    while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+    first.storage.close();
+    await sleep(20);
+    // Simulate a task written by a newer version with an engine this version does not know.
+    const raw = openStorage({ path });
+    const input = raw.tasks.require(id).input as { model: { config: Record<string, unknown> } };
+    input.model.config['researchEngine'] = 'adk-v2';
+    raw.sqlite.prepare('update tasks set input = ? where id = ?').run(JSON.stringify(input), id);
+    raw.close();
+
+    script = {};
+    chats = [];
+    const second = harness({ path, engine: 'legacy' });
+    second.storage.recovery.recoverInterruptedTasks();
+    const before = inputOf(second, id);
+    second.runtime.tasks.resume(id);
+    await second.runtime.tasks.whenIdle();
+    const task = second.storage.tasks.require(id);
+    expect(task.status).toBe('failed');
+    expect(task.error).toMatch(
+      /started with the research engine "adk-v2".*not run with a different engine/,
+    );
+    expect(chats).toEqual([]); // nothing sent on any engine
+    expect(second.adk.generates).toBe(0);
+    expect(inputOf(second, id)).toBe(before);
+    expect(second.storage.reports.listByTask(id)).toEqual([]);
+  });
+
+  it('timeouts until the retry budget is exhausted: same outcome, no output, no usage, no report', async () => {
+    script = { 'compare-findings': () => ({ hangMs: 1500 }) };
+    const out = await both((h) => h.run({ modelTimeoutMs: 1000, modelRetries: 1 }));
+    expect(out.adk.snap).toEqual(out.legacy.snap);
+    expect(out.adk.snap.task.status).not.toBe('completed');
+    expect(out.adk.snap.steps.find((s) => s.kind === 'analyze')).toMatchObject({ output: null });
+    expect(out.adk.snap.steps.find((s) => s.kind === 'analyze')?.error).toMatch(/timeout/);
+    expect(out.adk.snap.usage.some((u) => u.purpose === 'research:analyze')).toBe(false);
+    expect(out.adk.snap.reports).toEqual([]);
+    expect(modelCalls(out.adk.chats).filter((t) => t === 'compare-findings')).toHaveLength(2);
+  });
+
+  it('the connection to Ollama is lost mid-request: same classification, nothing accepted', async () => {
+    script = { 'write-report': () => ({ drop: true }) };
+    const out = await both((h) => h.run({ modelRetries: 1 }));
+    expect(out.adk.snap).toEqual(out.legacy.snap);
+    expect(out.adk.snap.task.status).not.toBe('completed');
+    expect(out.adk.snap.steps.find((s) => s.kind === 'report')).toMatchObject({ output: null });
+    expect(out.adk.snap.usage.some((u) => u.purpose === 'research:report')).toBe(false);
+    expect(out.adk.snap.reports).toEqual([]);
+  });
+
+  it('recovery after a crash adds no duplicate sources, reports or accepted usage rows', async () => {
+    for (const engine of ENGINES) {
+      const clean = harness({ engine });
+      const cleanId = await clean.run();
+      const expected = snapshot(clean.storage, cleanId);
+
+      const path = tempDb();
+      script = { 'review-report': () => ({ hangMs: 5000 }) };
+      chats = [];
+      const first = harness({ path, engine });
+      const id = await first.start();
+      while (!chats.some((b) => taskOf(b) === 'review-report')) await sleep(5);
+      first.storage.close();
+      await sleep(20);
+      script = {};
+      const second = harness({ path, engine });
+      second.storage.recovery.recoverInterruptedTasks();
+      second.runtime.tasks.resume(id);
+      await second.runtime.tasks.whenIdle();
+      const recovered = snapshot(second.storage, id);
+      expect(recovered.task.status, engine).toBe('completed');
+      expect(recovered.sources, engine).toEqual(expected.sources);
+      expect(recovered.reports, engine).toEqual(expected.reports);
+      expect(recovered.usage, engine).toEqual(expected.usage);
+    }
   });
 });
