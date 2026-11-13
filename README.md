@@ -377,7 +377,7 @@ and no restart is needed. Details, defaults, validation rules and remote-server 
 
 Environment variables only provide the **defaults** (saved Settings values win). The installed app also reads
 `%APPDATA%\Autonomous Research Assistant\settings.env`. Only `OLLAMA_*`, `SEARXNG_*`,
-`WEB_*` and `RESEARCH_*` keys are applied from that file. In development the app also reads `.env`
+`WEB_*` and `RESEARCH_*` keys and `AGENT_ENGINE` are applied from that file. In development the app also reads `.env`
 (from `apps/desktop/` or the repository root); real environment variables take
 precedence. See `.env.example`:
 
@@ -398,6 +398,7 @@ precedence. See `.env.example`:
 | `RESEARCH_MODEL_TIMEOUT_MS` | `300000`          | Deadline for one research model call        |
 | `RESEARCH_MAX_QUESTIONS`    | `3`               | Default sub-questions per task (1–6)        |
 | `RESEARCH_MAX_SOURCES`      | `6`               | Default sources per task (1–12)             |
+| `AGENT_ENGINE`              | `legacy`          | Chat engine: `legacy` or `adk` (Google ADK) |
 
 No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
 startup with a message naming the variable.

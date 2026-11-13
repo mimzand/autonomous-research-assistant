@@ -158,6 +158,42 @@ describe('ADK integration guards', () => {
     expect(wiring).toEqual([]);
   });
 
+  it('production Chat (phase 6) builds its agent with no tools of any kind', () => {
+    const chat = files.filter((file) => rel(file).startsWith('packages/adk-runtime/src/chat/'));
+    expect(chat.map(rel)).toEqual(['packages/adk-runtime/src/chat/adk-chat.ts']);
+    for (const file of chat) {
+      expect(code(file)).not.toMatch(
+        /\btools\s*:|RegistryTool|createRegistryTools|registryTools|allowedTools|allowToolCalls|BaseTool/,
+      );
+    }
+    // The desktop main process wires Chat only through the engine selector.
+    const desktop = files.filter((file) => rel(file).startsWith('apps/desktop/src/'));
+    for (const file of desktop) {
+      expect(code(file), rel(file)).not.toMatch(/allowToolCalls\s*:\s*true/);
+    }
+  });
+
+  it('only the authoritative boundary reads tool calls or final model text (raw text is never proof of execution)', () => {
+    // Modules that may look at model function calls/responses or the raw final
+    // text. Anything new must go through summarizeInvocation (tools/outcomes.ts).
+    const allowed = [
+      'packages/adk-runtime/src/engine.ts', // re-exports only
+      'packages/adk-runtime/src/ollama/messages.ts', // wire conversion
+      'packages/adk-runtime/src/structured.ts', // structured output parsing
+      'packages/adk-runtime/src/tools/outcomes.ts', // the authoritative result
+      'packages/adk-runtime/src/sessions/history.ts', // incomplete-invocation detection
+      'packages/adk-runtime/src/chat/adk-chat.ts', // only to reject a tool call in Chat
+    ];
+    const readers = files
+      .filter((file) => /\b(functionCall|functionResponse|finalResponseText)\b/.test(code(file)))
+      .map(rel);
+    expect(readers.sort()).toEqual(allowed.sort());
+    // Chat rejects any tool call or response instead of reporting it.
+    expect(code(join(repo, 'packages/adk-runtime/src/chat/adk-chat.ts'))).toMatch(
+      /p\.functionCall \|\| p\.functionResponse\)\)\s*\{[\s\S]{0,200}throw new ModelProviderError\('invalid-response'/,
+    );
+  });
+
   it('keeps the entry point free of ADK so it is only loaded after env sanitisation', () => {
     const entry = code(join(repo, 'packages/adk-runtime/src/index.ts'));
     const runtime = code(join(repo, 'packages/adk-runtime/src/runtime.ts'));

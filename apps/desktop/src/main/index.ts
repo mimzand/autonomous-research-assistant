@@ -8,6 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell 
 import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
+import { createAppChatEngines } from './chat-engine.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
   createOllamaSettingsService,
@@ -205,7 +206,12 @@ function bootstrap(): void {
 
   registerIpcHandlers(ipcMain, {
     runtime,
-    chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
+    chat: new ChatController({
+      runtime,
+      onUsage: chatUsageRecorder(storage),
+      // Feature flag agent.engine (AGENT_ENGINE): "legacy" (default) or "adk".
+      selectEngine: createAppChatEngines({ runtime, provider: modelProvider }),
+    }),
     dashboard,
     researchTools,
     settings: settingsService,
@@ -246,7 +252,7 @@ function bootstrap(): void {
   );
 
   // ADK migration (phase 1): load ADK after the window is up and run its offline
-  // self-check. Chat and research do not use ADK yet.
+  // self-check. Research does not use ADK; Chat uses it only when AGENT_ENGINE=adk.
   void probeAdkRuntime().then(({ ok, summary }) =>
     ok ? console.info(`ADK runtime: ${summary}`) : console.warn(`ADK runtime: ${summary}`),
   );

@@ -152,8 +152,11 @@ function finalResponse(result: GenerateResult, structured: boolean): LlmResponse
     content = JSON.stringify(json);
   }
 
+  const parts = toModelParts(result, content);
   return {
-    content: { role: 'model', parts: toModelParts(result, content) },
+    // An empty reply carries no content: ADK then reports it as a usage-only
+    // event (instead of discarding it with its usage).
+    ...(parts.length > 0 && { content: { role: 'model', parts } }),
     partial: false,
     turnComplete: true,
     finishReason: finishReason(result.finishReason),

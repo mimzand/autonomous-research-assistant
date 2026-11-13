@@ -13,6 +13,7 @@
     "preview": "install-electron && electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
     "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "package:win": "electron-vite build && electron-builder --win --config electron-builder.yml",
     "package:dir": "electron-vite build && electron-builder --dir --config electron-builder.yml"
   },

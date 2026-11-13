@@ -12,6 +12,12 @@ export {
   type AgentGuardOptions,
   type GuardedRunnerOptions,
 } from './guards.js';
+export {
+  CHAT_AGENT_NAME,
+  createAdkChatEngine,
+  type AdkChatEngine,
+  type AdkChatOptions,
+} from './chat/adk-chat.js';
 export { LocalLlm, isLocalLlm } from './local-llm.js';
 export { ADAPTER_ERROR_CODES, PROVIDER_ERROR_CODES } from './ollama/errors.js';
 export { OllamaLlm, type OllamaLlmOptions } from './ollama/ollama-llm.js';

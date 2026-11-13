@@ -9,6 +9,7 @@ import {
   type ChatEvent,
   type ChatStartResult,
 } from '@rka/shared';
+import { type ChatEngine, legacyChatEngine } from './chat-engine.js';
 
 /** Where a stream's events go: one renderer (webContents). */
 export interface ChatEventSink {
@@ -30,6 +31,11 @@ export interface ChatControllerDeps {
   readonly runtime: Pick<AgentRuntime, 'model' | 'streamChat'>;
   /** Called once per completed reply (e.g. to persist model usage). Must not throw. */
   readonly onUsage?: (usage: ChatUsage) => void;
+  /**
+   * Chooses the engine for a new request (feature flag `agent.engine`).
+   * Called once per request, when it starts; defaults to the legacy engine.
+   */
+  readonly selectEngine?: () => ChatEngine;
   /** Injected for tests. */
   readonly newId?: () => string;
 }
@@ -75,9 +81,11 @@ export class ChatController {
       };
     }
 
+    // The engine is fixed for this request: a later flag change affects only new requests.
+    const engine = this.deps.selectEngine?.() ?? legacyChatEngine(this.deps.runtime);
     const streamId = this.newId();
     const controller = new AbortController();
-    const finished = this.run(sink, streamId, parsed.data.messages, controller);
+    const finished = this.run(engine, sink, streamId, parsed.data.messages, controller);
     this.active = { streamId, sinkId: sink.id, controller, finished };
     return { status: 'started', streamId, model: this.deps.runtime.model };
   }
@@ -108,6 +116,7 @@ export class ChatController {
   }
 
   private async run(
+    engine: ChatEngine,
     sink: ChatEventSink,
     streamId: string,
     turns: Parameters<AgentRuntime['streamChat']>[0],
@@ -125,9 +134,7 @@ export class ChatController {
     };
 
     try {
-      for await (const chunk of this.deps.runtime.streamChat(turns, {
-        signal: controller.signal,
-      })) {
+      for await (const chunk of engine.streamChat(turns, { signal: controller.signal })) {
         if (chunk.type === 'delta') {
           if (chunk.content) emit({ type: 'delta', streamId, content: chunk.content });
         } else {
