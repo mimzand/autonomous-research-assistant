@@ -260,6 +260,17 @@ const REQUIREMENT_LABEL: Record<RequirementStatus, string> = {
   'insufficient-evidence': 'Insufficient evidence',
 };
 
+/**
+ * Two renderings of the same report: equal except for the generation time in
+ * the header. Used to keep saving idempotent when a save is repeated after a
+ * crash (the repeat happens later, so the time differs).
+ */
+export function sameReportIgnoringTime(a: string, b: string): boolean {
+  const strip = (text: string) =>
+    text.replace(/^> Generated \d{4}-\d\d-\d\d \d\d:\d\d UTC /m, '> Generated (time) ');
+  return strip(a) === strip(b);
+}
+
 /** Builds the final Markdown report from verified pieces. */
 export function renderReport(input: RenderInput): RenderedReport {
   const evidenceById = new Map(input.evidence.map((e) => [e.id, e]));

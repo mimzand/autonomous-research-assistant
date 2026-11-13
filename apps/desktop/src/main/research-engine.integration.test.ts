@@ -20,6 +20,7 @@ import { openStorage, type Storage } from '@rka/storage';
 import {
   createToolRegistry,
   createWebTools,
+  WebError,
   type FetchedDocument,
   type SearchResult,
   type WebFetcher,
@@ -217,6 +218,8 @@ let server: Server;
 let host: string;
 let script: Script = {};
 let chats: ChatBody[] = [];
+/** Phase 7.6: runs before a page is returned (hang until aborted, or fail). */
+let fetchHook: ((url: string, signal: AbortSignal | undefined) => Promise<void>) | null = null;
 const attempts = new Map<string, number>();
 
 const taskOf = (body: ChatBody) =>
@@ -292,6 +295,7 @@ afterEach(() => {
   cleanups.splice(0).forEach((fn) => fn());
   script = {};
   chats = [];
+  fetchHook = null;
   attempts.clear();
   vi.restoreAllMocks();
 });
@@ -316,8 +320,9 @@ function scriptedWeb() {
     },
   };
   const fetcher: WebFetcher = {
-    fetch: (url): Promise<FetchedDocument> => {
+    fetch: async (url, options): Promise<FetchedDocument> => {
       fetched.push(url);
+      await fetchHook?.(url, options?.signal);
       const page = PAGES[url];
       if (!page) return Promise.reject(new Error('unknown page'));
       return Promise.resolve({
@@ -1101,6 +1106,227 @@ describe('Phase 7.5. goal completeness runs identically on both engines', () => 
     expect(report).toContain('- **Insufficient evidence:** Give the noise level');
     expect(report).toContain('## Requested details');
     expect(out.adk.adk.generates).toBeGreaterThan(0);
+  });
+});
+
+// --- Phase 7.6: lifecycle acceptance matrix (in-process; real-process crashes: lifecycle/) ---
+
+/** A fetch that never answers until its AbortSignal fires; records whether it did. */
+function hangingFetch(target: string) {
+  const seen = { started: false, aborted: false };
+  fetchHook = (url, signal) => {
+    if (url !== target) return Promise.resolve();
+    seen.started = true;
+    return new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
+        seen.aborted = true;
+        reject(new WebError('cancelled', 'aborted'));
+      });
+    });
+  };
+  return seen;
+}
+
+const details = (h: ReturnType<typeof harness>, id: string) =>
+  createDashboardService({
+    storage: h.storage,
+    runtime: h.runtime,
+    chooseBackupPath: () => Promise.resolve(null),
+  }).getTask({ id });
+
+const attemptsOf = (h: ReturnType<typeof harness>, id: string) =>
+  Object.fromEntries(h.storage.steps.listByTask(id).map((x) => [keyName(x.input), x.attempts]));
+const keyName = (input: unknown) =>
+  input && typeof input === 'object' && 'key' in input ? String(input.key) : '?';
+
+describe('Phase 7.6. pause / cancel while a tool (web fetch) is in flight', () => {
+  const FIRST = Object.keys(PAGES)[0] ?? '';
+
+  it('pause: the fetch receives the abort, the task is interrupted promptly, Resume repeats only that fetch', async () => {
+    for (const engine of ENGINES) {
+      chats = [];
+      const seen = hangingFetch(FIRST);
+      const h = harness({ settingsEnv: {} });
+      h.chooseResearchEngine(engine);
+      const id = await h.start();
+      while (!seen.started) await sleep(5);
+      const before = Date.now();
+      expect(h.runtime.tasks.pause(id)).toMatchObject({ ok: true });
+      await h.runtime.tasks.whenIdle();
+      expect(Date.now() - before, engine).toBeLessThan(2000);
+      expect(seen.aborted, engine).toBe(true);
+      expect(h.storage.tasks.require(id).status, engine).toBe('interrupted');
+      expect(details(h, id)?.recovery.interruption?.kind, engine).toBe('paused');
+      const input = JSON.stringify(h.storage.tasks.require(id).input);
+
+      fetchHook = null;
+      h.chooseResearchEngine(engine === 'adk' ? 'legacy' : 'adk'); // Settings change meanwhile
+      h.runtime.tasks.resume(id);
+      await h.runtime.tasks.whenIdle();
+      expect(h.storage.tasks.require(id).status, engine).toBe('completed');
+      const attempts = attemptsOf(h, id);
+      expect(attempts['plan'], engine).toBe(1);
+      expect(attempts['select'], engine).toBe(1);
+      expect(attempts['fetch:1'], engine).toBe(2);
+      expect(JSON.stringify(h.storage.tasks.require(id).input), engine).toBe(input);
+      expect(details(h, id)?.research?.engine, engine).toBe(engine);
+      expect(h.adk.generates > 0, engine).toBe(engine === 'adk');
+    }
+  });
+
+  it('cancel: the fetch receives the abort, nothing else is started, no report, and it stays cancelled', async () => {
+    for (const engine of ENGINES) {
+      chats = [];
+      const seen = hangingFetch(FIRST);
+      const h = harness({ engine });
+      const id = await h.start();
+      while (!seen.started) await sleep(5);
+      const before = Date.now();
+      expect(h.runtime.tasks.cancel(id)).toMatchObject({ ok: true });
+      await h.runtime.tasks.whenIdle();
+      expect(Date.now() - before, engine).toBeLessThan(2000);
+      expect(seen.aborted, engine).toBe(true);
+      expect(h.storage.tasks.require(id).status, engine).toBe('cancelled');
+      const steps = h.storage.steps.listByTask(id);
+      expect(
+        steps.filter((x) => x.status === 'running'),
+        engine,
+      ).toEqual([]);
+      // Nothing after the cancelled fetch ran.
+      expect(
+        steps.filter((x) => x.kind === 'evidence' && x.status !== 'pending'),
+        engine,
+      ).toEqual([]);
+      expect(
+        modelCalls(chats).filter((t) => t !== 'create-plan'),
+        engine,
+      ).toEqual([]);
+      expect(h.storage.reports.listByTask(id), engine).toEqual([]);
+      expect(h.runtime.tasks.resume(id), engine).toMatchObject({ ok: false });
+      expect(h.runtime.tasks.retry(id), engine).toMatchObject({ ok: false });
+      expect(h.storage.tasks.require(id).status, engine).toBe('cancelled');
+    }
+  });
+
+  it('a paused task cancelled before a restart stays cancelled after recovery', async () => {
+    const path = tempDb();
+    script = { 'compare-findings': () => ({ hangMs: 5000 }) };
+    const first = harness({ path, engine: 'adk' });
+    const id = await first.start();
+    while (!chats.some((b) => taskOf(b) === 'compare-findings')) await sleep(5);
+    first.runtime.tasks.pause(id);
+    await first.runtime.tasks.whenIdle();
+    expect(first.runtime.tasks.cancel(id)).toMatchObject({ ok: true });
+    expect(first.storage.tasks.require(id).status).toBe('cancelled');
+    first.storage.close();
+    script = {};
+    const second = harness({ path, engine: 'adk' });
+    expect(second.storage.recovery.recoverInterruptedTasks().interruptedTaskIds).toEqual([]);
+    expect(second.storage.tasks.require(id).status).toBe('cancelled');
+    expect(second.runtime.tasks.resume(id)).toMatchObject({ ok: false });
+  });
+});
+
+describe('Phase 7.6. Retry keeps the pinned engine and the captured model', () => {
+  it('after a model failure, in both directions, with Settings switched to the other engine', async () => {
+    for (const engine of ENGINES) {
+      chats = [];
+      attempts.clear();
+      script = { 'review-report': () => ({ raw: 'not json' }) };
+      const h = harness({ settingsEnv: {} });
+      h.chooseResearchEngine(engine);
+      const id = await h.run();
+      expect(h.storage.tasks.require(id).status, engine).toBe('failed');
+      const input = JSON.stringify(h.storage.tasks.require(id).input);
+      const before = h.adk.generates;
+      script = {};
+      h.chooseResearchEngine(engine === 'adk' ? 'legacy' : 'adk');
+      expect(h.runtime.tasks.retry(id), engine).toMatchObject({ ok: true });
+      await h.runtime.tasks.whenIdle();
+      expect(h.storage.tasks.require(id).status, engine).toBe('completed');
+      expect(h.adk.generates - before, engine).toBe(engine === 'adk' ? 1 : 0); // only the review
+      expect(JSON.stringify(h.storage.tasks.require(id).input), engine).toBe(input);
+      expect(
+        h.storage.reports.listByTask(id).map((r) => r.version),
+        engine,
+      ).toEqual([1]);
+      expect(attemptsOf(h, id)['write-report'] ?? attemptsOf(h, id)['report'], engine).toBe(1);
+    }
+  });
+
+  it('after a tool failure (every source failed), Retry re-fetches on the pinned engine', async () => {
+    for (const engine of ENGINES) {
+      chats = [];
+      attempts.clear();
+      fetchHook = () => Promise.reject(new WebError('http-error', 'HTTP 503 from x.', 503));
+      const h = harness({ settingsEnv: {} });
+      h.chooseResearchEngine(engine);
+      const id = await h.run();
+      expect(h.storage.tasks.require(id).status, engine).toBe('failed');
+      expect(h.storage.steps.listByTask(id).find((x) => x.kind === 'analyze')?.status, engine).toBe(
+        'failed',
+      );
+      fetchHook = null;
+      h.chooseResearchEngine(engine === 'adk' ? 'legacy' : 'adk');
+      expect(h.runtime.tasks.retry(id), engine).toMatchObject({ ok: true });
+      await h.runtime.tasks.whenIdle();
+      expect(h.storage.tasks.require(id).status, engine).toBe('completed');
+      expect(details(h, id)?.research?.engine, engine).toBe(engine);
+      expect(h.adk.generates > 0, engine).toBe(engine === 'adk');
+      expect(h.storage.reports.listByTask(id), engine).toHaveLength(1);
+    }
+  });
+});
+
+describe('Phase 7.6. restart with changed Settings and environment overrides', () => {
+  it('the resumed task keeps its captured model, server and engine; task details refresh correctly', async () => {
+    const path = tempDb();
+    script = { 'write-report': () => ({ hangMs: 5000 }) };
+    const first = harness({ path, settingsEnv: {} });
+    first.chooseResearchEngine('adk');
+    const id = await first.start();
+    while (!chats.some((b) => taskOf(b) === 'write-report')) await sleep(5);
+    const input = JSON.stringify(first.storage.tasks.require(id).input);
+    first.storage.close(); // the app dies mid-call
+    await sleep(20);
+
+    // Restart: other engine and model forced by environment overrides; the current
+    // provider points at a dead address and another model.
+    script = {};
+    chats = [];
+    const second = harness({
+      path,
+      settingsEnv: { RESEARCH_ENGINE: 'legacy', OLLAMA_MODEL: 'other-model:1b' },
+      config: { baseUrl: 'http://127.0.0.1:9', model: 'other-model:1b' },
+    });
+    second.storage.recovery.recoverInterruptedTasks();
+    // What the renderer shows after the restart.
+    const shown = details(second, id);
+    expect(shown?.task.status).toBe('interrupted');
+    expect(shown?.recovery).toMatchObject({
+      resumable: true,
+      interruption: { kind: 'app-closed' },
+      nextStep: { name: 'Write report' },
+    });
+    expect(shown?.research).toEqual({
+      engine: 'adk',
+      engineLabel: 'Google ADK',
+      model: 'qwen3:8b',
+      location: 'Local Ollama',
+    });
+
+    second.runtime.tasks.resume(id);
+    await second.runtime.tasks.whenIdle();
+    expect(second.storage.tasks.require(id).status).toBe('completed');
+    expect(chats.length).toBeGreaterThan(0);
+    expect(chats.every((b) => b.model === 'qwen3:8b')).toBe(true); // captured model, captured server
+    expect(second.adk.generates).toBeGreaterThan(0); // pinned engine
+    expect(JSON.stringify(second.storage.tasks.require(id).input)).toBe(input);
+    const after = details(second, id);
+    expect(after?.task.status).toBe('completed');
+    expect(after?.recovery.resumable).toBe(false);
+    expect(after?.progress?.completed).toBe(after?.progress?.total);
+    expect(second.storage.reports.listByTask(id)[0]?.content).toContain('via Local Ollama');
   });
 });
 

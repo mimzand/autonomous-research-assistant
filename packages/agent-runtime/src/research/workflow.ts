@@ -20,6 +20,7 @@ import {
   groundClaims,
   indexEvidence,
   renderReport,
+  sameReportIgnoringTime,
   sanitizeProse,
   type DraftParagraph,
   type EvidenceItem,
@@ -391,6 +392,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         ...(data !== undefined && { data }),
       });
     } catch (error) {
+      // The database is closed when the app quits: nothing to report (see launch()).
+      if (!storage.sqlite.open) return;
       console.error('Could not write the execution log:', error);
     }
   }
@@ -983,10 +986,11 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           modelLocation,
           ...(reviewed.requirements && { requirements: reviewed.requirements }),
         });
-        // A crash after saving must not create a second identical version on resume.
+        // A crash after saving must not create a second identical version on resume
+        // (the repeated save happens later, so only the generation time may differ).
         const latest = storage.reports.latest(task.id);
         const report =
-          latest && latest.content === rendered.markdown
+          latest && sameReportIgnoringTime(latest.content, rendered.markdown)
             ? latest
             : storage.reports.create(task.id, {
                 title: rendered.title,
@@ -1292,6 +1296,14 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
     networkFailures.delete(taskId);
     const done = run(taskId, controller)
       .catch((error: unknown) => {
+        if (!storage.sqlite.open) {
+          // Not a crash: the app is quitting and closed the database (will-quit).
+          // The task stays "running" in the file; startup recovery marks it interrupted.
+          console.info(
+            `Research task ${taskId} stopped: the database was closed (app shutting down). It can be resumed after the next start.`,
+          );
+          return;
+        }
         // Last resort: never leave a task "running" after an unexpected error.
         console.error('Research task crashed:', error);
         try {
