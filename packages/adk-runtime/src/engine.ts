@@ -18,6 +18,11 @@ export {
   type AdkChatEngine,
   type AdkChatOptions,
 } from './chat/adk-chat.js';
+export {
+  AdkResearchError,
+  AdkResearchModel,
+  RESEARCH_AGENT_NAME,
+} from './research/adk-research-model.js';
 export { LocalLlm, isLocalLlm } from './local-llm.js';
 export { ADAPTER_ERROR_CODES, PROVIDER_ERROR_CODES } from './ollama/errors.js';
 export { OllamaLlm, type OllamaLlmOptions } from './ollama/ollama-llm.js';

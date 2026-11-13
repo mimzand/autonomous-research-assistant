@@ -173,6 +173,22 @@ describe('ADK integration guards', () => {
     }
   });
 
+  it('Research model calls (phase 7) build their agent with no tools of any kind', () => {
+    const research = files.filter((file) =>
+      rel(file).startsWith('packages/adk-runtime/src/research/'),
+    );
+    expect(research.map(rel)).toEqual(['packages/adk-runtime/src/research/adk-research-model.ts']);
+    for (const file of research) {
+      expect(code(file)).not.toMatch(
+        /\btools\s*:|RegistryTool|createRegistryTools|registryTools|allowedTools|allowToolCalls|BaseTool|outputSchema|outputKey|subAgents/,
+      );
+    }
+    // The Research workflow itself never imports ADK: the step machine stays the orchestrator.
+    const workflow = files.filter((file) => rel(file).startsWith('packages/agent-runtime/'));
+    for (const file of workflow)
+      expect(code(file), rel(file)).not.toMatch(/@rka\/adk-runtime|@google\/adk/);
+  });
+
   it('only the authoritative boundary reads tool calls or final model text (raw text is never proof of execution)', () => {
     // Modules that may look at model function calls/responses or the raw final
     // text. Anything new must go through summarizeInvocation (tools/outcomes.ts).
@@ -183,6 +199,7 @@ describe('ADK integration guards', () => {
       'packages/adk-runtime/src/tools/outcomes.ts', // the authoritative result
       'packages/adk-runtime/src/sessions/history.ts', // incomplete-invocation detection
       'packages/adk-runtime/src/chat/adk-chat.ts', // only to reject a tool call in Chat
+      'packages/adk-runtime/src/research/adk-research-model.ts', // only to reject a tool call
     ];
     const readers = files
       .filter((file) => /\b(functionCall|functionResponse|finalResponseText)\b/.test(code(file)))

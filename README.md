@@ -399,6 +399,7 @@ precedence. See `.env.example`:
 | `RESEARCH_MAX_QUESTIONS`    | `3`               | Default sub-questions per task (1–6)        |
 | `RESEARCH_MAX_SOURCES`      | `6`               | Default sources per task (1–12)             |
 | `AGENT_ENGINE`              | `legacy`          | Chat engine: `legacy` or `adk` (Google ADK) |
+| `RESEARCH_ENGINE`           | `legacy`          | Research model engine for new tasks         |
 
 No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
 startup with a message naming the variable.

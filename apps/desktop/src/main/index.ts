@@ -9,11 +9,11 @@ import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
 import { createAppChatEngines } from './chat-engine.js';
+import { researchTaskModelsFor } from './research-engine.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
   createOllamaSettingsService,
   ollamaApplier,
-  taskModelsFor,
   toOllamaConfig,
   toResearchDefaults,
   toWebConfig,
@@ -111,8 +111,9 @@ function bootstrap(): void {
     storage,
     // Read when each task starts, so Settings changes apply to new tasks.
     researchDefaults: () => toResearchDefaults(config.getSettings()),
-    // A running task keeps the model configuration it started with.
-    taskModels: taskModelsFor(modelProvider),
+    // A running task keeps the model configuration it started with, including its
+    // Research engine (RESEARCH_ENGINE: "legacy" by default, or "adk"), across restarts.
+    taskModels: researchTaskModelsFor(modelProvider),
     searchConfigured: () => webServices.isSearchConfigured(),
     // Research progress is pushed to every window (validated against the shared contract).
     onResearchEvent: (event) => {
