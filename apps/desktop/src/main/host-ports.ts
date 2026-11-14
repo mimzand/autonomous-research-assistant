@@ -18,7 +18,7 @@ function backupDirectory(saved: string | null, documents: string): string {
 const focusedWindow = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
 
 /** Pushes an event to every open window. */
-function broadcast(channel: string, payload: unknown): void {
+export function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload);
   }

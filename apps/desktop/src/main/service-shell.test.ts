@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { AgentClientError } from '@rka/agent-client';
-import { IpcChannels, type AppInfo } from '@rka/shared';
+import { type ParsedEvent } from '@rka/agent-protocol';
+import { IpcChannels, IpcEvents, type AppInfo } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { type InvokeEventLike, type IpcMainLike } from './ipc.js';
 import { SERVICE_REQUEST_TIMEOUT_MS, SERVICE_ROUTES } from './service-ipc.js';
@@ -38,22 +39,28 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const ipc: IpcMainLike = { handle: (channel, listener) => void handlers.set(channel, listener) };
   const quitListeners: (() => void)[] = [];
   const closeListeners: ((error: AgentClientError) => void)[] = [];
+  const eventListeners: ((event: ParsedEvent) => void)[] = [];
   const client = {
     ack: { agent: { pid: 4321, version: '0.1.0' }, version: 1 } as never,
     request,
-    onEvent: () => () => undefined,
+    onEvent: (listener: (event: ParsedEvent) => void) => {
+      eventListeners.push(listener);
+      return () => undefined;
+    },
     onClose: (listener: (error: AgentClientError) => void) => {
       closeListeners.push(listener);
     },
     close: vi.fn(),
   };
   const log = { info: vi.fn(), warn: vi.fn() };
+  const broadcast = vi.fn();
   await startServiceShell({
     ipc,
     stateFile: 'agent-state.json',
     appVersion: '0.1.0',
     getAppInfo: () => appInfo,
     isTrustedSender: (url) => url === APP_URL,
+    broadcast,
     onQuit: (listener) => quitListeners.push(listener),
     connect: () => Promise.resolve({ client: client as never, state: {} as never }),
     log,
@@ -68,7 +75,10 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const close = (error: AgentClientError) => {
     for (const listener of closeListeners) listener(error);
   };
-  return { handlers, invoke, request, client, log, quitListeners, close };
+  const push = (event: ParsedEvent) => {
+    for (const listener of eventListeners) listener(event);
+  };
+  return { handlers, invoke, request, client, log, quitListeners, close, broadcast, push };
 }
 
 describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
@@ -93,7 +103,56 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ['tasks.get', { id: 'task-1' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
       ['tasks.list', expect.any(Object), { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
     ]);
-    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(12);
+    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(17);
+  });
+
+  it('proxies the research task lifecycle with validated params', async () => {
+    const { invoke, request } = await setup(
+      vi.fn<RequestFn>(() => Promise.resolve({ status: 'ok', taskId: 'task-1' })),
+    );
+    const goal = 'Why is the sky blue at noon?';
+    await expect(invoke(IpcChannels.tasksStartResearch, { goal, maxSources: 3 })).resolves.toEqual({
+      status: 'ok',
+      taskId: 'task-1',
+    });
+    for (const channel of [
+      IpcChannels.tasksPause,
+      IpcChannels.tasksResume,
+      IpcChannels.tasksCancel,
+      IpcChannels.tasksRetry,
+    ]) {
+      await invoke(channel, { id: 'task-1' });
+    }
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      'tasks.startResearch',
+      'tasks.pause',
+      'tasks.resume',
+      'tasks.cancel',
+      'tasks.retry',
+    ]);
+    request.mockClear();
+    await expect(invoke(IpcChannels.tasksStartResearch, { goal: 'short' })).rejects.toThrow(
+      /Invalid params for tasks\.startResearch/,
+    );
+    await expect(invoke(IpcChannels.tasksPause, { id: '' })).rejects.toThrow();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('fans ui.researchProgress out to every window and ignores other events', async () => {
+    const { push, broadcast } = await setup();
+    const progress = {
+      type: 'step-completed' as const,
+      taskId: 'task-1',
+      taskStatus: 'running' as const,
+      progress: { completed: 1, total: 4, current: null, estimated: true },
+    };
+    push({ id: 'e1', method: 'ui.researchProgress', payload: progress });
+    push({
+      id: 'e2',
+      method: 'chat.event',
+      payload: { type: 'cancelled', streamId: '11111111-1111-4111-8111-111111111111' },
+    });
+    expect(broadcast.mock.calls).toEqual([[IpcEvents.researchProgress, progress]]);
   });
 
   it('proxies model health and Chat to the agent', async () => {
@@ -126,7 +185,6 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
     const { invoke, request } = await setup();
     for (const channel of [
       IpcChannels.settingsGet,
-      IpcChannels.tasksStartResearch,
       IpcChannels.storageBackup,
       IpcChannels.researchSearch,
     ]) {

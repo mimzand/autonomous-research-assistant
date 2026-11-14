@@ -315,6 +315,32 @@ describe('agent server over 127.0.0.1 TCP', () => {
     expect(disconnected).toHaveLength(1);
   });
 
+  it('broadcasts events to authenticated clients only', async () => {
+    const server = await start({ handshakeTimeoutMs: 300 });
+    const unauthenticated = exchange(server.port, []);
+    const client = await connectAgent({ port: server.port, token });
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const progress = {
+      type: 'task' as const,
+      taskId: 'task-1',
+      taskStatus: 'running' as const,
+      progress: { completed: 0, total: 1, current: null, estimated: true },
+    };
+    server.broadcast('ui.researchProgress', progress);
+    server.broadcast('ui.researchProgress', { ...progress, taskStatus: 'nope' } as never);
+    await expect(client.request('system.ping', {})).resolves.toBeDefined();
+    expect(events).toEqual([
+      expect.objectContaining({ method: 'ui.researchProgress', payload: progress }),
+    ]);
+
+    const raw = await unauthenticated;
+    expect(raw.envelopes.map((e) => e.kind)).toEqual(['error']);
+    client.close();
+  });
+
   it('disconnects clients on close', async () => {
     const server = await start();
     const client = await connectAgent({ port: server.port, token });

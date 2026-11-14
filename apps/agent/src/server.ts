@@ -15,6 +15,8 @@ import {
   UNATTRIBUTED_ERROR_METHOD,
   type Envelope,
   type EventEnvelope,
+  type EventName,
+  type EventPayload,
   type HelloAck,
   type ParsedRequest,
   type ProtocolError,
@@ -46,10 +48,15 @@ export interface AgentServerOptions {
   readonly log?: (message: string) => void;
 }
 
+/** Pushes one event to every authenticated client (e.g. research progress). */
+export type AgentBroadcast = <E extends EventName>(method: E, payload: EventPayload<E>) => void;
+
 export interface AgentServer {
   readonly host: typeof AGENT_LOOPBACK_HOST;
   readonly port: number;
   readonly startedAt: string;
+  /** Each connection validates the event (`parseEvent`) and drops it if invalid. */
+  readonly broadcast: AgentBroadcast;
   close(): Promise<void>;
 }
 
@@ -69,6 +76,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
   });
 
   let nextConnectionId = 1;
+  const clients = new Set<AgentConnection>();
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -77,7 +85,11 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
       token: options.token,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
       handlers: options.handlers ?? {},
-      onDisconnect: options.onDisconnect ?? (() => undefined),
+      onAuthenticated: (connection) => clients.add(connection),
+      onDisconnect: (connection) => {
+        clients.delete(connection);
+        options.onDisconnect?.(connection.id);
+      },
       ack,
       log,
     });
@@ -101,6 +113,9 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
     host: AGENT_LOOPBACK_HOST,
     port: address.port,
     startedAt,
+    broadcast: (method, payload) => {
+      for (const connection of [...clients]) connection.emit(method, payload);
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -114,7 +129,8 @@ interface ConnectionContext {
   readonly token: string;
   readonly handshakeTimeoutMs: number;
   readonly handlers: RequestHandlers;
-  readonly onDisconnect: (connectionId: number) => void;
+  readonly onAuthenticated: (connection: AgentConnection) => void;
+  readonly onDisconnect: (connection: AgentConnection) => void;
   readonly ack: () => HelloAck;
   readonly log: (message: string) => void;
 }
@@ -177,6 +193,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     authenticated = true;
     decoder.maxFrameBytes = MAX_FRAME_BYTES;
     reply(hello.value.id, 'system.hello', ctx.ack());
+    ctx.onAuthenticated(connection);
     ctx.log(`Client authenticated (${hello.value.hello.client.kind}).`);
   };
 
@@ -265,7 +282,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     clearTimeout(handshakeTimer);
     if (!authenticated) return;
     try {
-      ctx.onDisconnect(ctx.id);
+      ctx.onDisconnect(connection);
     } catch (error) {
       ctx.log(
         `Disconnect handling failed: ${error instanceof Error ? error.message : String(error)}`,

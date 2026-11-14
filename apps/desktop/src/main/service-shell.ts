@@ -1,4 +1,4 @@
-import { type AppInfo } from '@rka/shared';
+import { IpcEvents, type AppInfo } from '@rka/shared';
 import { connectServiceAgent } from './agent-transport.js';
 import { type IpcMainLike } from './ipc.js';
 import { registerServiceIpcHandlers } from './service-ipc.js';
@@ -9,6 +9,8 @@ export interface ServiceShellDeps {
   readonly appVersion: string;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
+  /** Sends to every open window (Electron: the same BrowserWindow loop as in-process). */
+  readonly broadcast: (channel: string, payload: unknown) => void;
   /** Electron: `app.on('will-quit', …)`. */
   readonly onQuit: (listener: () => void) => void;
   readonly connect?: Parameters<typeof connectServiceAgent>[0]['connect'];
@@ -33,13 +35,19 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
   client.onClose((error) => {
     if (!quitting) {
       log.warn(
-        `Agent service disconnected: ${error.message} Dashboard and Chat requests fail until the app restarts.`,
+        `Agent service disconnected: ${error.message} Dashboard, Chat and research requests fail until the app restarts.`,
       );
     }
   });
   deps.onQuit(() => {
     quitting = true;
     client.close();
+  });
+  // Research progress goes to every window, as in-process (already validated by parseEvent).
+  client.onEvent((event) => {
+    if (event.method === 'ui.researchProgress') {
+      deps.broadcast(IpcEvents.researchProgress, event.payload);
+    }
   });
   registerServiceIpcHandlers(deps.ipc, {
     client,
@@ -48,7 +56,7 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
     log,
   });
   log.info(
-    'Agent service: the agent owns the database and serves the Dashboard and Chat. Settings, ' +
-      'Research Tools, research actions and backup are not available in this mode yet.',
+    'Agent service: the agent owns the database and serves the Dashboard, Chat and research ' +
+      'tasks. Settings, Research Tools and backup are not available in this mode yet.',
   );
 }

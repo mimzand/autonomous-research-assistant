@@ -29,7 +29,7 @@ export type RequestHandlers = { readonly [M in RequestMethodName]?: RequestHandl
 /**
  * Phase 3: Dashboard reads plus the persistence check, served by the host's
  * Dashboard service (which validates every payload and result again).
- * Research actions (Phase 5) and backup (Phase 6) are not served yet.
+ * Research actions are `researchHandlers`; backup (Phase 6) is not served yet.
  */
 export function dashboardHandlers(dashboard: DashboardService) {
   return {
@@ -48,6 +48,22 @@ export function dashboardHandlers(dashboard: DashboardService) {
 }
 
 export type DashboardMethodName = keyof ReturnType<typeof dashboardHandlers>;
+
+/**
+ * Phase 5: the research task lifecycle, through the same Dashboard service the
+ * in-process IPC uses, so the runtime's rules (goal and model checks, engine
+ * pinning, which actions a status allows) are unchanged. Progress is not a reply:
+ * it is broadcast as `ui.researchProgress` to every connected shell.
+ */
+export function researchHandlers(dashboard: DashboardService) {
+  return {
+    'tasks.startResearch': (params) => dashboard.startResearch(params),
+    'tasks.pause': (params) => dashboard.pauseTask(params),
+    'tasks.resume': (params) => dashboard.resumeTask(params),
+    'tasks.cancel': (params) => dashboard.cancelTask(params),
+    'tasks.retry': (params) => dashboard.retryTask(params),
+  } satisfies RequestHandlers;
+}
 
 /** A connection as a Chat sink: events go back as `chat.event` pushes to that client. */
 export function connectionChatSink(connection: AgentConnection): ChatEventSink {

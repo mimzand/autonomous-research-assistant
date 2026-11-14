@@ -82,7 +82,7 @@ describe('openAgentServices', () => {
     expect(logs).toContain('Marked 1 task(s) as interrupted after an unexpected shutdown.');
   });
 
-  it('serves the dashboard (Phase 3), Chat and model health (Phase 4) only', () => {
+  it('serves the dashboard (Phase 3), Chat and model health (Phase 4) and research (Phase 5) only', () => {
     expect(Object.keys(open(dataDir()).handlers).sort()).toEqual([
       'chat.start',
       'chat.stop',
@@ -93,11 +93,16 @@ describe('openAgentServices', () => {
       'sources.list',
       'storage.integrityCheck',
       'storage.status',
+      'tasks.cancel',
       'tasks.counts',
       'tasks.get',
       'tasks.list',
       'tasks.logs',
+      'tasks.pause',
+      'tasks.resume',
+      'tasks.retry',
       'tasks.runPersistenceCheck',
+      'tasks.startResearch',
     ]);
   });
 });
@@ -157,11 +162,6 @@ describe('dashboard methods over the protocol', () => {
 
   it('answers not_implemented for later-phase methods and keeps the connection', async () => {
     const client = await serve(open(dataDir()));
-    await expect(
-      client.request('tasks.startResearch', { goal: 'Why is the sky blue?' }),
-    ).rejects.toMatchObject({
-      code: 'not_implemented',
-    });
     await expect(client.request('storage.backup', {})).rejects.toMatchObject({
       code: 'not_implemented',
     });

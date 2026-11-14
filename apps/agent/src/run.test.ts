@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CliUsageError, DEFAULT_DATA_DIR, parseCliArgs } from './cli.js';
 import { connectAgent, readStateFile } from '@rka/agent-client';
 import { runAgent, type RunningAgent } from './run.js';
+import { type AgentBroadcast } from './server.js';
 import { writeStateFile } from './state-file.js';
 import { generateToken } from './token.js';
 
@@ -105,6 +106,23 @@ describe('runAgent', () => {
     await agent.stop();
     await agent.stop();
     expect(closed).toBe(1);
+  });
+
+  it('gives the services the server broadcast once it listens', async () => {
+    const stateFile = statePath();
+    let broadcast: AgentBroadcast | undefined;
+    const agent = await runAgent({
+      port: 0,
+      stateFile,
+      agentVersion: '1',
+      openServices: () => ({
+        handlers: {},
+        attachEvents: (next) => void (broadcast = next),
+        close: () => undefined,
+      }),
+    });
+    agents.push(agent);
+    expect(broadcast).toBe(agent.server.broadcast);
   });
 
   it('does not open the services while another live agent owns the state file', async () => {

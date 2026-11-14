@@ -9,10 +9,12 @@ export const SERVICE_REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * Request/response channels the agent service serves: Dashboard reads, the
- * persistence check, storage status and integrity (Phase 3), and model health
- * for the Chat page (Phase 4; registered as Phase 7 in the protocol, served
- * early). Payloads and results use the same `@rka/shared` schemas through the
- * protocol registry. Chat start/stop are handled by `createServiceChat`.
+ * persistence check, storage status and integrity (Phase 3), model health for
+ * the Chat page (Phase 4; registered as Phase 7 in the protocol, served early)
+ * and the research task lifecycle (Phase 5; progress arrives as
+ * `ui.researchProgress`, see `startServiceShell`). Payloads and results use the
+ * same `@rka/shared` schemas through the protocol registry. Chat start/stop are
+ * handled by `createServiceChat`.
  */
 export const SERVICE_ROUTES = {
   [IpcChannels.modelGetHealth]: 'model.health',
@@ -21,6 +23,11 @@ export const SERVICE_ROUTES = {
   [IpcChannels.tasksGet]: 'tasks.get',
   [IpcChannels.tasksLogs]: 'tasks.logs',
   [IpcChannels.tasksRunPersistenceCheck]: 'tasks.runPersistenceCheck',
+  [IpcChannels.tasksStartResearch]: 'tasks.startResearch',
+  [IpcChannels.tasksPause]: 'tasks.pause',
+  [IpcChannels.tasksResume]: 'tasks.resume',
+  [IpcChannels.tasksCancel]: 'tasks.cancel',
+  [IpcChannels.tasksRetry]: 'tasks.retry',
   [IpcChannels.sourcesList]: 'sources.list',
   [IpcChannels.sourcesGet]: 'sources.get',
   [IpcChannels.reportsList]: 'reports.list',
@@ -39,8 +46,8 @@ export interface ServiceIpcDeps {
 /**
  * AGENT_TRANSPORT=service: registers every renderer channel without any local
  * database. Routed channels and Chat go to the agent; the rest need the
- * in-process agent (Settings, Research Tools, research actions, backup) and fail
- * with a clear message until their phase moves them.
+ * in-process agent (Settings, Research Tools, backup) and fail with a clear
+ * message until their phase moves them.
  */
 export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDeps): void {
   const guard = createIpcGuard(deps.isTrustedSender);

@@ -18,7 +18,7 @@ import {
 } from './config/services.js';
 import { createSettingsService } from './config/settings-service.js';
 import { loadDevEnvFile, loadSettingsFile } from './env.js';
-import { createElectronHostPorts } from './host-ports.js';
+import { broadcast, createElectronHostPorts } from './host-ports.js';
 import { registerIpcHandlers } from './ipc.js';
 import { installConsoleRedaction } from './log.js';
 import { isAllowedSetting, isAppUrl, type AppUrlOptions } from './security.js';
@@ -64,8 +64,8 @@ const getAppInfo = () => ({
 
 /**
  * AGENT_TRANSPORT=service (development): the standalone agent (`pnpm agent:dev`)
- * owns SQLite and serves the Dashboard; this process opens no database. Startup
- * stops if the agent is unreachable.
+ * owns SQLite and serves the Dashboard, Chat and research tasks; this process opens
+ * no database. Startup stops if the agent is unreachable.
  */
 function startServiceShellMode(): Promise<void> {
   return startServiceShell({
@@ -79,6 +79,7 @@ function startServiceShellMode(): Promise<void> {
     appVersion: app.getVersion(),
     getAppInfo,
     isTrustedSender,
+    broadcast,
     onQuit: (listener) => app.on('will-quit', listener),
   });
 }

@@ -5,14 +5,15 @@ app (or a CLI) talks to over a local protocol. Part of
 [agent-process-separation-plan.md](agent-process-separation-plan.md); the in-process app
 is covered by [security.md](security.md), whose controls all remain in force.
 
-**Status:** Phase 4 — the contract and frame codec live in `@rka/agent-protocol`; the
+**Status:** Phase 5 — the contract and frame codec live in `@rka/agent-protocol`; the
 standalone server (`apps/agent`) serves the handshake, `system.ping`, the Dashboard
-methods, Chat (`chat.start` / `chat.stop`, `chat.event` pushed to the shell) and
-`model.health` on loopback, and owns SQLite. `@rka/agent-client` (Node) is the shared
-client. With `AGENT_TRANSPORT=service` Electron main opens no database and proxies the
-Dashboard, Chat and model-health channels to the agent. Research actions, settings and
-process spawn have not moved yet. The Status column names the phase that implements
-(or implemented) each rule.
+methods, Chat (`chat.start` / `chat.stop`, `chat.event` pushed to the shell),
+`model.health` and the research task lifecycle (`ui.researchProgress` broadcast to
+every authenticated shell) on loopback, and owns SQLite. `@rka/agent-client` (Node) is
+the shared client. With `AGENT_TRANSPORT=service` Electron main opens no database and
+proxies the Dashboard, Chat, model-health and research task channels to the agent.
+Backup, Research Tools, settings and process spawn have not moved yet. The Status
+column names the phase that implements (or implemented) each rule.
 
 ## Process model
 
@@ -142,6 +143,10 @@ added in Phase 8 and nowhere else:
   that fails `parseEvent` before a listener sees it. Electron forwards only these
   validated `ChatEvent`s to the window that started the stream, as in-process
   (Phase 4: `server.test.ts`, `client.test.ts`, `service-chat.test.ts`).
+- Broadcast events (`ui.researchProgress`, Phase 5) go only to connections that
+  completed the token handshake, and each one is validated with `parseEvent` the same
+  way. Electron fans them out to every window on `IpcEvents.researchProgress`, where
+  the preload validates them again (`server.test.ts`, `service-shell.test.ts`).
 - Web content and model output inside payloads stay untrusted data, exactly as today;
   the protocol carries no instructions.
 
