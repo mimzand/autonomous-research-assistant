@@ -10,8 +10,8 @@ import {
   createDashboardService,
   createResearchToolsService,
 } from '@rka/agent-host';
-import { createRuntimeConfig } from './config/runtime-config.js';
-import { createSettingsService } from './config/settings-service.js';
+import { createRuntimeConfig } from '@rka/agent-host';
+import { createSettingsService } from '@rka/agent-host';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
 
 type Listener = (event: InvokeEventLike, ...args: unknown[]) => unknown;

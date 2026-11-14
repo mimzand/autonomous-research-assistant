@@ -37,9 +37,35 @@ const event = (url = APP_URL): InvokeEventLike => ({
   sender: { id: 1, isDestroyed: () => false, send: () => undefined, once: () => undefined },
 });
 
-type RequestFn = (method: string) => Promise<unknown>;
+type RequestFn = (method: string, params?: unknown, options?: unknown) => Promise<unknown>;
 
-async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ from: method }))) {
+/** A settings view, as far as the shell reads it. */
+const viewOf = (backupDirectory: string | null) =>
+  ({
+    values: { 'backup.defaultDirectory': backupDirectory },
+    encryptionAvailable: false,
+  }) as never;
+
+const defaultReply: RequestFn = (method) =>
+  Promise.resolve(method === 'settings.get' ? viewOf('C:\\saved') : { from: method });
+
+/** A stand-in for safeStorage: reversible, and never the identity. */
+function fakeCipher(available = true) {
+  return {
+    isEncryptionAvailable: vi.fn(() => available),
+    encryptString: vi.fn((plain: string) => Buffer.from(`enc:${plain}`)),
+    decryptString: vi.fn((encrypted: Buffer) => {
+      const text = encrypted.toString();
+      if (!text.startsWith('enc:')) throw new Error('bad ciphertext');
+      return text.slice(4);
+    }),
+  };
+}
+
+async function setup(
+  request = vi.fn<RequestFn>(defaultReply),
+  cipher: ReturnType<typeof fakeCipher> = fakeCipher(),
+) {
   const handlers = new Map<string, Listener>();
   const ipc: IpcMainLike = { handle: (channel, listener) => void handlers.set(channel, listener) };
   const quitListeners: (() => void)[] = [];
@@ -61,7 +87,7 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const log = { info: vi.fn(), warn: vi.fn() };
   const broadcast = vi.fn();
   const ports = fakePorts();
-  await startServiceShell({
+  const started = await startServiceShell({
     ipc,
     stateFile: 'agent-state.json',
     appVersion: '0.1.0',
@@ -69,6 +95,7 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
     isTrustedSender: (url) => url === APP_URL,
     broadcast,
     ports,
+    cipher,
     onQuit: (listener) => quitListeners.push(listener),
     connect: () => Promise.resolve({ client: client as never, state: {} as never }),
     log,
@@ -86,7 +113,20 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const push = (event: ParsedEvent) => {
     for (const listener of eventListeners) listener(event);
   };
-  return { handlers, invoke, request, client, log, quitListeners, close, broadcast, push, ports };
+  return {
+    handlers,
+    invoke,
+    request,
+    client,
+    log,
+    quitListeners,
+    close,
+    broadcast,
+    push,
+    ports,
+    cipher,
+    settings: started.settings,
+  };
 }
 
 function fakePorts() {
@@ -97,8 +137,6 @@ function fakePorts() {
     openExternal: vi.fn((url: string) =>
       url.startsWith('https://') ? Promise.resolve() : Promise.reject(new Error('Refused')),
     ),
-    encryptionAvailable: vi.fn(() => true),
-    getSecret: vi.fn((): string | undefined => undefined),
   };
 }
 
@@ -124,7 +162,7 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ['tasks.get', { id: 'task-1' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
       ['tasks.list', expect.any(Object), { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
     ]);
-    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(27);
+    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(41);
   });
 
   it('proxies Research Tools and backup with timeouts that outlast a dialog', async () => {
@@ -163,9 +201,15 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
     );
     await expect(served['shell.openExternal']?.({ url: 'http://example.com/' })).rejects.toThrow();
     expect(ports.openExternal).toHaveBeenCalledTimes(2);
-    expect(await served['shell.getSecret']?.({ key: 'ollama.authToken' })).toEqual({
-      value: null,
+    // The agent sends the stored ciphertext; only this shell can decrypt it (Phase 7).
+    const ciphertext = Buffer.from('enc:token-1').toString('base64');
+    expect(await served['shell.getSecret']?.({ key: 'ollama.authToken', ciphertext })).toEqual({
+      value: 'token-1',
     });
+    const garbage = Buffer.from('not ours').toString('base64');
+    expect(
+      await served['shell.getSecret']?.({ key: 'ollama.authToken', ciphertext: garbage }),
+    ).toEqual({ value: null });
     expect(await served['shell.encryptionAvailable']?.({})).toEqual({ available: true });
   });
 
@@ -244,18 +288,108 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('fails clearly for features that still need the in-process agent', async () => {
-    const { invoke, request } = await setup();
-    for (const channel of [
-      IpcChannels.settingsGet,
-      IpcChannels.settingsChooseBackupFolder,
+  it('routes every renderer channel: nothing is left unavailable in service mode (Phase 7)', () => {
+    const local = [
+      IpcChannels.appGetInfo,
+      IpcChannels.chatStart,
+      IpcChannels.chatStop,
       IpcChannels.settingsSetSecret,
-    ]) {
-      await expect(invoke(channel)).rejects.toThrow(
-        `${channel} is not available with AGENT_TRANSPORT=service yet.`,
-      );
-    }
+    ];
+    expect([...Object.keys(SERVICE_ROUTES), ...local].sort()).toEqual(
+      Object.values(IpcChannels).sort(),
+    );
+  });
+
+  it('proxies Settings and Ollama to the agent with fitting timeouts', async () => {
+    const { invoke, request } = await setup();
+    await invoke(IpcChannels.settingsUpdate, { 'model.name': 'qwen3:8b' });
+    await invoke(IpcChannels.settingsReset, { keys: ['model.name'] });
+    await invoke(IpcChannels.settingsChooseBackupFolder);
+    await invoke(IpcChannels.settingsTestSearxng, { url: 'http://127.0.0.1:8080' });
+    await invoke(IpcChannels.ollamaConnect);
+    await invoke(IpcChannels.ollamaTestModel, { name: 'qwen3:8b', prompt: 'Say OK.' });
+    expect(request.mock.calls).toEqual([
+      ['settings.update', { 'model.name': 'qwen3:8b' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
+      ['settings.reset', { keys: ['model.name'] }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
+      ['settings.chooseBackupFolder', {}, { timeoutMs: SERVICE_DIALOG_TIMEOUT_MS }],
+      ['settings.testSearxng', expect.any(Object), { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+      ['model.connect', {}, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
+      ['model.testModel', expect.any(Object), { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+    ]);
+  });
+
+  it('adds its own encryption availability to every settings view and remembers the backup folder', async () => {
+    const { invoke, settings, push, broadcast } = await setup(
+      vi.fn<RequestFn>((method) =>
+        Promise.resolve(
+          method === 'settings.get'
+            ? viewOf('C:\\saved')
+            : { status: 'saved', view: viewOf('D:\\new'), changed: [], warnings: [] },
+        ),
+      ),
+    );
+    // Learned at startup (the agent holds no key, so its views say false).
+    expect(settings.backupDirectory()).toBe('C:\\saved');
+    await expect(invoke(IpcChannels.settingsGet)).resolves.toMatchObject({
+      encryptionAvailable: true,
+    });
+    await expect(invoke(IpcChannels.settingsUpdate, {})).resolves.toMatchObject({
+      view: { encryptionAvailable: true },
+    });
+    expect(settings.backupDirectory()).toBe('D:\\new');
+    push({
+      id: 'e1',
+      method: 'ui.settingsChanged',
+      payload: { changed: ['model.name'], view: viewOf('E:\\pushed') },
+    } as never);
+    expect(broadcast).toHaveBeenCalledWith(
+      IpcEvents.settingsChanged,
+      expect.objectContaining({ view: expect.objectContaining({ encryptionAvailable: true }) }),
+    );
+    expect(settings.backupDirectory()).toBe('E:\\pushed');
+  });
+
+  it('encrypts a new token here and sends the agent only its ciphertext', async () => {
+    const { invoke, request, cipher } = await setup(
+      vi.fn<RequestFn>(() =>
+        Promise.resolve({ status: 'saved', view: viewOf(null), changed: [], warnings: [] }),
+      ),
+    );
+    await expect(
+      invoke(IpcChannels.settingsSetSecret, { key: 'ollama.authToken', value: '  tok-123  ' }),
+    ).resolves.toMatchObject({ status: 'saved', view: { encryptionAvailable: true } });
+    expect(cipher.encryptString).toHaveBeenCalledWith('tok-123');
+    expect(request.mock.calls).toEqual([
+      [
+        'settings.storeSecret',
+        { key: 'ollama.authToken', ciphertext: Buffer.from('enc:tok-123').toString('base64') },
+        { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS },
+      ],
+    ]);
+    expect(JSON.stringify(request.mock.calls)).not.toContain('tok-123');
+
+    // Clearing the token sends no ciphertext at all.
+    request.mockClear();
+    await invoke(IpcChannels.settingsSetSecret, { key: 'ollama.authToken', value: '' });
+    expect(request.mock.calls[0]?.[1]).toEqual({ key: 'ollama.authToken', ciphertext: null });
+  });
+
+  it('refuses an unsafe token before anything is encrypted or sent', async () => {
+    const { invoke, request, cipher } = await setup();
+    await expect(
+      invoke(IpcChannels.settingsSetSecret, { key: 'ollama.authToken', value: 'has space' }),
+    ).resolves.toMatchObject({ status: 'invalid' });
+    await expect(
+      invoke(IpcChannels.settingsSetSecret, { key: 'other', value: 'x' }),
+    ).rejects.toThrow();
+    expect(cipher.encryptString).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
+
+    const locked = await setup(undefined, fakeCipher(false));
+    await expect(
+      locked.invoke(IpcChannels.settingsSetSecret, { key: 'ollama.authToken', value: 'tok' }),
+    ).resolves.toMatchObject({ status: 'failed', message: expect.stringMatching(/encryption/) });
+    expect(locked.request).not.toHaveBeenCalled();
   });
 
   it('answers app info locally and rejects untrusted senders', async () => {
@@ -299,6 +433,7 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       'service-ipc.ts',
       'service-chat.ts',
       'service-shell-ports.ts',
+      'service-settings.ts',
       'agent-transport.ts',
     ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');

@@ -15,6 +15,13 @@ export interface SecretCipher {
   decryptString(encrypted: Buffer): string;
 }
 
+/** Base64 ciphertext produced by the OS key store (safeStorage); bounded in size. */
+const CiphertextSchema = z
+  .string()
+  .min(4)
+  .max(16_384)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/, 'Expected base64 ciphertext.');
+
 /** Keys that look like credentials must go through setSecret (encrypted). */
 export const SECRET_KEY_PATTERN =
   /(pass(word|phrase)?|secret|token|api[-_.]?key|credential|private[-_.]?key|auth|cookie|session)/i;
@@ -99,6 +106,27 @@ export function createSettingsRepository(
         throw new StorageError('secret-rejected', `Setting "${key}" is not a secret; use get().`);
       }
       return requireCipher().decryptString(Buffer.from(entry.value, 'base64'));
+    },
+
+    /**
+     * Stores a secret that the caller already encrypted with the OS key store
+     * (base64 ciphertext, the format setSecret writes). For a process that holds
+     * no key (the agent service: the desktop shell encrypts). Never plaintext.
+     */
+    setSecretCiphertext(key: string, ciphertextBase64: string): void {
+      const k = parseInput(KeySchema, key, 'setting key');
+      const value = parseInput(CiphertextSchema, ciphertextBase64, `ciphertext of "${k}"`);
+      upsert(k, value, true);
+    },
+
+    /** The stored ciphertext (base64) of a secret, without decrypting it; undefined when unset. */
+    getSecretCiphertext(key: string): string | undefined {
+      const entry = row(parseInput(KeySchema, key, 'setting key'));
+      if (!entry) return undefined;
+      if (!entry.isSecret) {
+        throw new StorageError('secret-rejected', `Setting "${key}" is not a secret; use get().`);
+      }
+      return entry.value;
     },
 
     delete(key: string): boolean {

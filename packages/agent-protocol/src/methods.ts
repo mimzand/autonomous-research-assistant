@@ -84,12 +84,42 @@ export const ShellPathResultSchema = z.strictObject({
 export const ShellChooseFolderRequestSchema = z.strictObject({
   defaultPath: z.string().min(1).max(4096).nullable(),
 });
-export const ShellGetSecretRequestSchema = z.strictObject({ key: z.enum(SECRET_SETTING_KEYS) });
+/**
+ * A secret's ciphertext as the OS key store (Electron safeStorage) produced it,
+ * base64. The agent stores it in SQLite without being able to read it.
+ */
+export const SecretCiphertextSchema = z
+  .string()
+  .min(4)
+  .max(16_384)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/, 'Expected base64 ciphertext.');
+/**
+ * The agent asks the shell to decrypt a stored secret (Phase 7: the agent keeps
+ * the ciphertext in SQLite; only the shell holds the key).
+ */
+export const ShellGetSecretRequestSchema = z.strictObject({
+  key: z.enum(SECRET_SETTING_KEYS),
+  ciphertext: SecretCiphertextSchema,
+});
 /** Decrypted secret, or `null` when unset/unreadable. Never logged. */
 export const ShellGetSecretResultSchema = z.strictObject({
   value: z.string().max(4096).nullable(),
 });
 export const ShellEncryptionAvailableResultSchema = z.strictObject({ available: z.boolean() });
+
+/**
+ * Stores (or, with `null`, removes) a secret the shell already encrypted with
+ * safeStorage. The plaintext never travels with it.
+ */
+export const StoreSecretRequestSchema = z.strictObject({
+  key: z.enum(SECRET_SETTING_KEYS),
+  ciphertext: SecretCiphertextSchema.nullable(),
+});
+/** `settings:choose-backup-folder`: the saved result, or `cancelled` when the dialog was closed. */
+export const ChooseBackupFolderResultSchema = z.union([
+  SettingsUpdateResultSchema,
+  z.strictObject({ status: z.literal('cancelled') }),
+]);
 
 const request = <D extends Direction, P extends z.ZodType, R extends z.ZodType>(
   direction: D,
@@ -107,9 +137,10 @@ const event = <P extends z.ZodType>(direction: Direction, phase: number, payload
  * receiver answers `not_implemented`. Payloads reuse the `@rka/shared` schemas of
  * the matching renderer IPC channel, so both contracts cannot drift apart.
  *
- * Shell-only concerns have no method: `settings.setSecret` (safeStorage encrypts in
- * Electron) and `settings.chooseBackupFolder` (native dialog + settings write) stay
- * in Electron until Phase 7 decides the settings authority.
+ * Settings (Phase 7): the agent owns the settings and applies them live. A secret
+ * is encrypted in the shell (safeStorage) and stored by the agent as ciphertext
+ * (`settings.storeSecret`); the agent asks the shell to decrypt it
+ * (`shell.getSecret`) and keeps the plaintext in memory only.
  */
 export const PROTOCOL_METHODS = {
   // --- system (shell → agent) -------------------------------------------------------
@@ -172,6 +203,20 @@ export const PROTOCOL_METHODS = {
   'settings.update': request('toAgent', 7, SettingsPatchSchema, SettingsUpdateResultSchema),
   'settings.reset': request('toAgent', 7, SettingsResetRequestSchema, SettingsUpdateResultSchema),
   'settings.testSearxng': request('toAgent', 7, ServerUrlRequestSchema, ConnectionTestResultSchema),
+  /** Ciphertext only: the shell validates and encrypts the value with safeStorage first. */
+  'settings.storeSecret': request(
+    'toAgent',
+    7,
+    StoreSecretRequestSchema,
+    SettingsUpdateResultSchema,
+  ),
+  /** The agent asks the requesting shell for the folder via `shell.chooseFolder`. */
+  'settings.chooseBackupFolder': request(
+    'toAgent',
+    7,
+    NoParamsSchema,
+    ChooseBackupFolderResultSchema,
+  ),
 
   // --- model (Ollama only) ------------------------------------------------------------
   'model.health': request('toAgent', 7, NoParamsSchema, ModelHealthSchema),

@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session } from 
 import { probeAdkRuntime } from './adk-probe.js';
 import { agentStateFilePath, agentTransportFromEnv } from './agent-transport.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
-import { createRuntimeConfig } from './config/runtime-config.js';
+import { createRuntimeConfig } from '@rka/agent-host';
 import {
   createOllamaSettingsService,
   ollamaApplier,
@@ -15,13 +15,14 @@ import {
   toResearchDefaults,
   toWebConfig,
   webApplier,
-} from './config/services.js';
-import { createSettingsService } from './config/settings-service.js';
+} from '@rka/agent-host';
+import { createSettingsService } from '@rka/agent-host';
 import { loadDevEnvFile, loadSettingsFile } from './env.js';
 import { broadcast, createElectronHostPorts } from './host-ports.js';
 import { registerIpcHandlers } from './ipc.js';
 import { installConsoleRedaction } from './log.js';
 import { isAllowedSetting, isAppUrl, type AppUrlOptions } from './security.js';
+import { type ServiceSettings } from './service-settings.js';
 import { startServiceShell } from './service-shell.js';
 import { checkStartup } from './startup.js';
 import { createMainWindow, rendererIndexPath } from './window.js';
@@ -64,18 +65,22 @@ const getAppInfo = () => ({
 
 /**
  * AGENT_TRANSPORT=service (development): the standalone agent (`pnpm agent:dev`)
- * owns SQLite and serves the Dashboard, Chat, research tasks, Research Tools and
- * backup; this process opens no database and answers the agent's dialog, link and
- * secret requests. Startup stops if the agent is unreachable.
+ * owns SQLite and Settings and serves the Dashboard, Chat, research tasks, Research
+ * Tools, backup and Settings; this process opens no database, answers the agent's
+ * dialog and link requests, and encrypts/decrypts secrets with safeStorage.
+ * Startup stops if the agent is unreachable.
  */
-function startServiceShellMode(): Promise<void> {
-  // No database here: no saved backup folder (Documents) and no stored secrets until Phase 7.
+async function startServiceShellMode(): Promise<void> {
+  // No database here: Settings live in the agent. The backup dialog opens in the saved
+  // folder as last reported by the agent; secrets are decrypted by the agent's request.
+  const service: { settings?: ServiceSettings } = {};
   const ports = createElectronHostPorts({
-    backupDirectory: () => null,
+    backupDirectory: () => service.settings?.backupDirectory() ?? null,
     getSecret: () => undefined,
   });
-  return startServiceShell({
+  const started = await startServiceShell({
     ports,
+    cipher: safeStorage,
     ipc: ipcMain,
     stateFile: agentStateFilePath({
       env: process.env,
@@ -89,6 +94,7 @@ function startServiceShellMode(): Promise<void> {
     broadcast,
     onQuit: (listener) => app.on('will-quit', listener),
   });
+  service.settings = started.settings;
 }
 
 /** Default: the agent runs in this process on the local database. Returns the startup check. */

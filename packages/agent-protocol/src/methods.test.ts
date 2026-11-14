@@ -195,11 +195,23 @@ describe('parseRequest', () => {
     expect(parseRequest(reqOf('tasks.counts', { extra: 1 }), 'toAgent').ok).toBe(false);
   });
 
-  it('only allows known secret keys over shell.getSecret', () => {
-    expect(parseRequest(reqOf('shell.getSecret', { key: 'ollama.authToken' }), 'toShell').ok).toBe(
-      true,
-    );
-    expect(parseRequest(reqOf('shell.getSecret', { key: 'anything' }), 'toShell').ok).toBe(false);
+  it('shell.getSecret carries a known key and its base64 ciphertext, nothing else (Phase 7)', () => {
+    const ok = (payload: unknown) => parseRequest(reqOf('shell.getSecret', payload), 'toShell').ok;
+    expect(ok({ key: 'ollama.authToken', ciphertext: 'djEwAAAA+/9=' })).toBe(true);
+    expect(ok({ key: 'anything', ciphertext: 'djEwAAAA' })).toBe(false);
+    expect(ok({ key: 'ollama.authToken' })).toBe(false);
+    expect(ok({ key: 'ollama.authToken', ciphertext: 'not base64!' })).toBe(false);
+    expect(ok({ key: 'ollama.authToken', ciphertext: 'djEw', value: 'plain' })).toBe(false);
+  });
+
+  it('settings.storeSecret takes ciphertext (or null), never a plaintext value', () => {
+    const ok = (payload: unknown) =>
+      parseRequest(reqOf('settings.storeSecret', payload), 'toAgent').ok;
+    expect(ok({ key: 'ollama.authToken', ciphertext: 'djEwAAAA' })).toBe(true);
+    expect(ok({ key: 'ollama.authToken', ciphertext: null })).toBe(true);
+    expect(ok({ key: 'ollama.authToken', value: 'secret-token' })).toBe(false);
+    expect(ok({ key: 'ollama.authToken', ciphertext: 'secret token' })).toBe(false);
+    expect(ok({ key: 'other', ciphertext: null })).toBe(false);
   });
 });
 

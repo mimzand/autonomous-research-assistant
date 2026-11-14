@@ -3,7 +3,7 @@ import { type HostPorts } from '@rka/agent-host';
 import { IpcEvents } from '@rka/shared';
 import { app, BrowserWindow, dialog, safeStorage, shell } from 'electron';
 import { backupDialogOptions } from './backup-dialog.js';
-import { type RuntimeConfig } from './config/runtime-config.js';
+import { type RuntimeConfig } from '@rka/agent-host';
 import { isSafeExternalUrl } from './security.js';
 
 /** The saved backup folder when it still exists, otherwise Documents. */

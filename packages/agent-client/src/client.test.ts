@@ -1,4 +1,4 @@
-import { encodeFrame } from '@rka/agent-protocol';
+import { encodeFrame, PROTOCOL_VERSION } from '@rka/agent-protocol';
 import { createServer, type Socket } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectAgent } from './client.js';
@@ -28,7 +28,12 @@ describe('connectAgent', () => {
     expect(server.received[0]).toMatchObject({
       kind: 'req',
       method: 'system.hello',
-      payload: { protocol: 'rka-agent', version: 1, token, client: { kind: 'shell' } },
+      payload: {
+        protocol: 'rka-agent',
+        version: PROTOCOL_VERSION,
+        token,
+        client: { kind: 'shell' },
+      },
     });
     await expect(client.request('system.ping', { nonce: 'n' })).resolves.toEqual({
       agentTime: '2026-11-14T12:00:01.000Z',
@@ -68,7 +73,7 @@ describe('connectAgent', () => {
       id: envelope.id,
       kind: 'res',
       method: envelope.method,
-      payload: { ...fakeAck(), version: 2 },
+      payload: { ...fakeAck(), version: PROTOCOL_VERSION + 1 },
     }));
     await expect(connectAgent({ port: server.port, token })).rejects.toMatchObject({
       code: 'bad_request',
@@ -197,7 +202,7 @@ describe('connectAgent', () => {
         const ask = (id: string, method: string, payload: unknown) =>
           socket.write(encodeFrame({ id, kind: 'req', method, payload }));
         ask('r1', 'shell.chooseFile', {});
-        ask('r2', 'shell.getSecret', { key: 'ollama.authToken' });
+        ask('r2', 'shell.getSecret', { key: 'ollama.authToken', ciphertext: 'c2VjcmV0' });
         ask('r3', 'shell.chooseFolder', { defaultPath: 5 });
         ask('r4', 'tasks.counts', {});
         ask('r5', 'shell.encryptionAvailable', {});

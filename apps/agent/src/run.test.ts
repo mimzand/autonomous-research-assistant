@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '@rka/agent-protocol';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -48,7 +49,7 @@ describe('runAgent', () => {
     const stateFile = statePath();
     writeStateFile(stateFile, {
       protocol: 'rka-agent',
-      version: 1,
+      version: PROTOCOL_VERSION,
       host: '127.0.0.1',
       port: 1,
       token: generateToken(),
@@ -64,7 +65,7 @@ describe('runAgent', () => {
     const stateFile = statePath();
     writeStateFile(stateFile, {
       protocol: 'rka-agent',
-      version: 1,
+      version: PROTOCOL_VERSION,
       host: '127.0.0.1',
       port: 1,
       token: generateToken(),
@@ -129,7 +130,7 @@ describe('runAgent', () => {
     const stateFile = statePath();
     writeStateFile(stateFile, {
       protocol: 'rka-agent',
-      version: 1,
+      version: PROTOCOL_VERSION,
       host: '127.0.0.1',
       port: 1,
       token: generateToken(),

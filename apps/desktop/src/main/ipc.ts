@@ -12,7 +12,7 @@ import {
   ModelHealthSchema,
   type AppInfo,
 } from '@rka/shared';
-import { type SettingsService } from './config/settings-service.js';
+import { type SettingsService } from '@rka/agent-host';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
 export interface SenderLike {

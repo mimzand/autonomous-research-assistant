@@ -1,23 +1,28 @@
-import { createAgentHost, type AgentHostPorts } from '@rka/agent-host';
-import { loadResearchConfig } from '@rka/agent-runtime';
 import {
-  createOllamaProvider,
-  loadOllamaConfig,
-  ollamaTransportOptionsFromEnv,
-} from '@rka/model-provider';
+  createAgentHost,
+  createOllamaSettingsService,
+  createRuntimeConfig,
+  createSettingsService,
+  ollamaApplier,
+  toOllamaConfig,
+  toResearchDefaults,
+  toWebConfig,
+  webApplier,
+  type AgentHostPorts,
+} from '@rka/agent-host';
+import { createOllamaProvider, ollamaTransportOptionsFromEnv } from '@rka/model-provider';
 import { appDatabasePath, openStorage, type RecoveryReport } from '@rka/storage';
-import {
-  createReconfigurableWebServices,
-  loadWebConfig,
-  type ReconfigurableWebServices,
-} from '@rka/tools';
+import { createReconfigurableWebServices, type ReconfigurableWebServices } from '@rka/tools';
 import {
   chatHandlers,
   dashboardHandlers,
   researchHandlers,
   researchToolsHandlers,
+  settingsHandlers,
+  withShellSecrets,
   type RequestHandlers,
 } from './handlers.js';
+import { createAgentSecretStore } from './secrets.js';
 import { type AgentServerLink } from './server.js';
 import { createShellPorts, type ShellSecrets } from './shell-ports.js';
 
@@ -26,7 +31,10 @@ export interface AgentServicesOptions {
   readonly dataDir: string;
   readonly env: NodeJS.ProcessEnv;
   readonly log?: (message: string) => void;
-  /** Replaces the env-configured web services (tests: a scripted web, no network). */
+  /**
+   * Replaces the settings-configured web services (tests: a scripted web, no
+   * network). Injected services are not reconfigured by Settings changes.
+   */
   readonly webServices?: ReconfigurableWebServices;
 }
 
@@ -41,7 +49,7 @@ export interface AgentServices {
    * secrets are asked of its connected shell.
    */
   attachServer(server: AgentServerLink): void;
-  /** Secrets kept by the desktop shell (reverse calls). Unused until Phase 7. */
+  /** The shell's key store (reverse calls): decrypts the secrets the agent stores as ciphertext. */
   readonly secrets: ShellSecrets;
   /** Resolves when no Chat reply is being generated. For tests and shutdown. */
   whenChatIdle(): Promise<void>;
@@ -55,12 +63,15 @@ export interface AgentServices {
  * Opens the database (migrations, then recovery of tasks left running) and builds
  * the agent host on it. The agent is then the only SQLite writer. Serves the
  * Dashboard (Phase 3), Chat plus model health (Phase 4), the research task
- * lifecycle with `ui.researchProgress` events (Phase 5), and Research Tools plus
- * backup, whose dialogs and links are reverse calls to the shell (Phase 6).
+ * lifecycle with `ui.researchProgress` events (Phase 5), Research Tools plus
+ * backup, whose dialogs and links are reverse calls to the shell (Phase 6), and
+ * Settings with the Ollama connection (Phase 7).
  *
- * Model, web and research settings come from the environment only (as defaults
- * in the desktop app). Saved Settings, the Ollama access token and live
- * reconfiguration move here in Phase 7.
+ * Settings: the same Runtime Configuration Manager as the in-process app
+ * (built-in < environment < saved in SQLite; env overrides for server, model and
+ * engines), applied live to the Ollama provider and web services and broadcast
+ * as `ui.settingsChanged`. The Ollama token is stored as ciphertext and
+ * decrypted by the desktop shell (`secrets.ts`).
  */
 export function openAgentServices(options: AgentServicesOptions): AgentServices {
   const log = options.log ?? (() => undefined);
@@ -74,9 +85,36 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
         `Marked ${recovery.interruptedTaskIds.length} task(s) as interrupted after an unexpected shutdown.`,
       );
     }
-    const research = loadResearchConfig(env);
     let server: AgentServerLink | undefined;
     const shell = createShellPorts({ connections: () => server?.connections() ?? [] });
+    const secrets = createAgentSecretStore({
+      storage,
+      decrypt: (key, ciphertext) => shell.secrets.getSecret(key, ciphertext),
+      log,
+    });
+    // Runtime Configuration Manager (shared with the in-process app). The agent holds no
+    // key: encryption availability is the shell's, which adds it to the views it shows.
+    const config = createRuntimeConfig({
+      storage,
+      env,
+      encryptionAvailable: () => false,
+      secrets,
+      warn: log,
+    });
+
+    // Ollama: one live provider that follows the settings; Disconnect is session-only.
+    let ollamaConnected = true;
+    const transport = ollamaTransportOptionsFromEnv(env);
+    const modelProvider = createOllamaProvider(toOllamaConfig(config.getSettings()), {
+      getAuthToken: () => config.getSecret('ollama.authToken'),
+      isConnected: () => ollamaConnected,
+      ngrokBypassHosts: transport.ngrokBypassHosts,
+    });
+    config.register(ollamaApplier(modelProvider));
+    const webServices =
+      options.webServices ?? createReconfigurableWebServices(toWebConfig(config.getSettings()));
+    if (!options.webServices) config.register(webApplier(webServices));
+
     const ports: AgentHostPorts = {
       emitResearchProgress: (event) => server?.broadcast('ui.researchProgress', event),
       chooseBackupPath: shell.ports.chooseBackupPath,
@@ -85,28 +123,57 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
     };
     const host = createAgentHost({
       storage,
-      modelProvider: createOllamaProvider(loadOllamaConfig(env), {
-        ngrokBypassHosts: ollamaTransportOptionsFromEnv(env).ngrokBypassHosts,
-      }),
-      webServices: options.webServices ?? createReconfigurableWebServices(loadWebConfig(env)),
+      modelProvider,
+      webServices,
       settings: {
-        researchDefaults: () => research,
-        chatEngine: () => env['AGENT_ENGINE'],
-        researchEngine: () => env['RESEARCH_ENGINE'],
-        chatWebSearch: () => false,
+        researchDefaults: () => toResearchDefaults(config.getSettings()),
+        chatEngine: () => config.getSettings()['engine.chat'],
+        researchEngine: () => config.getSettings()['engine.research'],
+        chatWebSearch: () => config.getSettings()['chat.webSearch'],
       },
       ports,
       // The agent owns the database, so Chat usage is recorded here (as Electron does in-process).
       onChatUsage: (usage) =>
         storage.modelUsage.record({ provider: 'ollama', purpose: 'chat', ...usage }),
     });
+
+    const settings = createSettingsService({
+      config,
+      ollama: createOllamaSettingsService({
+        config,
+        provider: modelProvider,
+        connection: {
+          get: () => ollamaConnected,
+          set: (connected) => {
+            ollamaConnected = connected;
+          },
+        },
+        recordUsage: (usage) =>
+          storage.modelUsage.record({
+            provider: 'ollama',
+            purpose: 'settings:test-model',
+            ...usage,
+          }),
+      }),
+      chooseFolder: shell.ports.chooseFolder,
+    });
+    // Every connected shell gets the new state (it adds its own encryption availability).
+    config.onChange(({ changed }) => {
+      log(`Settings changed: ${changed.join(', ')}`);
+      server?.broadcast('ui.settingsChanged', { changed: [...changed], view: config.view() });
+    });
+
     return {
-      handlers: {
-        ...dashboardHandlers(host.dashboard),
-        ...chatHandlers(host.chat, host.runtime),
-        ...researchHandlers(host.dashboard),
-        ...researchToolsHandlers(host.researchTools, host.dashboard),
-      },
+      handlers: withShellSecrets(
+        {
+          ...dashboardHandlers(host.dashboard),
+          ...chatHandlers(host.chat, host.runtime),
+          ...researchHandlers(host.dashboard),
+          ...researchToolsHandlers(host.researchTools, host.dashboard),
+          ...settingsHandlers(settings, config, secrets),
+        },
+        secrets,
+      ),
       databasePath,
       recovery,
       onDisconnect: (connectionId) => host.chat.stopForSink(connectionId),

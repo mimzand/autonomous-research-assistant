@@ -179,7 +179,7 @@ describe('reverse calls to the shell (Phase 6)', () => {
 
   it('asks the newest connected shell for secrets, never a non-shell client', async () => {
     const { shell, connectShell } = await setup();
-    await expect(shell.secrets.getSecret('ollama.authToken')).rejects.toMatchObject({
+    await expect(shell.secrets.getSecret('ollama.authToken', 'Y2lwaGVy')).rejects.toMatchObject({
       code: 'shell_unavailable',
     });
     const cli = await connectShell({ 'shell.getSecret': () => ({ value: 'from-cli' }) }, 'cli');
@@ -191,12 +191,12 @@ describe('reverse calls to the shell (Phase 6)', () => {
       'shell.getSecret': ({ key }) => ({ value: `newer:${key}` }),
       'shell.encryptionAvailable': () => ({ available: true }),
     });
-    await expect(shell.secrets.getSecret('ollama.authToken')).resolves.toBe(
+    await expect(shell.secrets.getSecret('ollama.authToken', 'Y2lwaGVy')).resolves.toBe(
       'newer:ollama.authToken',
     );
     await expect(shell.secrets.encryptionAvailable()).resolves.toBe(true);
     newer.close();
-    await expect.poll(() => shell.secrets.getSecret('ollama.authToken')).toBe('older');
+    await expect.poll(() => shell.secrets.getSecret('ollama.authToken', 'Y2lwaGVy')).toBe('older');
     cli.close();
     older.close();
   });

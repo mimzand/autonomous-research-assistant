@@ -4,7 +4,8 @@ import { type Envelope } from './envelope.js';
 import { protocolError, type ProtocolError } from './errors.js';
 
 export const PROTOCOL_NAME = 'rka-agent';
-export const PROTOCOL_VERSION = 1;
+/** 2: Phase 7 (`shell.getSecret` carries the ciphertext; settings methods). */
+export const PROTOCOL_VERSION = 2;
 
 /** The only host the agent binds to and the state file may name. */
 export const AGENT_LOOPBACK_HOST = '127.0.0.1';

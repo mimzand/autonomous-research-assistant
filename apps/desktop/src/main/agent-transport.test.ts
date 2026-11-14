@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AgentClientError } from '@rka/agent-client';
-import { encodeFrame, FrameDecoder, type Envelope } from '@rka/agent-protocol';
+import { encodeFrame, FrameDecoder, PROTOCOL_VERSION, type Envelope } from '@rka/agent-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   agentStateFilePath,
@@ -124,7 +124,7 @@ describe('connectServiceAgent', () => {
                   method,
                   payload: {
                     protocol: 'rka-agent',
-                    version: 1,
+                    version: PROTOCOL_VERSION,
                     sessionId: '7d3b2c1a-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
                     agent: { pid: 777, version: '0.1.0', startedAt: '2026-11-14T12:00:00.000Z' },
                   },
@@ -151,7 +151,7 @@ describe('connectServiceAgent', () => {
       stateFile,
       JSON.stringify({
         protocol: 'rka-agent',
-        version: 1,
+        version: PROTOCOL_VERSION,
         host: '127.0.0.1',
         port: address.port,
         token,
@@ -164,7 +164,7 @@ describe('connectServiceAgent', () => {
     cleanups.push(() => client.close());
     expect(summary).toMatch(
       new RegExp(
-        `^connected to 127\\.0\\.0\\.1:${address.port} \\(agent pid 777, v0\\.1\\.0, protocol 1\\)`,
+        `^connected to 127\\.0\\.0\\.1:${address.port} \\(agent pid 777, v0\\.1\\.0, protocol ${PROTOCOL_VERSION}\\)`,
       ),
     );
     expect(summary).not.toContain(token);

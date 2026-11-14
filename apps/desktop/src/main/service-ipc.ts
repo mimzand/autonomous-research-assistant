@@ -3,6 +3,7 @@ import { parseRequest, type RequestMethodName } from '@rka/agent-protocol';
 import { AppInfoSchema, IpcChannels, type AppInfo, type IpcChannel } from '@rka/shared';
 import { createIpcGuard, type IpcMainLike } from './ipc.js';
 import { createServiceChat } from './service-chat.js';
+import { type ServiceSettings } from './service-settings.js';
 
 /** Upper bound for one proxied call; an integrity check of a large database takes a while. */
 export const SERVICE_REQUEST_TIMEOUT_MS = 60_000;
@@ -17,11 +18,23 @@ export const SERVICE_DIALOG_TIMEOUT_MS = 15 * 60_000;
 const DIALOG_METHODS: ReadonlySet<RequestMethodName> = new Set([
   'storage.backup',
   'researchTools.pickFile',
+  'settings.chooseBackupFolder',
+]);
+
+/** Settings calls that reach a server over the network (or run a model) before they answer. */
+const NETWORK_METHODS: ReadonlySet<RequestMethodName> = new Set([
+  'settings.testSearxng',
+  'model.testConnection',
+  'model.listModels',
+  'model.showModel',
+  'model.testModel',
 ]);
 
 export function serviceTimeoutFor(method: RequestMethodName): number {
   if (DIALOG_METHODS.has(method)) return SERVICE_DIALOG_TIMEOUT_MS;
-  if (method.startsWith('researchTools.')) return SERVICE_TOOLS_TIMEOUT_MS;
+  if (method.startsWith('researchTools.') || NETWORK_METHODS.has(method)) {
+    return SERVICE_TOOLS_TIMEOUT_MS;
+  }
   return SERVICE_REQUEST_TIMEOUT_MS;
 }
 
@@ -32,7 +45,9 @@ export function serviceTimeoutFor(method: RequestMethodName): number {
  * the research task lifecycle (Phase 5; progress arrives as
  * `ui.researchProgress`, see `startServiceShell`), and Research Tools plus backup
  * (Phase 6; their dialogs are reverse calls the shell answers, and picked paths
- * stay in the agent behind tokens). Payloads and results use the
+ * stay in the agent behind tokens), and Settings with the Ollama connection
+ * (Phase 7; the agent applies changes live; `settings:set-secret` is encrypted
+ * here first, see `service-settings.ts`). Payloads and results use the
  * same `@rka/shared` schemas through the protocol registry. Chat start/stop are
  * handled by `createServiceChat`.
  */
@@ -64,20 +79,36 @@ export const SERVICE_ROUTES = {
   [IpcChannels.researchSaveSource]: 'researchTools.saveSource',
   [IpcChannels.researchOpenUrl]: 'researchTools.openUrl',
   [IpcChannels.researchCancel]: 'researchTools.cancel',
+  [IpcChannels.settingsGet]: 'settings.get',
+  [IpcChannels.settingsValidate]: 'settings.validate',
+  [IpcChannels.settingsUpdate]: 'settings.update',
+  [IpcChannels.settingsReset]: 'settings.reset',
+  [IpcChannels.settingsChooseBackupFolder]: 'settings.chooseBackupFolder',
+  [IpcChannels.settingsTestSearxng]: 'settings.testSearxng',
+  [IpcChannels.ollamaTestConnection]: 'model.testConnection',
+  [IpcChannels.ollamaConnectionState]: 'model.connectionState',
+  [IpcChannels.ollamaConnect]: 'model.connect',
+  [IpcChannels.ollamaDisconnect]: 'model.disconnect',
+  [IpcChannels.ollamaListModels]: 'model.listModels',
+  [IpcChannels.ollamaShowModel]: 'model.showModel',
+  [IpcChannels.ollamaTestModel]: 'model.testModel',
+  [IpcChannels.ollamaEffectiveConfig]: 'model.effectiveConfig',
 } as const satisfies Partial<Record<IpcChannel, RequestMethodName>>;
 
 export interface ServiceIpcDeps {
   readonly client: Pick<AgentClient, 'request' | 'onEvent' | 'onClose'>;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
+  /** Settings views get this shell's encryption availability; secrets are encrypted here. */
+  readonly settings: ServiceSettings;
   readonly log?: Pick<Console, 'warn'>;
 }
 
 /**
  * AGENT_TRANSPORT=service: registers every renderer channel without any local
- * database. Routed channels and Chat go to the agent; the rest need the
- * in-process agent (Settings, Phase 7) and fail with a clear
- * message until their phase moves them.
+ * database. Routed channels and Chat go to the agent; `settings:set-secret` is
+ * encrypted here and stored by the agent as ciphertext. A channel without a route
+ * fails with a clear message (none is left after Phase 7).
  */
 export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDeps): void {
   const guard = createIpcGuard(deps.isTrustedSender);
@@ -98,6 +129,13 @@ export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDep
       );
       continue;
     }
+    if (channel === IpcChannels.settingsSetSecret) {
+      ipc.handle(
+        channel,
+        guard((_event, payload) => deps.settings.setSecret(payload)),
+      );
+      continue;
+    }
     if (channel === IpcChannels.chatStop) {
       ipc.handle(
         channel,
@@ -109,7 +147,7 @@ export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDep
     ipc.handle(
       channel,
       guard((_event, payload) =>
-        method ? forward(deps.client, method, payload) : unavailable(channel),
+        method ? forward(deps.client, deps.settings, method, payload) : unavailable(channel),
       ),
     );
   }
@@ -118,6 +156,7 @@ export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDep
 /** Validates the renderer payload with the protocol schema, then asks the agent. */
 async function forward(
   client: ServiceIpcDeps['client'],
+  settings: ServiceSettings,
   method: RequestMethodName,
   payload: unknown,
 ): Promise<unknown> {
@@ -126,9 +165,10 @@ async function forward(
     'toAgent',
   );
   if (!parsed.ok) throw new Error(parsed.error.message);
-  return client.request(method, parsed.value.params as never, {
+  const result = await client.request(method, parsed.value.params as never, {
     timeoutMs: serviceTimeoutFor(method),
   });
+  return settings.patchResult(method, result);
 }
 
 function unavailable(channel: string): Promise<never> {

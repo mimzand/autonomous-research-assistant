@@ -1,4 +1,4 @@
-import { type AgentStateFile } from '@rka/agent-protocol';
+import { PROTOCOL_VERSION, type AgentStateFile } from '@rka/agent-protocol';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ afterEach(() => {
 
 const state = (token = generateToken()): AgentStateFile => ({
   protocol: 'rka-agent',
-  version: 1,
+  version: PROTOCOL_VERSION,
   host: '127.0.0.1',
   port: 50_000,
   token,

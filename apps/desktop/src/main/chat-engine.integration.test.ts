@@ -27,7 +27,7 @@ import { openStorage, type Storage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chatUsageRecorder } from './app-storage.js';
-import { createRuntimeConfig } from './config/runtime-config.js';
+import { createRuntimeConfig } from '@rka/agent-host';
 import {
   AGENT_ENGINE_ENV,
   ChatController,

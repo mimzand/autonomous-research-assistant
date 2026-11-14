@@ -9,11 +9,12 @@ export const SHELL_CALL_TIMEOUT_MS = 30_000;
 export type SecretKey = RequestParamsInput<'shell.getSecret'>['key'];
 
 /**
- * Secrets the shell keeps (OS-encrypted). Async because they cross the process
- * boundary; values are never logged. Foundation for Phase 7 (live Settings).
+ * The shell's OS key store (safeStorage). The agent keeps secrets as ciphertext
+ * and asks the shell to decrypt them (Phase 7). Async because it crosses the
+ * process boundary; values are never logged.
  */
 export interface ShellSecrets {
-  getSecret(key: SecretKey): Promise<string | null>;
+  getSecret(key: SecretKey, ciphertext: string): Promise<string | null>;
   encryptionAvailable(): Promise<boolean>;
 }
 
@@ -74,7 +75,8 @@ export function createShellPorts(options: ShellPortsOptions): {
       },
     },
     secrets: {
-      getSecret: async (key) => (await secretShell().call('shell.getSecret', { key }, call)).value,
+      getSecret: async (key, ciphertext) =>
+        (await secretShell().call('shell.getSecret', { key, ciphertext }, call)).value,
       encryptionAvailable: async () =>
         (await secretShell().call('shell.encryptionAvailable', {}, call)).available,
     },

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectAgent, type AgentClient } from '@rka/agent-client';
+import { PROTOCOL_METHODS } from '@rka/agent-protocol';
 import { appDatabasePath, openStorage } from '@rka/storage';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startAgentServer, type AgentServer } from './server.js';
@@ -82,11 +83,26 @@ describe('openAgentServices', () => {
     expect(logs).toContain('Marked 1 task(s) as interrupted after an unexpected shutdown.');
   });
 
-  it('serves the dashboard, Chat, research, Research Tools and backup (Phases 3–6) only', () => {
-    expect(Object.keys(open(dataDir()).handlers).sort()).toEqual([
+  it('serves every shell → agent method except system.* (Phases 3–7)', () => {
+    const served = Object.keys(open(dataDir()).handlers).sort();
+    const toAgent = Object.entries(PROTOCOL_METHODS)
+      .filter(([, def]) => def.type === 'request' && def.direction === 'toAgent')
+      .map(([name]) => name)
+      .filter((name) => !name.startsWith('system.'))
+      .sort();
+    expect(served).toEqual(toAgent);
+    expect(served).toEqual([
       'chat.start',
       'chat.stop',
+      'model.connect',
+      'model.connectionState',
+      'model.disconnect',
+      'model.effectiveConfig',
       'model.health',
+      'model.listModels',
+      'model.showModel',
+      'model.testConnection',
+      'model.testModel',
       'reports.get',
       'reports.list',
       'researchTools.cancel',
@@ -98,6 +114,13 @@ describe('openAgentServices', () => {
       'researchTools.saveSource',
       'researchTools.search',
       'researchTools.status',
+      'settings.chooseBackupFolder',
+      'settings.get',
+      'settings.reset',
+      'settings.storeSecret',
+      'settings.testSearxng',
+      'settings.update',
+      'settings.validate',
       'sources.get',
       'sources.list',
       'storage.backup',
@@ -172,7 +195,7 @@ describe('dashboard methods over the protocol', () => {
 
   it('answers not_implemented for later-phase methods and keeps the connection', async () => {
     const client = await serve(open(dataDir()));
-    await expect(client.request('settings.get', {})).rejects.toMatchObject({
+    await expect(client.request('system.shutdown', {})).rejects.toMatchObject({
       code: 'not_implemented',
     });
     await expect(client.request('tasks.counts', {})).resolves.toBeDefined();

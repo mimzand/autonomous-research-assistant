@@ -27,7 +27,7 @@ import {
   type WebSearchProvider,
 } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createRuntimeConfig } from './config/runtime-config.js';
+import { createRuntimeConfig } from '@rka/agent-host';
 import {
   createDashboardService,
   PINNED_ENGINE_KEY,

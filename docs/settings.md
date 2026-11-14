@@ -287,6 +287,12 @@ The only secret is the Ollama **access token**.
 - Write-only from the page: it is never sent back to the window, written to logs, or
   included in error messages; the page only shows "Set" / "Not set".
 - If OS encryption is unavailable, the token is refused; it is never stored in plaintext.
+- With `AGENT_TRANSPORT=service` (development) the agent service owns these rows and
+  applies Settings changes live, but it holds no key: the desktop app validates and
+  encrypts a new token, the agent stores only that ciphertext, and it asks the desktop
+  app to decrypt it (over the authenticated loopback connection) when it needs the value
+  in memory. The row format is the same in both modes, so a token saved in one works in
+  the other. Without a connected desktop app the agent sends no token.
 
 ## Web search
 

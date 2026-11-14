@@ -59,11 +59,77 @@ export interface ConfigChange {
   readonly values: SettingsValues;
 }
 
+/**
+ * Where secrets (the Ollama access token) live. Values are always encrypted with
+ * the OS key store (Electron safeStorage) at rest; they are never returned to the
+ * renderer.
+ */
+export interface SecretStore {
+  /** A value is stored for the key (never decrypts). */
+  has(key: SecretSettingKey): boolean;
+  /** The decrypted value, or undefined when unset or not available. Sync: read per Ollama request. */
+  get(key: SecretSettingKey): string | undefined;
+  /** Encrypts and stores a validated, trimmed value, or removes it with null. Throws on failure. */
+  set(key: SecretSettingKey, value: string | null): void;
+}
+
+/**
+ * The in-process store: ciphertext in the `settings` table (`secret.<key>`),
+ * encrypted and decrypted by the storage's cipher (safeStorage). Decrypted values
+ * are cached in main-process memory only.
+ */
+export function storageSecretStore(storage: Pick<Storage, 'settings'>): SecretStore {
+  const cache = new Map<SecretSettingKey, string | undefined>();
+  return {
+    has: (key) => storage.settings.list().some((e) => e.key === SECRET_PREFIX + key && e.isSecret),
+    get(key) {
+      if (cache.has(key)) return cache.get(key);
+      const entry = storage.settings
+        .list()
+        .find((e) => e.key === SECRET_PREFIX + key && e.isSecret);
+      const value = entry ? storage.settings.getSecret(SECRET_PREFIX + key) : undefined;
+      cache.set(key, value);
+      return value;
+    },
+    set(key, value) {
+      if (value) storage.settings.setSecret(SECRET_PREFIX + key, value);
+      else storage.settings.delete(SECRET_PREFIX + key);
+      cache.set(key, value ?? undefined);
+    },
+  };
+}
+
+/**
+ * Checks a new secret value before it is encrypted: returns the result to report,
+ * or null when it may be stored. Used by setSecret and by the desktop shell, which
+ * encrypts the token itself when the agent runs as a service.
+ */
+export function secretValueProblem(
+  key: SecretSettingKey,
+  trimmed: string,
+  encryptionAvailable: boolean,
+): SettingsUpdateResult | null {
+  if (!trimmed) return null;
+  if (!encryptionAvailable) {
+    return {
+      status: 'failed',
+      message:
+        'OS encryption is not available, so the token cannot be stored safely. Nothing was saved.',
+    };
+  }
+  if (/\s/.test(trimmed)) {
+    return { status: 'invalid', errors: { [key]: 'The token must not contain spaces.' } };
+  }
+  return null;
+}
+
 export interface RuntimeConfigDeps {
   readonly storage: Pick<Storage, 'settings' | 'transaction'>;
   readonly env: NodeJS.ProcessEnv;
   /** Whether OS encryption (Electron safeStorage) is available. */
   readonly encryptionAvailable: () => boolean;
+  /** Default: `storageSecretStore(storage)` (in-process: the storage's cipher is safeStorage). */
+  readonly secrets?: SecretStore;
   /** Startup warnings (e.g. a saved value no longer valid) go here. */
   readonly warn?: (message: string) => void;
 }
@@ -186,8 +252,7 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
   let values = merge(saved);
   const changedThisSession = new Set<SettingKey>();
   const startSection = values['general.startSection'];
-  /** Decrypted secrets, cached in main-process memory only (read on every Ollama request). */
-  const secretCache = new Map<SecretSettingKey, string | undefined>();
+  const secrets = deps.secrets ?? storageSecretStore(storage);
 
   /** Saved values from SQLite; invalid ones (e.g. after a schema change) are ignored with a warning. */
   function readSaved(): Partial<SettingsValues> {
@@ -217,7 +282,7 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
   }
 
   function secretSet(key: SecretSettingKey): boolean {
-    return storage.settings.list().some((e) => e.key === SECRET_PREFIX + key && e.isSecret);
+    return secrets.has(key);
   }
 
   /**
@@ -435,29 +500,25 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
     /** Stores a secret encrypted (OS key store), or removes it with null/''. Never returns it. */
     setSecret(key: SecretSettingKey, value: string | null): SettingsUpdateResult {
       const trimmed = value?.trim() ?? '';
+      const problem = secretValueProblem(key, trimmed, deps.encryptionAvailable());
+      if (problem) return problem;
       try {
-        if (trimmed) {
-          if (!deps.encryptionAvailable()) {
-            return {
-              status: 'failed',
-              message:
-                'OS encryption is not available, so the token cannot be stored safely. Nothing was saved.',
-            };
-          }
-          if (/\s/.test(trimmed))
-            return { status: 'invalid', errors: { [key]: 'The token must not contain spaces.' } };
-          storage.settings.setSecret(SECRET_PREFIX + key, trimmed);
-          secretCache.set(key, trimmed);
-        } else {
-          storage.settings.delete(SECRET_PREFIX + key);
-          secretCache.set(key, undefined);
-        }
+        secrets.set(key, trimmed || null);
       } catch (error) {
         return {
           status: 'failed',
           message: error instanceof Error ? error.message : String(error),
         };
       }
+      return api.secretChanged(key);
+    },
+
+    /**
+     * Reports a secret change made through the secret store (setSecret, or the agent
+     * service storing ciphertext the shell encrypted): notifies listeners and returns
+     * the saved result with the new view (which says only "set" / "not set").
+     */
+    secretChanged(key: SecretSettingKey): SettingsUpdateResult {
       const view = api.view();
       for (const listener of listeners) listener({ changed: [key], values });
       return { status: 'saved', view, changed: [key], warnings: [] };
@@ -465,14 +526,8 @@ export function createRuntimeConfig(deps: RuntimeConfigDeps) {
 
     /** Main process only. Never send to the renderer. */
     getSecret(key: SecretSettingKey): string | undefined {
-      if (secretCache.has(key)) return secretCache.get(key);
       try {
-        const entry = storage.settings
-          .list()
-          .find((e) => e.key === SECRET_PREFIX + key && e.isSecret);
-        const value = entry ? storage.settings.getSecret(SECRET_PREFIX + key) : undefined;
-        secretCache.set(key, value);
-        return value;
+        return secrets.get(key);
       } catch (error) {
         warn(
           `Could not read secret "${key}": ${error instanceof Error ? error.message : String(error)}`,

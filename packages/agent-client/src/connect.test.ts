@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PROTOCOL_VERSION } from '@rka/agent-protocol';
 import { connectFromStateFile } from './connect.js';
 import { isProcessAlive, readStateFile } from './state-file.js';
 import { pingHandler, startFakeAgent } from './test-fixtures.js';
@@ -26,7 +27,7 @@ function stateFile(content: unknown): string {
 
 const state = (port: number, overrides: Record<string, unknown> = {}) => ({
   protocol: 'rka-agent',
-  version: 1,
+  version: PROTOCOL_VERSION,
   host: '127.0.0.1',
   port,
   token,

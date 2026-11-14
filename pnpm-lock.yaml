@@ -217,6 +217,9 @@ importers:
       '@rka/model-provider':
         specifier: workspace:*
         version: link:../../packages/model-provider
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@rka/storage':
         specifier: workspace:*
         version: link:../../packages/storage

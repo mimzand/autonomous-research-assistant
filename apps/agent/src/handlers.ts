@@ -13,8 +13,11 @@ import {
   type ChatEventSink,
   type DashboardService,
   type ResearchToolsService,
+  type RuntimeConfig,
+  type SettingsService,
 } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
+import { type AgentSecretStore } from './secrets.js';
 
 /** One authenticated client connection, as seen by a handler. */
 export interface AgentConnection {
@@ -138,4 +141,70 @@ export function chatHandlers(
     },
     'model.health': () => runtime.getModelHealth(),
   } satisfies RequestHandlers;
+}
+
+/**
+ * Phase 7: Settings and the Ollama connection, through the same SettingsService
+ * the in-process app uses (it validates every payload and result). Changes are
+ * applied live to the agent's Ollama provider and web services and broadcast as
+ * `ui.settingsChanged`. A secret arrives as ciphertext the shell encrypted; the
+ * agent stores it and asks the shell to decrypt it (`secrets.ts`).
+ * `settings.chooseBackupFolder` asks the requesting shell for the folder.
+ */
+export function settingsHandlers(
+  settings: SettingsService,
+  config: Pick<RuntimeConfig, 'secretChanged'>,
+  secrets: Pick<AgentSecretStore, 'store'>,
+) {
+  return {
+    'settings.get': () => settings.get(),
+    'settings.validate': (params) => settings.validate(params),
+    'settings.update': (params) => settings.update(params),
+    'settings.reset': (params) => settings.reset(params),
+    'settings.testSearxng': (params) => settings.testSearxng(params),
+    'settings.chooseBackupFolder': () => settings.chooseBackupFolder(),
+    'settings.storeSecret': async ({ key, ciphertext }) => {
+      try {
+        await secrets.store(key, ciphertext);
+      } catch (error) {
+        return {
+          status: 'failed' as const,
+          message: `The secret was not saved: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      return config.secretChanged(key);
+    },
+    'model.testConnection': (params) => settings.ollamaTestConnection(params),
+    'model.connectionState': () => settings.ollamaConnectionState(),
+    'model.connect': () => settings.ollamaConnect(),
+    'model.disconnect': () => settings.ollamaDisconnect(),
+    'model.listModels': () => settings.ollamaListModels(),
+    'model.showModel': (params) => settings.ollamaShowModel(params),
+    'model.testModel': (params) => settings.ollamaTestModel(params),
+    'model.effectiveConfig': () => settings.ollamaEffectiveConfig(),
+  } satisfies RequestHandlers;
+}
+
+/**
+ * Before the first request a desktop shell makes, the agent asks it to decrypt the
+ * stored secrets (the Ollama token), so they are in memory before Chat, Research
+ * or a health check needs them. Waiting for the first request (not the handshake)
+ * guarantees the shell has registered its reverse-call handlers. Other clients
+ * (`cli`, `test`) are never asked for secrets.
+ */
+export function withShellSecrets(
+  handlers: RequestHandlers,
+  secrets: Pick<AgentSecretStore, 'ready'>,
+): RequestHandlers {
+  const wrapped: Record<string, RequestHandler<RequestMethodName>> = {};
+  for (const [method, handler] of Object.entries(handlers) as [
+    RequestMethodName,
+    RequestHandler<RequestMethodName>,
+  ][]) {
+    wrapped[method] = async (params, connection) => {
+      if (connection.kind === 'shell') await secrets.ready(connection.id);
+      return handler(params, connection);
+    };
+  }
+  return wrapped as RequestHandlers;
 }

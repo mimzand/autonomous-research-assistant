@@ -3,7 +3,7 @@
  * Research engine): explicit valid environment variable > saved > default.
  * Deterministic: SQLite temp files and a scripted fetch; no network.
  */
-import { taskModelsFor } from '@rka/agent-host';
+import { taskModelsFor } from '../task-models.js';
 import { createOllamaProvider, type FetchLike } from '@rka/model-provider';
 import { openStorage, type Storage } from '@rka/storage';
 import { mkdtempSync, rmSync } from 'node:fs';
