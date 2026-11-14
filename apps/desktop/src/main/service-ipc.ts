@@ -172,9 +172,5 @@ async function forward(
 }
 
 function unavailable(channel: string): Promise<never> {
-  return Promise.reject(
-    new Error(
-      `${channel} is not available with AGENT_TRANSPORT=service yet. Unset AGENT_TRANSPORT to use it.`,
-    ),
-  );
+  return Promise.reject(new Error(`${channel} is not served by the agent service.`));
 }

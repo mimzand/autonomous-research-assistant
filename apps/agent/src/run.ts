@@ -26,6 +26,11 @@ export interface RunAgentOptions {
   readonly openServices?: () => AgentServiceSet;
   readonly log?: (message: string) => void;
   readonly isProcessAlive?: (pid: number) => boolean;
+  /**
+   * `system.shutdown` from the desktop shell (Phase 8): stop the agent, then call
+   * this (e.g. exit the process). Omit to answer `not_implemented`.
+   */
+  readonly onShutdown?: () => void;
 }
 
 export interface RunningAgent {
@@ -52,6 +57,13 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
   const services = options.openServices?.();
   const token = generateToken();
   let server: AgentServer;
+  let stopped: Promise<void> | null = null;
+  const stop = () =>
+    (stopped ??= server.close().then(() => {
+      services?.close();
+      removeStateFile(options.stateFile, token);
+    }));
+  const onShutdown = options.onShutdown;
   try {
     server = await startAgentServer({
       token,
@@ -62,6 +74,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
         onDisconnect: (id: number) => services.onDisconnect?.(id),
       }),
       log: options.log,
+      ...(onShutdown && { onShutdown: () => void stop().then(onShutdown) }),
     });
   } catch (error) {
     services?.close();
@@ -84,14 +97,5 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
     throw error;
   }
 
-  let stopped: Promise<void> | null = null;
-  return {
-    server,
-    stateFile: options.stateFile,
-    stop: () =>
-      (stopped ??= server.close().then(() => {
-        services?.close();
-        removeStateFile(options.stateFile, token);
-      })),
-  };
+  return { server, stateFile: options.stateFile, stop };
 }

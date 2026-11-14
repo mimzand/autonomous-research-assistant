@@ -24,8 +24,8 @@ export interface AppStorage {
  * task can start: tasks left `running` by a crash or forced quit become
  * `interrupted`. Nothing is re-executed automatically.
  *
- * Refuses with AGENT_TRANSPORT=service: the agent process is then the only
- * SQLite writer.
+ * Development and tests only (AGENT_TRANSPORT=inprocess): in every other mode,
+ * and always in the installed app, the agent process is the only SQLite writer.
  */
 export function openAppStorage(options: {
   readonly userDataDir: string;
@@ -34,9 +34,10 @@ export function openAppStorage(options: {
   /** Defaults to `process.env`. */
   readonly env?: NodeJS.ProcessEnv;
 }): AppStorage {
-  if (agentTransportFromEnv(options.env ?? process.env) === 'service') {
+  const transport = agentTransportFromEnv(options.env ?? process.env);
+  if (transport !== 'inprocess') {
     throw new Error(
-      'AGENT_TRANSPORT=service: the agent service owns the database; Electron must not open it.',
+      `AGENT_TRANSPORT=${transport}: the agent service owns the database; Electron must not open it.`,
     );
   }
   const storage = openStorage({

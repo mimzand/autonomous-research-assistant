@@ -14,10 +14,13 @@ function userData(): string {
   return dir;
 }
 
+/** Development and tests only: Electron opens the database itself. */
+const INPROCESS = { AGENT_TRANSPORT: 'inprocess' };
+
 describe('openAppStorage', () => {
   it('creates the database under userData/data and runs migrations', () => {
     const dir = userData();
-    const { storage, recovery } = openAppStorage({ userDataDir: dir });
+    const { storage, recovery } = openAppStorage({ userDataDir: dir, env: INPROCESS });
     expect(storage.path).toBe(databasePath(dir));
     expect(storage.path).toBe(join(dir, 'data', 'research.db'));
     expect(recovery.interruptedTaskIds).toEqual([]);
@@ -35,7 +38,7 @@ describe('openAppStorage', () => {
     first.steps.start(first.steps.append(task.id, { kind: 'search', name: 'Search' }).id);
     first.close(); // Simulated crash/forced quit.
 
-    const { storage, recovery } = openAppStorage({ userDataDir: dir });
+    const { storage, recovery } = openAppStorage({ userDataDir: dir, env: INPROCESS });
     expect(recovery).toEqual({ interruptedTaskIds: [task.id], interruptedStepCount: 1 });
     expect(storage.tasks.require(task.id).status).toBe('interrupted');
     expect(storage.recovery.getResumePlan(task.id).nextStep?.name).toBe('Search');
@@ -44,17 +47,20 @@ describe('openAppStorage', () => {
   });
 });
 
-describe('openAppStorage with AGENT_TRANSPORT=service', () => {
-  it('refuses to open the database: the agent service is the only writer', () => {
-    const dir = userData();
-    expect(() => openAppStorage({ userDataDir: dir, env: { AGENT_TRANSPORT: 'service' } })).toThrow(
-      'AGENT_TRANSPORT=service: the agent service owns the database',
-    );
-    expect(existsSync(databasePath(dir))).toBe(false);
-  });
+describe('openAppStorage outside AGENT_TRANSPORT=inprocess', () => {
+  it.each([{}, { AGENT_TRANSPORT: 'service' }, { AGENT_TRANSPORT: 'external' }])(
+    'refuses to open the database with %o: the agent service is the only writer',
+    (env) => {
+      const dir = userData();
+      expect(() => openAppStorage({ userDataDir: dir, env })).toThrow(
+        /AGENT_TRANSPORT=(service|external): the agent service owns the database/,
+      );
+      expect(existsSync(databasePath(dir))).toBe(false);
+    },
+  );
 
-  it('opens it in the default in-process mode', () => {
-    const { storage } = openAppStorage({ userDataDir: userData(), env: {} });
+  it('opens it only in the explicit in-process development mode', () => {
+    const { storage } = openAppStorage({ userDataDir: userData(), env: INPROCESS });
     storage.close();
   });
 });

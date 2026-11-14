@@ -135,16 +135,19 @@ packages/
   (`onEvent`). It is shared by `apps/agent`
   (`agent:ping`, tests) and Electron main, so neither app depends on the other. Never
   `electron`; renderer and preload may not import it (ESLint).
-- Electron main uses the service only when `AGENT_TRANSPORT=service` (default
-  `inprocess`). It then opens no database (`openAppStorage` refuses) and builds no
-  local agent host: the Dashboard, Chat, model-health, research task, Research Tools
-  and backup channels are proxied to the agent over one long-lived connection (Chat
+- Electron main always talks to the agent service (Phase 8). By default it starts the
+  agent itself as an Electron utility process (`agent-supervisor.ts`: the bundled
+  `out/agent/main.js`, fixed arguments, the app's data folder), waits for its state
+  file and handshake, and stops it on quit (`system.shutdown`). It opens no database
+  (`openAppStorage` refuses) and builds no local agent host: every renderer channel,
+  Settings included, is proxied to the agent over one long-lived connection (Chat
   events go to the window that started the reply, and closing it stops the reply;
-  research progress goes to every window). When the agent needs a file dialog, the
-  browser or a stored secret, it asks Electron back over the same connection (reverse
-  calls); picked paths stay in the agent behind tokens. Settings report that they are
-  not available in this mode yet. In the default mode everything runs in-process
-  through `createAgentHost`, as before.
+  research progress and Settings changes go to every window). When the agent needs a
+  file dialog, the browser or a stored secret, it asks Electron back over the same
+  connection (reverse calls); picked paths stay in the agent behind tokens, and secrets
+  are decrypted by Electron's safeStorage. In development, `AGENT_TRANSPORT=external`
+  connects to a running `pnpm agent:dev` instead, and `AGENT_TRANSPORT=inprocess` runs
+  the old in-process host (compiled out of production builds).
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under
@@ -465,22 +468,23 @@ precedence. See `.env.example`:
 No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
 startup with a message naming the variable.
 
-Development-only agent service switches (process environment or dev `.env`; not read
-from `settings.env`):
+Agent service switches (development; process environment or dev `.env`; not read from
+`settings.env`). The installed app ignores them and always runs its own agent:
 
-| Variable           | Default     | Notes                                                                                                                                                                                                                            |
-| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TRANSPORT`  | `inprocess` | `service`: the agent from `pnpm agent:dev` owns the database and serves the Dashboard, Chat, research, Research Tools and backup; Settings are unavailable. The app refuses to start (with a dialog) if the agent is unreachable |
-| `AGENT_STATE_FILE` | (dev path)  | State file to read in service mode; default `apps/agent/.agent-data/agent-state.json` (packaged: `%APPDATA%\…\agent-state.json`)                                                                                                 |
+| Variable           | Default    | Notes                                                                                                                                                                                                                                 |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TRANSPORT`  | `service`  | `service`: the app starts and supervises its agent on the app's data folder. `external`: connect to a running `pnpm agent:dev`; startup stops if it is unreachable. `inprocess`: the old in-process host (development and tests only) |
+| `AGENT_STATE_FILE` | (dev path) | State file to read with `external`; default `apps/agent/.agent-data/agent-state.json`                                                                                                                                                 |
 
-Try it: run `pnpm agent:dev` in one terminal, then in another
-`$env:AGENT_TRANSPORT='service'; pnpm dev` (PowerShell). The terminal logs
-`Agent service: connected to 127.0.0.1:… handshake + ping … ms.` and the Dashboard
-shows the agent's database (`apps/agent/.agent-data/data/research.db`, separate from
-the app's). To use the app's own database instead, close the app and run
-`pnpm agent:dev --data-dir "$env:APPDATA\Autonomous Research Assistant"` with
-`AGENT_STATE_FILE` pointing at `agent-state.json` in that folder. Never run the app
-in-process on a folder an agent is serving.
+`pnpm dev` builds the agent bundle (`out/agent`) once before starting; after changing
+agent code, restart `pnpm dev` (or run `pnpm --filter @rka/desktop build:agent`).
+The terminal shows the agent's own log lines (`[agent] …`) and
+`Agent service: connected to 127.0.0.1:… handshake + ping … ms.`
+
+To develop the agent on its own: run `pnpm agent:dev` in one terminal, then in another
+`$env:AGENT_TRANSPORT='external'; pnpm dev` (PowerShell). The Dashboard then shows
+the agent's database (`apps/agent/.agent-data/data/research.db`, separate from the
+app's). Never run the app in-process on a folder an agent is serving.
 
 ## Troubleshooting
 

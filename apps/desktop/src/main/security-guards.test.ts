@@ -1,7 +1,9 @@
 /**
  * Architecture guards for the agent and main process. These scan the source
  * so that a forbidden capability cannot be added without a failing test:
- * - no shell / process execution anywhere in shipped code,
+ * - no shell / process execution anywhere in shipped code, except the one spawn
+ *   allow-list (Phase 8): Electron starts the bundled agent with utilityProcess,
+ *   only from agent-supervisor.ts, with a fixed entry and fixed arguments,
  * - no model downloads (the app never calls Ollama's pull/push/create/delete),
  * - no file deletion except the backup's own temporary file,
  * - no dynamic code evaluation,
@@ -54,12 +56,44 @@ describe('security guards', () => {
     expect(files.length).toBeGreaterThan(50);
   });
 
-  it('never executes shell commands or processes', () => {
+  it('never executes shell commands or processes, except the supervised agent (Phase 8)', () => {
+    // Nothing anywhere runs a shell or a child process through Node.
     expect(
       offenders(
-        /child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(|\bfork\s*\(|process\.binding|worker_threads/,
+        /child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(|process\.binding|worker_threads/,
       ),
     ).toEqual([]);
+    // The spawn allow-list: only the supervisor forks, and only Electron main hands it
+    // utilityProcess. The agent and every package (tools included) start nothing.
+    expect(
+      offenders(/\bfork\s*\(|utilityProcess/, [
+        'apps/desktop/src/main/agent-supervisor.ts',
+        'apps/desktop/src/main/index.ts',
+      ]),
+    ).toEqual([]);
+    const index = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(index.match(/\bfork\s*\([^)]*\)/g)).toEqual(['fork(modulePath, args, options)']);
+    expect(index).toContain(
+      'fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options),',
+    );
+    expect(index.match(/utilityProcess\.\w+/g)).toEqual(['utilityProcess.fork']);
+    // The supervisor starts exactly one module, the bundled agent under the app path,
+    // with fixed arguments built from Electron's own paths; no shell, no token in argv.
+    const supervisor = readFileSync(
+      join(repo, 'apps/desktop/src/main/agent-supervisor.ts'),
+      'utf8',
+    );
+    expect(supervisor).not.toMatch(/from 'electron'/);
+    expect(supervisor.match(/\bfork\(/g)).toHaveLength(1);
+    expect(supervisor).toContain('const entry = agentEntryPath(deps.appPath);');
+    expect(supervisor).toMatch(
+      /deps\.fork\(entry, agentLaunchArgs\(\{ dataDir: deps\.dataDir, stateFile \}\), \{/,
+    );
+    expect(supervisor).toContain("return join(appPath, 'out', 'agent', 'main.js');");
+    expect(supervisor).toContain(
+      "return ['--data-dir', paths.dataDir, '--state-file', paths.stateFile, '--port', '0'];",
+    );
+    expect(supervisor).not.toMatch(/\btoken\s*:/);
   });
 
   it('never downloads, creates or deletes Ollama models', () => {
@@ -72,8 +106,16 @@ describe('security guards', () => {
         'packages/storage/src/inspect.ts',
         'apps/desktop/src/bench/runner.ts',
         'apps/agent/src/state-file.ts',
+        'apps/desktop/src/main/agent-supervisor.ts',
       ]),
     ).toEqual([]);
+    // The supervisor removes only its agent's state file in the app's data folder.
+    const supervisor = readFileSync(
+      join(repo, 'apps/desktop/src/main/agent-supervisor.ts'),
+      'utf8',
+    );
+    expect(supervisor.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(stateFile']);
+    expect(supervisor).toContain('const stateFile = join(deps.dataDir, AGENT_STATE_FILE_NAME);');
     // The agent removes only its own connection state file, and only while it still
     // holds this run's token.
     const agentState = readFileSync(join(repo, 'apps/agent/src/state-file.ts'), 'utf8');

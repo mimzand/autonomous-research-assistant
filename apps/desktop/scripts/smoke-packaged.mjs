@@ -28,6 +28,11 @@
  *    (scripted native tool calls from the fake Ollama, fenced untrusted result,
  *    a refused fetch_source call, streamed answer, timeline events, Stop during
  *    a search); ADK Chat uses the same gateway; Research requests never declare tools.
+ *    Phase 8 (agent process separation): the app starts and supervises the agent
+ *    service (utilityProcess, out/agent/main.js); the agent opens SQLite, the main
+ *    bundle holds no agent host; the agent gets no token in argv and no
+ *    ELECTRON_RUN_AS_NODE; it ends with a forced kill of the app and stops cleanly
+ *    (system.shutdown, state file removed) on a normal quit.
  *
  * It never touches the real user profile (%APPDATA%\Autonomous Research
  * Assistant), never contacts the internet or a real Ollama, and runs no model.
@@ -125,6 +130,7 @@ function staticChecks() {
   for (const required of [
     'package.json',
     'out/main/index.js',
+    'out/agent/main.js',
     'out/preload/index.cjs',
     'out/renderer/index.html',
   ]) {
@@ -158,9 +164,23 @@ function staticChecks() {
     'renderer loads no remote or dev-server URL',
     !/https?:\/\/(localhost|127\.0\.0\.1)/.test(html),
   );
-  const chunks = names.filter((n) => n.startsWith('out/main/'));
-  const adk = chunks.find((n) => (asar.read(n) ?? '').includes('ADK_VERSION'));
-  check('Google ADK is bundled (lazy engine chunk)', Boolean(adk), adk ?? 'not found');
+  // Phase 8: the agent (host, engines, SQLite, ADK) is its own bundle; Electron main has none of it.
+  const agentChunks = names.filter((n) => n.startsWith('out/agent/'));
+  const adk = agentChunks.find((n) => (asar.read(n) ?? '').includes('ADK_VERSION'));
+  check(
+    'Google ADK is bundled with the agent (lazy engine chunk)',
+    Boolean(adk),
+    adk ?? 'not found',
+  );
+  const mainChunks = names.filter((n) => n.startsWith('out/main/'));
+  const inMain = mainChunks.filter((n) =>
+    /createAgentHost|ADK_VERSION|better-sqlite3|dev-inprocess/.test(asar.read(n) ?? ''),
+  );
+  check(
+    'Electron main bundle has no in-process agent, SQLite or ADK',
+    mainChunks.length > 0 && inMain.length === 0,
+    inMain.join(', '),
+  );
 
   // Credentials and company endpoints must never ship.
   const texts = names
@@ -451,6 +471,39 @@ async function quit(app, session) {
   return result;
 }
 
+// --- Phase 8: the supervised agent process (Linux /proc checks; skipped elsewhere) -------------
+
+const STATE_FILE = 'agent-state.json';
+const readState = (userData) => {
+  try {
+    return JSON.parse(readFileSync(join(userData, STATE_FILE), 'utf8'));
+  } catch {
+    return null;
+  }
+};
+const procAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+const procRead = (pid, file) => {
+  try {
+    return readFileSync(`/proc/${pid}/${file}`, 'utf8');
+  } catch {
+    return null;
+  }
+};
+/** Parent pid from /proc/<pid>/stat (field 4, after the parenthesised name). */
+const procParent = (pid) => Number(/\)\s+\S+\s+(\d+)/.exec(procRead(pid, 'stat') ?? '')?.[1]);
+/** True when `pid` descends from `ancestor` (utility processes are children of the app). */
+function descendsFrom(pid, ancestor) {
+  for (let p = pid, i = 0; p > 1 && i < 10; i++, p = procParent(p)) if (p === ancestor) return true;
+  return false;
+}
+
 /** One Chat request from the renderer; optionally Stop as soon as a search is running. */
 const chatWith = (message, { stopOnSearch = false, settleMs = 0 } = {}) => `(async () => {
   const events = [];
@@ -514,6 +567,45 @@ async function runtimeChecks() {
         app.out.stdout + app.out.stderr,
       ),
     );
+    // --- Phase 8: the app started the agent service and talks to it ---------------------------
+    const agent = await until(
+      () => (readState(userData)?.pid ? readState(userData) : undefined),
+      'the agent state file',
+    );
+    const out1 = () => app.out.stdout + app.out.stderr;
+    check(
+      'agent service supervised by the app (transport service, handshake + ping)',
+      /Agent transport: service\./.test(out1()) &&
+        /Agent service: connected to 127\.0\.0\.1:\d+ \(agent pid \d+/.test(out1()),
+      /Agent service: connected[^\n]*/.exec(out1())?.[0] ?? '',
+    );
+    check(
+      'state file: loopback, protocol 2, agent pid is not the app',
+      agent.host === '127.0.0.1' && agent.version === 2 && agent.pid !== app.child.pid,
+      `${agent.host}:${agent.port} v${agent.version} pid ${agent.pid}`,
+    );
+    check(
+      'agent opened SQLite in the user-data folder',
+      out1().includes(`[agent] Database: ${join(userData, 'data', 'research.db')}`),
+    );
+    if (process.platform === 'linux') {
+      // Chromium rewrites the process title, so argv may be one space-joined string, and
+      // /proc/<pid>/environ is not reliable after that (the environment filter is unit-tested).
+      const cmdline = (procRead(agent.pid, 'cmdline') ?? '').split(/[\0 ]+/).filter(Boolean);
+      const chain = [];
+      for (let p = agent.pid, i = 0; p > 1 && i < 10; i++, p = procParent(p)) chain.push(p);
+      check(
+        'agent is a utility process of the app (not ELECTRON_RUN_AS_NODE)',
+        descendsFrom(agent.pid, app.child.pid) && cmdline.includes('--type=utility'),
+        `${cmdline.filter((a) => /^--(type|utility-sub-type)=/.test(a)).join(' ')}; parents ${chain.join(' > ')}; app ${app.child.pid}`,
+      );
+      check(
+        'agent token and paths are not on the process command line',
+        cmdline.length > 1 && !cmdline.some((a) => a.includes(agent.token) || a === '--state-file'),
+        `${cmdline.length} args`,
+      );
+    }
+
     check(
       'renderer loaded from the package (file://), no dev server',
       s.url.startsWith('file://') && s.url.includes('app.asar'),
@@ -698,12 +790,25 @@ async function runtimeChecks() {
     );
 
     // --- Forced kill while the task runs, then restart -------------------------------------------
+    const killedAgent = readState(userData)?.pid;
     app.child.kill('SIGKILL');
     await app.exited;
     holdPlan.waiting.splice(0).forEach((r) => r.destroy());
     s.close();
+    const agentGone = await until(() => !procAlive(killedAgent), 'the agent to end', 15_000).catch(
+      () => false,
+    );
+    check(
+      'a forced kill of the app also ends its agent (no orphan)',
+      agentGone,
+      `pid ${killedAgent}`,
+    );
     app = launch(userData);
     s = await connect(app);
+    check(
+      'restart after the kill: a new agent replaces the stale state file',
+      readState(userData)?.pid !== killedAgent && procAlive(readState(userData)?.pid),
+    );
     const recovered = await s.evaluate(`window.api.tasks.get(${JSON.stringify(taskId)})`);
     check(
       'after a forced kill: task recovered as interrupted (app closed), still pinned to ADK',
@@ -735,9 +840,17 @@ async function runtimeChecks() {
     );
 
     // --- Normal quit and restart ------------------------------------------------------------------
+    const quitAgent = readState(userData)?.pid;
     const exit = await quit(app, s);
     s.close();
     check('normal quit ends the app', !exit.forced, JSON.stringify(exit));
+    check(
+      'normal quit stops the agent cleanly (system.shutdown, state file removed)',
+      /Shutdown requested by the desktop shell/.test(app.out.stdout) &&
+        !procAlive(quitAgent) &&
+        !existsSync(join(userData, STATE_FILE)),
+      `pid ${quitAgent}`,
+    );
     app = launch(userData);
     s = await connect(app);
     const after = await s.evaluate(`window.api.tasks.get(${JSON.stringify(taskId)})`);

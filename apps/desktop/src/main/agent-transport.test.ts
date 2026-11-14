@@ -9,6 +9,7 @@ import {
   agentStateFilePath,
   agentTransportFromEnv,
   connectServiceAgent,
+  resolveAgentTransport,
   SERVICE_CONNECT_TIMEOUT_MS,
 } from './agent-transport.js';
 
@@ -19,21 +20,48 @@ afterEach(async () => {
 });
 
 describe('agentTransportFromEnv', () => {
-  it('defaults to inprocess', () => {
-    expect(agentTransportFromEnv({})).toBe('inprocess');
-    expect(agentTransportFromEnv({ AGENT_TRANSPORT: '  ' })).toBe('inprocess');
+  it('defaults to the supervised agent service (Phase 8)', () => {
+    expect(agentTransportFromEnv({})).toBe('service');
+    expect(agentTransportFromEnv({ AGENT_TRANSPORT: '  ' })).toBe('service');
   });
 
-  it('accepts both values, case-insensitively', () => {
+  it('accepts every mode, case-insensitively', () => {
     expect(agentTransportFromEnv({ AGENT_TRANSPORT: 'service' })).toBe('service');
     expect(agentTransportFromEnv({ AGENT_TRANSPORT: ' Service ' })).toBe('service');
+    expect(agentTransportFromEnv({ AGENT_TRANSPORT: 'EXTERNAL' })).toBe('external');
     expect(agentTransportFromEnv({ AGENT_TRANSPORT: 'INPROCESS' })).toBe('inprocess');
   });
 
   it('stops startup on an unknown value instead of guessing', () => {
     expect(() => agentTransportFromEnv({ AGENT_TRANSPORT: 'remote' })).toThrow(
-      'AGENT_TRANSPORT must be "inprocess" or "service" (got "remote").',
+      'AGENT_TRANSPORT must be "service", "external" or "inprocess" (got "remote").',
     );
+  });
+});
+
+describe('resolveAgentTransport', () => {
+  it('keeps every mode in development', () => {
+    for (const mode of ['service', 'external', 'inprocess'] as const) {
+      expect(resolveAgentTransport({ AGENT_TRANSPORT: mode }, { isPackaged: false })).toEqual({
+        transport: mode,
+      });
+    }
+  });
+
+  it('always supervises the agent in a packaged app, warning about a dev-only mode', () => {
+    expect(resolveAgentTransport({}, { isPackaged: true })).toEqual({ transport: 'service' });
+    for (const mode of ['external', 'inprocess']) {
+      expect(resolveAgentTransport({ AGENT_TRANSPORT: mode }, { isPackaged: true })).toEqual({
+        transport: 'service',
+        warning: `Ignored AGENT_TRANSPORT=${mode}: the installed app always runs its own agent service.`,
+      });
+    }
+  });
+
+  it('still refuses an unknown value when packaged', () => {
+    expect(() =>
+      resolveAgentTransport({ AGENT_TRANSPORT: 'remote' }, { isPackaged: true }),
+    ).toThrow(/AGENT_TRANSPORT must be/);
   });
 });
 
@@ -64,8 +92,13 @@ describe('connectServiceAgent', () => {
     const connect = () =>
       Promise.reject(new AgentClientError('not_running', 'No agent state file at X.'));
     await expect(connectServiceAgent({ stateFile: 'X', appVersion: '1', connect })).rejects.toThrow(
-      'AGENT_TRANSPORT=service, but the agent service is not reachable. No agent state file at X. ' +
-        'Start it with "pnpm agent:dev", or unset AGENT_TRANSPORT to run in-process.',
+      'The agent service is not reachable. No agent state file at X. ' +
+        'AGENT_TRANSPORT=external: start it with "pnpm agent:dev", or unset AGENT_TRANSPORT to let the app start its own agent.',
+    );
+    await expect(
+      connectServiceAgent({ stateFile: 'X', appVersion: '1', connect, hint: 'Restart the app.' }),
+    ).rejects.toThrow(
+      'The agent service is not reachable. No agent state file at X. Restart the app.',
     );
   });
 

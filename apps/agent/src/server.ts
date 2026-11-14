@@ -50,6 +50,11 @@ export interface AgentServerOptions {
   readonly onDisconnect?: (connectionId: number) => void;
   /** Must never receive the token. */
   readonly log?: (message: string) => void;
+  /**
+   * `system.shutdown` (Phase 8): called after the reply is sent, for a `shell`
+   * connection only. Without it the method answers `not_implemented`.
+   */
+  readonly onShutdown?: () => void;
 }
 
 /** Pushes one event to every authenticated client (e.g. research progress). */
@@ -101,6 +106,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
       },
       ack,
       log,
+      ...(options.onShutdown && { onShutdown: options.onShutdown }),
     });
   });
   server.maxConnections = MAX_CONNECTIONS;
@@ -143,6 +149,7 @@ interface ConnectionContext {
   readonly onDisconnect: (connection: AgentConnection) => void;
   readonly ack: () => HelloAck;
   readonly log: (message: string) => void;
+  readonly onShutdown?: () => void;
 }
 
 function serveConnection(socket: Socket, ctx: ConnectionContext): void {
@@ -269,6 +276,28 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
           request.method,
           protocolError('bad_request', 'Already authenticated.'),
         );
+      case 'system.shutdown': {
+        const stop = ctx.onShutdown;
+        if (!stop) {
+          return sendError(
+            request.id,
+            request.method,
+            protocolError('not_implemented', 'system.shutdown is not served by this agent.'),
+          );
+        }
+        // Only the desktop shell that supervises the agent may stop it.
+        if (clientKind !== 'shell') {
+          return sendError(
+            request.id,
+            request.method,
+            protocolError('bad_request', 'Only the desktop shell can stop the agent.'),
+          );
+        }
+        ctx.log('Shutdown requested by the desktop shell.');
+        reply(request.id, request.method, null);
+        setImmediate(stop);
+        return;
+      }
       default: {
         const handler = ctx.handlers[request.method] as Handler | undefined;
         if (!handler) {

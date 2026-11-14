@@ -10,12 +10,16 @@ import { toErrorMessage } from '@rka/shared';
 import { z } from 'zod';
 
 /**
- * How Electron main reaches the agent. `inprocess` (default): createAgentHost in
- * this process, as before. `service`: additionally connect to the standalone agent
- * (`pnpm agent:dev`) and fail startup if it is unreachable. Until the storage
- * cutover (Phase 3) the app itself still runs in-process in both modes.
+ * How Electron main reaches the agent (Phase 8 defaults):
+ *
+ * - `service` (default, and the only mode of a packaged app): Electron starts and
+ *   supervises the agent service (`agent-supervisor.ts`) on this app's data folder.
+ * - `external` (development only): connect to an agent that is already running,
+ *   e.g. `pnpm agent:dev`, through its state file; fail startup if unreachable.
+ * - `inprocess` (development and tests only): the pre-Phase 8 path, createAgentHost
+ *   in the Electron main process (`dev-inprocess.ts`, not part of a production build).
  */
-export const AGENT_TRANSPORTS = ['inprocess', 'service'] as const;
+export const AGENT_TRANSPORTS = ['service', 'external', 'inprocess'] as const;
 export type AgentTransport = (typeof AGENT_TRANSPORTS)[number];
 const AgentTransportSchema = z.enum(AGENT_TRANSPORTS);
 
@@ -23,22 +27,41 @@ export const AGENT_STATE_FILE_NAME = 'agent-state.json';
 /** Upper bound for connect + handshake + ping, so startup never hangs. */
 export const SERVICE_CONNECT_TIMEOUT_MS = 5_000;
 
-/** `AGENT_TRANSPORT`, case-insensitive. Unset or empty: `inprocess`. Anything else stops startup. */
+/** `AGENT_TRANSPORT`, case-insensitive. Unset or empty: `service`. Anything else stops startup. */
 export function agentTransportFromEnv(env: NodeJS.ProcessEnv): AgentTransport {
   const raw = env['AGENT_TRANSPORT']?.trim().toLowerCase();
-  if (!raw) return 'inprocess';
+  if (!raw) return 'service';
   const parsed = AgentTransportSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
-      `AGENT_TRANSPORT must be "inprocess" or "service" (got "${env['AGENT_TRANSPORT'] ?? ''}").`,
+      `AGENT_TRANSPORT must be "service", "external" or "inprocess" (got "${env['AGENT_TRANSPORT'] ?? ''}").`,
     );
   }
   return parsed.data;
 }
 
 /**
- * `AGENT_STATE_FILE` if set; otherwise in development the file `pnpm agent:dev`
- * writes (apps/agent/.agent-data), and in a packaged app `<userData>/agent-state.json`.
+ * The transport this run uses. A packaged app always supervises its own agent:
+ * `external` and `inprocess` are development modes and are ignored there (with a
+ * warning to log), so a leftover variable can neither stop the installed app nor
+ * point it at another agent.
+ */
+export function resolveAgentTransport(
+  env: NodeJS.ProcessEnv,
+  options: { readonly isPackaged: boolean },
+): { readonly transport: AgentTransport; readonly warning?: string } {
+  const requested = agentTransportFromEnv(env);
+  if (!options.isPackaged || requested === 'service') return { transport: requested };
+  return {
+    transport: 'service',
+    warning: `Ignored AGENT_TRANSPORT=${requested}: the installed app always runs its own agent service.`,
+  };
+}
+
+/**
+ * State file of an `external` agent: `AGENT_STATE_FILE` if set; otherwise in
+ * development the file `pnpm agent:dev` writes (apps/agent/.agent-data), and in a
+ * packaged app `<userData>/agent-state.json` (the supervised agent's file).
  */
 export function agentStateFilePath(options: {
   readonly env: NodeJS.ProcessEnv;
@@ -52,6 +75,9 @@ export function agentStateFilePath(options: {
     ? join(options.userDataDir, AGENT_STATE_FILE_NAME)
     : join(options.appPath, '..', 'agent', '.agent-data', AGENT_STATE_FILE_NAME);
 }
+
+const EXTERNAL_AGENT_HINT =
+  'AGENT_TRANSPORT=external: start it with "pnpm agent:dev", or unset AGENT_TRANSPORT to let the app start its own agent.';
 
 export interface ServiceAgentConnection {
   readonly client: AgentClient;
@@ -68,6 +94,8 @@ export async function connectServiceAgent(options: {
   readonly stateFile: string;
   readonly appVersion: string;
   readonly timeoutMs?: number;
+  /** What to do when it fails (default: start `pnpm agent:dev`, for `external`). */
+  readonly hint?: string;
   readonly connect?: (
     path: string,
     options: ConnectFromStateFileOptions,
@@ -86,8 +114,7 @@ export async function connectServiceAgent(options: {
     connection?.client.close();
     const reason = error instanceof AgentClientError ? error.message : toErrorMessage(error);
     throw new Error(
-      `AGENT_TRANSPORT=service, but the agent service is not reachable. ${reason} ` +
-        'Start it with "pnpm agent:dev", or unset AGENT_TRANSPORT to run in-process.',
+      `The agent service is not reachable. ${reason} ${options.hint ?? EXTERNAL_AGENT_HINT}`,
       { cause: error },
     );
   }

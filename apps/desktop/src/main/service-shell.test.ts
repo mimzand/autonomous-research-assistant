@@ -89,15 +89,13 @@ async function setup(
   const ports = fakePorts();
   const started = await startServiceShell({
     ipc,
-    stateFile: 'agent-state.json',
-    appVersion: '0.1.0',
+    agent: { client: client as never, summary: 'test agent' },
     getAppInfo: () => appInfo,
     isTrustedSender: (url) => url === APP_URL,
     broadcast,
     ports,
     cipher,
     onQuit: (listener) => quitListeners.push(listener),
-    connect: () => Promise.resolve({ client: client as never, state: {} as never }),
     log,
   });
   // The startup ping is not part of what the renderer triggers.

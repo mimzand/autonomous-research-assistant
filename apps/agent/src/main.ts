@@ -18,6 +18,8 @@ async function main(): Promise<void> {
       return services;
     },
     log,
+    // The supervising desktop app asks for a clean stop on quit (system.shutdown).
+    onShutdown: () => process.exit(0),
   });
   console.info(
     `[agent] Listening on ${agent.server.host}:${agent.server.port} (pid ${process.pid}).`,

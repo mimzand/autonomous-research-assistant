@@ -14,10 +14,14 @@ the security controls are described in [security.md](security.md).
 What is inside:
 
 - The Electron 44 runtime.
-- `resources/app.asar`, which holds the bundled main, preload and renderer code.
+- `resources/app.asar`, which holds the bundled main, preload and renderer code, and the
+  agent service (`out/agent/main.js`, Phase 8). At startup the app runs the agent as an
+  Electron utility process (a second process of the same exe, shown as "Research Agent"
+  in Task Manager's details); it is the only process that opens the database.
 - `resources/app.asar.unpacked/node_modules/better-sqlite3`, the only runtime dependency.
-  It ships with its prebuilt `win32-x64` Node-API binary, so no native rebuild or C++
-  toolchain is needed.
+  It ships with its prebuilt `win32-x64` Node-API binary, which the agent's utility
+  process loads (Node-API: the same binary works in Electron and plain Node), so no
+  native rebuild, no separate Node.js binary and no C++ toolchain are needed.
 - English Chromium resources only.
 
 Ollama, the model and SearXNG are **not** bundled. They are separate programs the user
@@ -46,7 +50,8 @@ pnpm check            # typecheck, lint, format, all unit/integration tests, bui
 pnpm package:win
 ```
 
-This runs `electron-vite build` and then `electron-builder --win`:
+This runs `pnpm build` (`electron-vite build`, then `scripts/build-agent.mjs`, which bundles
+`apps/agent` into `out/agent`) and then `electron-builder --win`:
 
 - **First run:** it downloads the Electron Windows runtime, NSIS and 7-Zip into
   `%LOCALAPPDATA%\electron-builder\Cache`. Later runs work offline.
@@ -108,10 +113,11 @@ pnpm package:win                       # or pnpm package:dir (unpacked app only)
 pnpm smoke:packaged                    # defaults to apps/desktop/release/win-unpacked
 ```
 
-| Checks (56)                                                                                                                                                                                                                                                                                                                                                                                            |
+| Checks (66)                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Package: asar layout; no sources, maps, tests, `.env` or bench; one runtime dependency; only `better-sqlite3` unpacked, with this OS's binary only; ADK bundled; production CSP; no credentials, keys or tunnel endpoints (17)                                                                                                                                                                         |
+| Package: asar layout; no sources, maps, tests, `.env` or bench; one runtime dependency; only `better-sqlite3` unpacked, with this OS's binary only; agent bundle present with ADK; Electron main bundle without agent host, SQLite or ADK; production CSP; no credentials, keys or tunnel endpoints (19)                                                                                               |
 | Security at run time: `ELECTRON_RUN_AS_NODE` and `--inspect` ignored (fuses); `settings.env` ignores `NODE_OPTIONS`; no `require`/`process` in the page; frozen `window.api`; CSP blocks `fetch` and inline scripts; `window.open` denied; navigation blocked                                                                                                                                          |
+| Agent service (Phase 8): started by the app (transport `service`, handshake + ping, protocol 2); a utility process of the app (Linux run); the agent opens SQLite in the user-data folder; token and paths not on the process command line; a forced kill of the app ends the agent; restart replaces the stale state file; a normal quit stops it with `system.shutdown` and removes the state file   |
 | Behaviour: renderer from `file://…/app.asar`; SQLite in the user-data folder; Settings IPC, environment overrides, defaults; Legacy and ADK Chat; Research task with the ADK engine pinned; forced kill → recovered as interrupted; integrity check; cancel; quit and reopen; **no network request by Chromium itself** (net log of every run; e.g. no spell-check dictionary download)                |
 | Web search in Chat (fake Ollama tool calls + fake SearXNG): off by default and the Chat request unchanged; when on, Legacy Chat runs `web_search` through the ToolGateway (only tool declared, fenced untrusted result, refused `fetch_source`, streamed answer, timeline events, Stop during a search); ADK Chat uses the same gateway; Research never declares tools; the setting survives a restart |
 
@@ -185,6 +191,7 @@ Copy this list into the release issue and tick each item.
 - [ ] SmartScreen "Run anyway" works for the unsigned build
 - [ ] The app starts and the window title reads "Autonomous Research & Knowledge Assistant"
 - [ ] `%APPDATA%\Autonomous Research Assistant\data\research.db` is created; nothing is written to the install folder
+- [ ] While the app runs, `%APPDATA%\Autonomous Research Assistant\agent-state.json` exists and Task Manager → Details shows a second `Autonomous Research Assistant.exe` (the agent); after closing the app both are gone
 
 ### Windows: startup checks
 
@@ -206,6 +213,8 @@ Copy this list into the release issue and tick each item.
 - [ ] No menu bar; Ctrl+Shift+I and F12 do nothing; Ctrl+R does not reload
 - [ ] `set ELECTRON_RUN_AS_NODE=1` then starting the exe from `cmd` opens the app (not a Node.js prompt)
 - [ ] Starting the exe with `--inspect=9229` does not open port 9229 (`netstat -ano | findstr 9229`)
+- [ ] Ending the app with Task Manager (End task on the main process) also ends the agent process; the next start works and recovers interrupted tasks
+- [ ] `netstat -ano | findstr LISTENING` shows the agent's port on `127.0.0.1` only (never `0.0.0.0`)
 - [ ] Task execution log entries contain no Windows user name (`C:\Users\[user]\…`) and no tokens
 
 ### Windows: update and uninstall

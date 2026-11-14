@@ -51,7 +51,7 @@ The app never writes `.env` or `settings.env`.
 
 ### What happens on Save
 
-1. The main process validates the change with the Zod schemas (ranges, URL rules,
+1. The app's agent service validates the change with the Zod schemas (ranges, URL rules,
    cross-field rules such as "Require HTTPS for remote servers"). Invalid input is not
    saved; the field shows the error. Fields are also checked while you type.
 2. The running services that depend on the changed settings are updated (only those):
@@ -234,7 +234,7 @@ API clients with a browser-warning page instead of Ollama's reply. To skip it, l
 tunnel's exact host name in **`OLLAMA_NGROK_BYPASS_HOSTS`** (environment, `.env` or
 `settings.env`; comma-separated host names, no scheme, port, path or wildcards). The app
 then sends `ngrok-skip-browser-warning: true` **only** to those hosts and **only** over
-HTTPS. It is a startup-time trust list read by the main process: it cannot be changed from
+HTTPS. It is a startup-time trust list read by the agent service at startup: it cannot be changed from
 the Settings page or the renderer, and it is not stored in SQLite. Restart the app after
 changing it.
 
@@ -248,7 +248,7 @@ endpoints your organisation operates, and prefer one that requires the access to
   renderer never makes network requests.
 - **Redirects are refused** (a redirect could send prompts or the token elsewhere): enter
   the final URL.
-- The **access token** is stored encrypted (below), read only by the main process, and
+- The **access token** is stored encrypted (below), decrypted only by the app itself, and
   sent **only over HTTPS or to this computer**. Over plain HTTP to another machine it is
   not sent, and the page says so.
 - Every request has a timeout (Connection timeout, Request timeout, Streaming idle
@@ -287,12 +287,12 @@ The only secret is the Ollama **access token**.
 - Write-only from the page: it is never sent back to the window, written to logs, or
   included in error messages; the page only shows "Set" / "Not set".
 - If OS encryption is unavailable, the token is refused; it is never stored in plaintext.
-- With `AGENT_TRANSPORT=service` (development) the agent service owns these rows and
+- The agent service (the app's background process; Phase 8 default) owns these rows and
   applies Settings changes live, but it holds no key: the desktop app validates and
   encrypts a new token, the agent stores only that ciphertext, and it asks the desktop
   app to decrypt it (over the authenticated loopback connection) when it needs the value
-  in memory. The row format is the same in both modes, so a token saved in one works in
-  the other. Without a connected desktop app the agent sends no token.
+  in memory. The row format is the same as before Phase 8 (and in the development
+  `inprocess` mode), so a saved token keeps working after the update. Without a connected desktop app the agent sends no token.
 
 ## Web search
 

@@ -154,6 +154,64 @@ describe('runAgent', () => {
   });
 });
 
+describe('system.shutdown (Phase 8)', () => {
+  async function started(onShutdown?: () => void) {
+    const stateFile = statePath();
+    let closed = 0;
+    const agent = await runAgent({
+      port: 0,
+      stateFile,
+      agentVersion: '1.0.0',
+      openServices: () => ({ handlers: {}, close: () => void closed++ }),
+      ...(onShutdown && { onShutdown }),
+    });
+    agents.push(agent);
+    const read = readStateFile(stateFile);
+    if (read.status !== 'ok') throw new Error(`state file ${read.status}`);
+    const as = (kind: 'shell' | 'cli') =>
+      connectAgent({
+        port: read.state.port,
+        token: read.state.token,
+        client: { kind, version: '1.0.0' },
+      });
+    return { stateFile, as, closed: () => closed };
+  }
+
+  it('stops the agent for the desktop shell: services closed, state file removed', async () => {
+    let shutdown!: () => void;
+    const done = new Promise<void>((resolve) => (shutdown = resolve));
+    const t = await started(() => shutdown());
+    const shell = await t.as('shell');
+    await expect(shell.request('system.shutdown', {})).resolves.toBeNull();
+    await done;
+    expect(t.closed()).toBe(1);
+    expect(existsSync(t.stateFile)).toBe(false);
+    shell.close();
+  });
+
+  it('refuses other clients and keeps running', async () => {
+    let calls = 0;
+    const t = await started(() => void calls++);
+    const cli = await t.as('cli');
+    await expect(cli.request('system.shutdown', {})).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+    await expect(cli.request('system.ping', {})).resolves.toHaveProperty('agentTime');
+    expect(calls).toBe(0);
+    expect(existsSync(t.stateFile)).toBe(true);
+    cli.close();
+  });
+
+  it('answers not_implemented when the runner did not enable it', async () => {
+    const t = await started();
+    const shell = await t.as('shell');
+    await expect(shell.request('system.shutdown', {})).rejects.toMatchObject({
+      code: 'not_implemented',
+    });
+    shell.close();
+  });
+});
+
 describe('parseCliArgs', () => {
   it('defaults to an ephemeral port and the dev data folder', () => {
     expect(parseCliArgs([])).toEqual({

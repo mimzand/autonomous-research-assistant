@@ -1,5 +1,5 @@
 import { IpcEvents, type AppInfo } from '@rka/shared';
-import { connectServiceAgent } from './agent-transport.js';
+import { type ServiceAgentConnection } from './agent-transport.js';
 import { type IpcMainLike } from './ipc.js';
 import { registerServiceIpcHandlers, SERVICE_REQUEST_TIMEOUT_MS } from './service-ipc.js';
 import {
@@ -11,8 +11,8 @@ import { shellRequestHandlers, type ShellPortsSource } from './service-shell-por
 
 export interface ServiceShellDeps {
   readonly ipc: IpcMainLike;
-  readonly stateFile: string;
-  readonly appVersion: string;
+  /** The authenticated agent connection (supervised agent, or AGENT_TRANSPORT=external). */
+  readonly agent: ServiceAgentConnection;
   readonly getAppInfo: () => AppInfo;
   readonly isTrustedSender: (url: string) => boolean;
   /** Sends to every open window (Electron: the same BrowserWindow loop as in-process). */
@@ -21,28 +21,22 @@ export interface ServiceShellDeps {
   readonly ports: ShellPortsSource;
   /** The OS key store (Electron: safeStorage): encrypts new secrets, decrypts stored ones. */
   readonly cipher: ShellSecretCipher;
-  /** Electron: `app.on('will-quit', …)`. */
+  /** Called when the app quits, before the agent is stopped. */
   readonly onQuit: (listener: () => void) => void;
-  readonly connect?: Parameters<typeof connectServiceAgent>[0]['connect'];
   readonly log?: Pick<Console, 'info' | 'warn'>;
 }
 
 /**
- * AGENT_TRANSPORT=service: connects to the agent service (which owns SQLite) and
- * serves the renderer through it. Opens no database and builds no local agent host.
- * One long-lived connection, closed on quit; a lost connection is logged and is not
- * re-established (restart the app). Returns the Settings client state (the saved
- * backup folder for the backup dialog).
+ * Serves the renderer through the agent service (which owns SQLite). Opens no
+ * database and builds no local agent host. One long-lived connection, closed on
+ * quit; a lost connection is logged and is not re-established (restart the app).
+ * Returns the Settings client state (the saved backup folder for the backup dialog).
  */
 export async function startServiceShell(
   deps: ServiceShellDeps,
 ): Promise<{ readonly settings: ServiceSettings }> {
   const log = deps.log ?? console;
-  const { client, summary } = await connectServiceAgent({
-    stateFile: deps.stateFile,
-    appVersion: deps.appVersion,
-    ...(deps.connect && { connect: deps.connect }),
-  });
+  const { client, summary } = deps.agent;
   log.info(`Agent service: ${summary}`);
   const settings = createServiceSettings({
     client,

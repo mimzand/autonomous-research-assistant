@@ -105,6 +105,17 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
     // Ollama: one live provider that follows the settings; Disconnect is session-only.
     let ollamaConnected = true;
     const transport = ollamaTransportOptionsFromEnv(env);
+    // Same notices as the in-process app printed (the installed app now logs them here).
+    if (transport.invalid.length > 0) {
+      log(
+        `Ignored ${String(transport.invalid.length)} invalid OLLAMA_NGROK_BYPASS_HOSTS entr(y/ies): use exact host names, comma-separated.`,
+      );
+    }
+    if (transport.ngrokBypassHosts.length > 0) {
+      log(
+        `ngrok browser-warning bypass enabled for ${String(transport.ngrokBypassHosts.length)} trusted host(s).`,
+      );
+    }
     const modelProvider = createOllamaProvider(toOllamaConfig(config.getSettings()), {
       getAuthToken: () => config.getSecret('ollama.authToken'),
       isConnected: () => ollamaConnected,
