@@ -90,6 +90,7 @@ describe('connectServiceAgent', () => {
       ack: {} as never,
       request: () => Promise.reject(new AgentClientError('timeout', 'system.ping timed out.')),
       onEvent: () => () => undefined,
+      serve: () => undefined,
       onClose: () => undefined,
       close: () => {
         closed = true;

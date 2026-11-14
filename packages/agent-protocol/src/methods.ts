@@ -91,8 +91,8 @@ export const ShellGetSecretResultSchema = z.strictObject({
 });
 export const ShellEncryptionAvailableResultSchema = z.strictObject({ available: z.boolean() });
 
-const request = <P extends z.ZodType, R extends z.ZodType>(
-  direction: Direction,
+const request = <D extends Direction, P extends z.ZodType, R extends z.ZodType>(
+  direction: D,
   phase: number,
   params: P,
   result: R,
@@ -213,6 +213,16 @@ export type MethodName = keyof Methods;
 export type RequestMethodName = {
   [M in MethodName]: Methods[M]['type'] extends 'request' ? M : never;
 }[MethodName];
+/**
+ * How long the agent waits for a person in a shell dialog (`shell.choose*`). A
+ * shell's own timeout for a request that opens one must be longer.
+ */
+export const SHELL_DIALOG_TIMEOUT_MS = 10 * 60_000;
+
+/** Requests the shell serves (reverse RPC: agent → shell). */
+export type ShellMethodName = {
+  [M in RequestMethodName]: Methods[M]['direction'] extends 'toShell' ? M : never;
+}[RequestMethodName];
 export type EventName = {
   [M in MethodName]: Methods[M]['type'] extends 'event' ? M : never;
 }[MethodName];

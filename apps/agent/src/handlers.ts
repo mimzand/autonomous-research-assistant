@@ -1,21 +1,41 @@
 import {
+  type ClientKind,
   type EventName,
   type EventPayload,
   type RequestMethodName,
   type RequestParams,
+  type RequestParamsInput,
   type RequestResult,
+  type ShellMethodName,
 } from '@rka/agent-protocol';
-import { type ChatController, type ChatEventSink, type DashboardService } from '@rka/agent-host';
+import {
+  type ChatController,
+  type ChatEventSink,
+  type DashboardService,
+  type ResearchToolsService,
+} from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 
 /** One authenticated client connection, as seen by a handler. */
 export interface AgentConnection {
   /** Unique per server run; used as the Chat sink id. */
   readonly id: number;
+  /** What the client declared in `system.hello` (the desktop app is `shell`). */
+  readonly kind: ClientKind;
   /** True once the socket has closed. */
   readonly closed: boolean;
   /** Pushes an event to this client. Invalid payloads are dropped (and logged), never sent. */
   emit<E extends EventName>(method: E, payload: EventPayload<E>): void;
+  /**
+   * Reverse call: asks this client to serve a `shell.*` request and waits for its
+   * validated result. Rejects with `ShellCallError` on the client's error, after
+   * `timeoutMs`, or as soon as the connection closes (never hangs).
+   */
+  call<M extends ShellMethodName>(
+    method: M,
+    params: RequestParamsInput<M>,
+    options: { readonly timeoutMs: number },
+  ): Promise<RequestResult<M>>;
 }
 
 export type RequestHandler<M extends RequestMethodName> = (
@@ -29,7 +49,7 @@ export type RequestHandlers = { readonly [M in RequestMethodName]?: RequestHandl
 /**
  * Phase 3: Dashboard reads plus the persistence check, served by the host's
  * Dashboard service (which validates every payload and result again).
- * Research actions are `researchHandlers`; backup (Phase 6) is not served yet.
+ * Research actions are `researchHandlers`; backup is in `researchToolsHandlers`.
  */
 export function dashboardHandlers(dashboard: DashboardService) {
   return {
@@ -62,6 +82,33 @@ export function researchHandlers(dashboard: DashboardService) {
     'tasks.resume': (params) => dashboard.resumeTask(params),
     'tasks.cancel': (params) => dashboard.cancelTask(params),
     'tasks.retry': (params) => dashboard.retryTask(params),
+  } satisfies RequestHandlers;
+}
+
+/**
+ * Phase 6: Research Tools and backup. Their dialogs and `openExternal` are reverse
+ * calls to the shell that made the request (see `shell-ports.ts`). Picked paths stay
+ * in the agent behind tokens; the backup dialog (and its overwrite confirmation)
+ * belongs to the shell.
+ */
+export function researchToolsHandlers(
+  researchTools: ResearchToolsService,
+  dashboard: Pick<DashboardService, 'backup'>,
+) {
+  return {
+    'researchTools.status': () => researchTools.status(),
+    'researchTools.checkSearch': () => researchTools.checkSearch(),
+    'researchTools.search': (params) => researchTools.search(params),
+    'researchTools.fetchUrl': (params) => researchTools.fetch(params),
+    'researchTools.pickFile': () => researchTools.pickFile(),
+    'researchTools.extractFile': (params) => researchTools.extractFile(params),
+    'researchTools.saveSource': (params) => researchTools.saveSource(params),
+    'researchTools.openUrl': (params) => researchTools.openUrl(params),
+    'researchTools.cancel': (params) => {
+      researchTools.cancel(params);
+      return null;
+    },
+    'storage.backup': () => dashboard.backup(),
   } satisfies RequestHandlers;
 }
 

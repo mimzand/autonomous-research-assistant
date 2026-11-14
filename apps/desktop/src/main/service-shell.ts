@@ -2,6 +2,7 @@ import { IpcEvents, type AppInfo } from '@rka/shared';
 import { connectServiceAgent } from './agent-transport.js';
 import { type IpcMainLike } from './ipc.js';
 import { registerServiceIpcHandlers } from './service-ipc.js';
+import { shellRequestHandlers, type ShellPortsSource } from './service-shell-ports.js';
 
 export interface ServiceShellDeps {
   readonly ipc: IpcMainLike;
@@ -11,6 +12,8 @@ export interface ServiceShellDeps {
   readonly isTrustedSender: (url: string) => boolean;
   /** Sends to every open window (Electron: the same BrowserWindow loop as in-process). */
   readonly broadcast: (channel: string, payload: unknown) => void;
+  /** Dialogs, links and secrets the agent asks for (Electron: `createElectronHostPorts`). */
+  readonly ports: ShellPortsSource;
   /** Electron: `app.on('will-quit', …)`. */
   readonly onQuit: (listener: () => void) => void;
   readonly connect?: Parameters<typeof connectServiceAgent>[0]['connect'];
@@ -31,11 +34,12 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
     ...(deps.connect && { connect: deps.connect }),
   });
   log.info(`Agent service: ${summary}`);
+  client.serve(shellRequestHandlers(deps.ports));
   let quitting = false;
   client.onClose((error) => {
     if (!quitting) {
       log.warn(
-        `Agent service disconnected: ${error.message} Dashboard, Chat and research requests fail until the app restarts.`,
+        `Agent service disconnected: ${error.message} Requests to the agent fail until the app restarts.`,
       );
     }
   });
@@ -56,7 +60,7 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
     log,
   });
   log.info(
-    'Agent service: the agent owns the database and serves the Dashboard, Chat and research ' +
-      'tasks. Settings, Research Tools and backup are not available in this mode yet.',
+    'Agent service: the agent owns the database and serves the Dashboard, Chat, research ' +
+      'tasks, Research Tools and backup. Settings are not available in this mode yet.',
   );
 }

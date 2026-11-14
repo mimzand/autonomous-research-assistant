@@ -32,10 +32,14 @@ async function openDialog(options: Electron.OpenDialogOptions): Promise<string |
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+export interface ElectronHostPortsConfig {
+  /** The saved default backup folder (Settings), or null for Documents. */
+  readonly backupDirectory: () => string | null;
+  readonly getSecret: RuntimeConfig['getSecret'];
+}
+
 /** The Electron implementation of every capability the agent host and settings use. */
-export function createElectronHostPorts(
-  config: Pick<RuntimeConfig, 'getSetting' | 'getSecret'>,
-): HostPorts {
+export function createElectronHostPorts(config: ElectronHostPortsConfig): HostPorts {
   return {
     emitResearchProgress: (event) => broadcast(IpcEvents.researchProgress, event),
     emitSettingsChanged: (event) => broadcast(IpcEvents.settingsChanged, event),
@@ -43,7 +47,7 @@ export function createElectronHostPorts(
     chooseBackupPath: async () => {
       const parent = focusedWindow();
       const options = backupDialogOptions(
-        backupDirectory(config.getSetting('backup.defaultDirectory'), app.getPath('documents')),
+        backupDirectory(config.backupDirectory(), app.getPath('documents')),
         new Date(),
       );
       const result = parent

@@ -5,15 +5,17 @@ app (or a CLI) talks to over a local protocol. Part of
 [agent-process-separation-plan.md](agent-process-separation-plan.md); the in-process app
 is covered by [security.md](security.md), whose controls all remain in force.
 
-**Status:** Phase 5 — the contract and frame codec live in `@rka/agent-protocol`; the
+**Status:** Phase 6 — the contract and frame codec live in `@rka/agent-protocol`; the
 standalone server (`apps/agent`) serves the handshake, `system.ping`, the Dashboard
 methods, Chat (`chat.start` / `chat.stop`, `chat.event` pushed to the shell),
-`model.health` and the research task lifecycle (`ui.researchProgress` broadcast to
-every authenticated shell) on loopback, and owns SQLite. `@rka/agent-client` (Node) is
-the shared client. With `AGENT_TRANSPORT=service` Electron main opens no database and
-proxies the Dashboard, Chat, model-health and research task channels to the agent.
-Backup, Research Tools, settings and process spawn have not moved yet. The Status
-column names the phase that implements (or implemented) each rule.
+`model.health`, the research task lifecycle (`ui.researchProgress` broadcast to
+every authenticated shell), Research Tools and backup on loopback, and owns SQLite.
+Dialogs, `openExternal` and secrets are reverse calls (`shell.*`) that the shell
+answers. `@rka/agent-client` (Node) is the shared client. With `AGENT_TRANSPORT=service`
+Electron main opens no database and proxies the Dashboard, Chat, model-health,
+research task, Research Tools and backup channels to the agent. Settings and process
+spawn have not moved yet. The Status column names the phase that implements (or
+implemented) each rule.
 
 ## Process model
 
@@ -86,15 +88,15 @@ cross-process lock arrives with supervision (Phase 8).
 
 ### 4. Secrets
 
-| Rule                                                                                                                                                                                  | Status                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `safeStorage` encryption and decryption stay in Electron. The agent never imports `electron`.                                                                                         | Policy (ESLint)                                                                                                                                                                                                                                                                   |
-| The agent obtains a secret only through the reverse call `shell.getSecret` on an authenticated connection. Keys are limited to `SECRET_SETTING_KEYS` (today only `ollama.authToken`). | Contract: Phase 0                                                                                                                                                                                                                                                                 |
-| Secrets are held in agent memory only: never written to the state file, SQLite in plaintext, logs, error messages or protocol events.                                                 | Phase 6 / 7                                                                                                                                                                                                                                                                       |
-| No protocol method returns a secret to the shell, and nothing on the protocol is forwarded to the renderer except the existing `@rka/shared` DTOs, which contain no secrets.          | Contract: Phase 0                                                                                                                                                                                                                                                                 |
-| `settings.setSecret` is not a protocol method: the shell encrypts and stores it; Phase 7 decides whether ciphertext lives in SQLite or stays in Electron.                             | Phase 7                                                                                                                                                                                                                                                                           |
-| The Ollama token is still sent only over HTTPS or to loopback (`canSendCredentials`), now from the agent process.                                                                     | Phase 7                                                                                                                                                                                                                                                                           |
-| The session token itself is a secret: not logged, not sent to the renderer, not included in error messages.                                                                           | Agent: done (Phase 1, `server.test.ts`). Client: done (Phase 2): the token stays inside `@rka/agent-client`; `connectFromStateFile` returns the state without it (`connect.test.ts`, `agent-transport.test.ts`). Renderer: never receives it (client lives in Electron main only) |
+| Rule                                                                                                                                                                                  | Status                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `safeStorage` encryption and decryption stay in Electron. The agent never imports `electron`.                                                                                         | Policy (ESLint)                                                                                                                                                                                                                                                                                          |
+| The agent obtains a secret only through the reverse call `shell.getSecret` on an authenticated connection. Keys are limited to `SECRET_SETTING_KEYS` (today only `ollama.authToken`). | Contract: Phase 0. Port: Phase 6 (`shell-ports.ts`): asked of the requesting connection if it declared `shell`, else the newest `shell` connection, never a `cli`/`test` client (`shell-ports.test.ts`). No consumer until Phase 7; in service mode the shell has no secret store yet and answers `null` |
+| Secrets are held in agent memory only: never written to the state file, SQLite in plaintext, logs, error messages or protocol events.                                                 | Phase 6 / 7. Phase 6: a failing shell handler answers a generic `internal` message and the client never logs `shell.getSecret` error details (`client.test.ts`)                                                                                                                                          |
+| No protocol method returns a secret to the shell, and nothing on the protocol is forwarded to the renderer except the existing `@rka/shared` DTOs, which contain no secrets.          | Contract: Phase 0                                                                                                                                                                                                                                                                                        |
+| `settings.setSecret` is not a protocol method: the shell encrypts and stores it; Phase 7 decides whether ciphertext lives in SQLite or stays in Electron.                             | Phase 7                                                                                                                                                                                                                                                                                                  |
+| The Ollama token is still sent only over HTTPS or to loopback (`canSendCredentials`), now from the agent process.                                                                     | Phase 7                                                                                                                                                                                                                                                                                                  |
+| The session token itself is a secret: not logged, not sent to the renderer, not included in error messages.                                                                           | Agent: done (Phase 1, `server.test.ts`). Client: done (Phase 2): the token stays inside `@rka/agent-client`; `connectFromStateFile` returns the state without it (`connect.test.ts`, `agent-transport.test.ts`). Renderer: never receives it (client lives in Electron main only)                        |
 
 ### 5. Spawn allow-list (intent)
 
@@ -120,13 +122,13 @@ added in Phase 8 and nowhere else:
 
 ### 6. Renderer isolation preserved
 
-| Rule                                                                                                                                                            | Where                              | Status                  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------- |
-| The renderer keeps talking only to Electron through the frozen `window.api`; `RendererApi` and `IpcChannels` do not change shape for the process split.         | `@rka/shared`, `preload/index.ts`  | Unchanged               |
-| Renderer and preload must not import `@rka/agent-protocol` or `@rka/agent-client`.                                                                              | `eslint.config.js`                 | Phase 0/2 (lint)        |
-| No preload function exposes the agent port, token, state-file path or a generic protocol call.                                                                  | `preload/index.ts`                 | Policy; tested Phase 2+ |
-| Production CSP `connect-src 'none'` keeps the page from opening any socket or `fetch`, including to `127.0.0.1`.                                                | `electron.vite.config.ts`          | Unchanged               |
-| Local file paths from dialogs travel agent ↔ shell only (both trusted) and never reach the renderer, which still sees opaque tokens (Research Tools guarantee). | `researchTools.*`, `shell.choose*` | Contract: Phase 0       |
+| Rule                                                                                                                                                            | Where                              | Status                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------ |
+| The renderer keeps talking only to Electron through the frozen `window.api`; `RendererApi` and `IpcChannels` do not change shape for the process split.         | `@rka/shared`, `preload/index.ts`  | Unchanged                                                    |
+| Renderer and preload must not import `@rka/agent-protocol` or `@rka/agent-client`.                                                                              | `eslint.config.js`                 | Phase 0/2 (lint)                                             |
+| No preload function exposes the agent port, token, state-file path or a generic protocol call.                                                                  | `preload/index.ts`                 | Policy; tested Phase 2+                                      |
+| Production CSP `connect-src 'none'` keeps the page from opening any socket or `fetch`, including to `127.0.0.1`.                                                | `electron.vite.config.ts`          | Unchanged                                                    |
+| Local file paths from dialogs travel agent ↔ shell only (both trusted) and never reach the renderer, which still sees opaque tokens (Research Tools guarantee). | `researchTools.*`, `shell.choose*` | Contract: Phase 0; served Phase 6 (`research-tools.test.ts`) |
 
 ### 7. Message validation
 
@@ -147,6 +149,20 @@ added in Phase 8 and nowhere else:
   completed the token handshake, and each one is validated with `parseEvent` the same
   way. Electron fans them out to every window on `IpcEvents.researchProgress`, where
   the preload validates them again (`server.test.ts`, `service-shell.test.ts`).
+- Reverse calls (`shell.*`, Phase 6): the agent validates outgoing params with
+  `parseRequest(…, 'toShell')`, correlates the answer by request id **and** method on
+  the same connection, and validates the result with `parseResult`. An unmatched
+  `res`/`error` is logged and ignored. Each call has a timeout (dialogs
+  `SHELL_DIALOG_TIMEOUT_MS` = 10 min, others 30 s) and fails with `shell_unavailable`
+  as soon as its connection closes, so no operation waits for a vanished shell. The
+  shell validates each request with `parseRequest(…, 'toShell')` (agent methods are
+  `unknown_method`) and its own result with `parseResult` before sending
+  (`shell-ports.test.ts`, `research-tools.test.ts`, `client.test.ts`).
+- Dialogs and `openExternal` go only to the connection whose request is being served
+  (tracked with `AsyncLocalStorage`), never to another client. `openExternal` is
+  checked twice: the agent's Research Tools service opens only public http(s) URLs it
+  returned from a search or fetch, and the Electron port still refuses non-http(s)
+  URLs (`isSafeExternalUrl`). The save dialog (overwrite confirmation) stays in Electron.
 - Web content and model output inside payloads stay untrusted data, exactly as today;
   the protocol carries no instructions.
 

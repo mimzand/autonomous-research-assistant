@@ -6,13 +6,33 @@ import { createServiceChat } from './service-chat.js';
 
 /** Upper bound for one proxied call; an integrity check of a large database takes a while. */
 export const SERVICE_REQUEST_TIMEOUT_MS = 60_000;
+/** Research Tools search, fetch and extract (network and document parsing). */
+export const SERVICE_TOOLS_TIMEOUT_MS = 5 * 60_000;
+/**
+ * Calls that wait for a person in a shell dialog, then copy or read the file.
+ * Longer than the agent's `SHELL_DIALOG_TIMEOUT_MS`, so the agent's answer arrives first.
+ */
+export const SERVICE_DIALOG_TIMEOUT_MS = 15 * 60_000;
+
+const DIALOG_METHODS: ReadonlySet<RequestMethodName> = new Set([
+  'storage.backup',
+  'researchTools.pickFile',
+]);
+
+export function serviceTimeoutFor(method: RequestMethodName): number {
+  if (DIALOG_METHODS.has(method)) return SERVICE_DIALOG_TIMEOUT_MS;
+  if (method.startsWith('researchTools.')) return SERVICE_TOOLS_TIMEOUT_MS;
+  return SERVICE_REQUEST_TIMEOUT_MS;
+}
 
 /**
  * Request/response channels the agent service serves: Dashboard reads, the
  * persistence check, storage status and integrity (Phase 3), model health for
  * the Chat page (Phase 4; registered as Phase 7 in the protocol, served early)
- * and the research task lifecycle (Phase 5; progress arrives as
- * `ui.researchProgress`, see `startServiceShell`). Payloads and results use the
+ * the research task lifecycle (Phase 5; progress arrives as
+ * `ui.researchProgress`, see `startServiceShell`), and Research Tools plus backup
+ * (Phase 6; their dialogs are reverse calls the shell answers, and picked paths
+ * stay in the agent behind tokens). Payloads and results use the
  * same `@rka/shared` schemas through the protocol registry. Chat start/stop are
  * handled by `createServiceChat`.
  */
@@ -34,6 +54,16 @@ export const SERVICE_ROUTES = {
   [IpcChannels.reportsGet]: 'reports.get',
   [IpcChannels.storageStatus]: 'storage.status',
   [IpcChannels.storageIntegrityCheck]: 'storage.integrityCheck',
+  [IpcChannels.storageBackup]: 'storage.backup',
+  [IpcChannels.researchStatus]: 'researchTools.status',
+  [IpcChannels.researchCheckSearch]: 'researchTools.checkSearch',
+  [IpcChannels.researchSearch]: 'researchTools.search',
+  [IpcChannels.researchFetch]: 'researchTools.fetchUrl',
+  [IpcChannels.researchPickFile]: 'researchTools.pickFile',
+  [IpcChannels.researchExtractFile]: 'researchTools.extractFile',
+  [IpcChannels.researchSaveSource]: 'researchTools.saveSource',
+  [IpcChannels.researchOpenUrl]: 'researchTools.openUrl',
+  [IpcChannels.researchCancel]: 'researchTools.cancel',
 } as const satisfies Partial<Record<IpcChannel, RequestMethodName>>;
 
 export interface ServiceIpcDeps {
@@ -46,7 +76,7 @@ export interface ServiceIpcDeps {
 /**
  * AGENT_TRANSPORT=service: registers every renderer channel without any local
  * database. Routed channels and Chat go to the agent; the rest need the
- * in-process agent (Settings, Research Tools, backup) and fail with a clear
+ * in-process agent (Settings, Phase 7) and fail with a clear
  * message until their phase moves them.
  */
 export function registerServiceIpcHandlers(ipc: IpcMainLike, deps: ServiceIpcDeps): void {
@@ -97,7 +127,7 @@ async function forward(
   );
   if (!parsed.ok) throw new Error(parsed.error.message);
   return client.request(method, parsed.value.params as never, {
-    timeoutMs: SERVICE_REQUEST_TIMEOUT_MS,
+    timeoutMs: serviceTimeoutFor(method),
   });
 }
 

@@ -17,13 +17,17 @@ import {
   type EventEnvelope,
   type EventName,
   type EventPayload,
+  type ClientKind,
   type HelloAck,
   type ParsedRequest,
   type ProtocolError,
+  type RequestEnvelope,
   type RequestMethodName,
+  type ShellMethodName,
 } from '@rka/agent-protocol';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Socket } from 'node:net';
+import { runWithConnection, ShellCallError } from './connection-context.js';
 import { type AgentConnection, type RequestHandlers } from './handlers.js';
 import { tokensEqual } from './token.js';
 
@@ -57,8 +61,13 @@ export interface AgentServer {
   readonly startedAt: string;
   /** Each connection validates the event (`parseEvent`) and drops it if invalid. */
   readonly broadcast: AgentBroadcast;
+  /** Open authenticated connections, oldest first. */
+  connections(): readonly AgentConnection[];
   close(): Promise<void>;
 }
+
+/** What services need from a running server: events out, and who is connected. */
+export type AgentServerLink = Pick<AgentServer, 'broadcast' | 'connections'>;
 
 /** Starts the protocol server on 127.0.0.1 only. */
 export async function startAgentServer(options: AgentServerOptions): Promise<AgentServer> {
@@ -116,6 +125,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
     broadcast: (method, payload) => {
       for (const connection of [...clients]) connection.emit(method, payload);
     },
+    connections: () => [...clients].filter((connection) => !connection.closed),
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -139,15 +149,54 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   const decoder = new FrameDecoder(HANDSHAKE_MAX_FRAME_BYTES);
   let authenticated = false;
   let closing = false;
+  let clientKind: ClientKind = 'cli';
+  /** Reverse calls waiting for the client's answer, by request id. */
+  const calls = new Map<string, PendingCall>();
 
   const send = (envelope: Envelope) => {
     if (!socket.destroyed) socket.write(encodeFrame(envelope));
   };
+  const settleCall = (id: string): PendingCall | undefined => {
+    const pending = calls.get(id);
+    if (!pending) return undefined;
+    calls.delete(id);
+    clearTimeout(pending.timer);
+    return pending;
+  };
 
   const connection: AgentConnection = {
     id: ctx.id,
+    get kind() {
+      return clientKind;
+    },
     get closed() {
       return socket.destroyed;
+    },
+    call(method, params, { timeoutMs }) {
+      const envelope: RequestEnvelope = { id: randomUUID(), kind: 'req', method, payload: params };
+      const checked = parseRequest(envelope, 'toShell');
+      if (!checked.ok) {
+        return Promise.reject(new ShellCallError(checked.error.code, checked.error.message));
+      }
+      if (socket.destroyed || closing) {
+        return Promise.reject(
+          new ShellCallError('shell_unavailable', `The shell disconnected before ${method}.`),
+        );
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          settleCall(envelope.id);
+          reject(new ShellCallError('timeout', `${method} got no answer from the shell in time.`));
+        }, timeoutMs);
+        timer.unref();
+        calls.set(envelope.id, {
+          method,
+          timer,
+          resolve: resolve as (value: unknown) => void,
+          reject,
+        });
+        send({ ...envelope, payload: checked.value.params });
+      });
     },
     emit(method, payload) {
       if (socket.destroyed) return;
@@ -191,6 +240,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     }
     clearTimeout(handshakeTimer);
     authenticated = true;
+    clientKind = hello.value.hello.client.kind;
     decoder.maxFrameBytes = MAX_FRAME_BYTES;
     reply(hello.value.id, 'system.hello', ctx.ack());
     ctx.onAuthenticated(connection);
@@ -237,7 +287,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   const serve = async (request: ParsedRequest, handler: Handler) => {
     let result: unknown;
     try {
-      result = await handler(request.params, connection);
+      result = await runWithConnection(connection, () => handler(request.params, connection));
     } catch (error) {
       ctx.log(
         `${request.method} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -264,8 +314,26 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
         protocolError('unknown_method', `Unknown event: ${envelope.method}.`),
       );
     }
-    // No reverse requests exist yet, so any res/error from the client is unsolicited.
-    ctx.log(`Ignoring unsolicited ${envelope.kind} for ${envelope.method}.`);
+    answerCall(envelope);
+  };
+
+  /** Settles a reverse call with the client's res/error; anything unmatched is ignored. */
+  const answerCall = (envelope: Envelope) => {
+    const pending = calls.get(envelope.id);
+    if (!pending || envelope.method !== pending.method) {
+      ctx.log(`Ignoring unsolicited ${envelope.kind} for ${envelope.method}.`);
+      return;
+    }
+    settleCall(envelope.id);
+    if (envelope.kind === 'error') {
+      return pending.reject(new ShellCallError(envelope.payload.code, envelope.payload.message));
+    }
+    const result = parseResult(pending.method, envelope.payload);
+    if (!result.ok) {
+      ctx.log(`Rejecting an invalid ${pending.method} result from the shell.`);
+      return pending.reject(new ShellCallError(result.error.code, result.error.message));
+    }
+    pending.resolve(result.value);
   };
 
   socket.on('data', (chunk: Buffer) => {
@@ -280,6 +348,12 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   socket.on('error', () => socket.destroy());
   socket.on('close', () => {
     clearTimeout(handshakeTimer);
+    for (const id of [...calls.keys()]) {
+      const pending = settleCall(id);
+      pending?.reject(
+        new ShellCallError('shell_unavailable', `The shell disconnected during ${pending.method}.`),
+      );
+    }
     if (!authenticated) return;
     try {
       ctx.onDisconnect(connection);
@@ -292,3 +366,10 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
 }
 
 type Handler = (params: unknown, connection: AgentConnection) => unknown;
+
+interface PendingCall {
+  readonly method: ShellMethodName;
+  readonly timer: NodeJS.Timeout;
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: ShellCallError) => void;
+}

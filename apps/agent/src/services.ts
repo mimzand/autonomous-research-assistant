@@ -15,9 +15,11 @@ import {
   chatHandlers,
   dashboardHandlers,
   researchHandlers,
+  researchToolsHandlers,
   type RequestHandlers,
 } from './handlers.js';
-import { type AgentBroadcast } from './server.js';
+import { type AgentServerLink } from './server.js';
+import { createShellPorts, type ShellSecrets } from './shell-ports.js';
 
 export interface AgentServicesOptions {
   /** Same layout as Electron's userData: the database is `<dataDir>/data/research.db`. */
@@ -34,8 +36,13 @@ export interface AgentServices {
   readonly recovery: RecoveryReport;
   /** Stops the Chat stream a closed connection was receiving. */
   onDisconnect(connectionId: number): void;
-  /** Research progress goes to `broadcast` from now on (dropped before this is called). */
-  attachEvents(broadcast: AgentBroadcast): void;
+  /**
+   * Research progress goes to the server's `broadcast` from now on (dropped before);
+   * secrets are asked of its connected shell.
+   */
+  attachServer(server: AgentServerLink): void;
+  /** Secrets kept by the desktop shell (reverse calls). Unused until Phase 7. */
+  readonly secrets: ShellSecrets;
   /** Resolves when no Chat reply is being generated. For tests and shutdown. */
   whenChatIdle(): Promise<void>;
   /** Resolves when no research task is executing. For tests and shutdown. */
@@ -44,14 +51,12 @@ export interface AgentServices {
   close(): void;
 }
 
-const needsShell = (what: string) => () =>
-  Promise.reject(new Error(`${what} needs the desktop shell (reverse RPC, Phase 6).`));
-
 /**
  * Opens the database (migrations, then recovery of tasks left running) and builds
  * the agent host on it. The agent is then the only SQLite writer. Serves the
- * Dashboard (Phase 3), Chat plus model health (Phase 4) and the research task
- * lifecycle with `ui.researchProgress` events (Phase 5).
+ * Dashboard (Phase 3), Chat plus model health (Phase 4), the research task
+ * lifecycle with `ui.researchProgress` events (Phase 5), and Research Tools plus
+ * backup, whose dialogs and links are reverse calls to the shell (Phase 6).
  *
  * Model, web and research settings come from the environment only (as defaults
  * in the desktop app). Saved Settings, the Ollama access token and live
@@ -70,13 +75,13 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
       );
     }
     const research = loadResearchConfig(env);
-    let broadcast: AgentBroadcast | undefined;
-    // Only reverse calls need a shell (Phase 6); research progress goes to every client.
+    let server: AgentServerLink | undefined;
+    const shell = createShellPorts({ connections: () => server?.connections() ?? [] });
     const ports: AgentHostPorts = {
-      emitResearchProgress: (event) => broadcast?.('ui.researchProgress', event),
-      chooseBackupPath: needsShell('Choosing a backup file'),
-      chooseFile: needsShell('Choosing a file'),
-      openExternal: needsShell('Opening a link'),
+      emitResearchProgress: (event) => server?.broadcast('ui.researchProgress', event),
+      chooseBackupPath: shell.ports.chooseBackupPath,
+      chooseFile: shell.ports.chooseFile,
+      openExternal: shell.ports.openExternal,
     };
     const host = createAgentHost({
       storage,
@@ -100,13 +105,15 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
         ...dashboardHandlers(host.dashboard),
         ...chatHandlers(host.chat, host.runtime),
         ...researchHandlers(host.dashboard),
+        ...researchToolsHandlers(host.researchTools, host.dashboard),
       },
       databasePath,
       recovery,
       onDisconnect: (connectionId) => host.chat.stopForSink(connectionId),
-      attachEvents: (next) => {
-        broadcast = next;
+      attachServer: (next) => {
+        server = next;
       },
+      secrets: shell.secrets,
       whenChatIdle: () => host.chat.whenIdle(),
       whenTasksIdle: () => host.runtime.tasks.whenIdle(),
       close: () => storage.close(),

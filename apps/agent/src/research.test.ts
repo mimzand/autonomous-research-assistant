@@ -253,7 +253,7 @@ async function setup(web: ReconfigurableWebServices | null = scriptedWeb()) {
     handlers: services.handlers,
     onDisconnect: (id) => services.onDisconnect(id),
   });
-  services.attachEvents(server.broadcast);
+  services.attachServer(server);
   cleanups.push(() => server.close());
   const connect = async () => {
     const client = await connectAgent({ port: server.port, token });
@@ -393,8 +393,10 @@ describe('research over the agent protocol', () => {
     if (!handler) throw new Error('not served');
     const result = await handler({ goal: GOAL, ...LIMITS } as never, {
       id: 1,
+      kind: 'test',
       closed: false,
       emit: () => undefined,
+      call: () => Promise.reject(new Error('no shell')),
     });
     expect(result.status).toBe('ok');
     await services.whenTasksIdle();

@@ -1,6 +1,6 @@
 import { encodeFrame } from '@rka/agent-protocol';
 import { createServer, type Socket } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { connectAgent } from './client.js';
 import { fakeAck, pingHandler, startFakeAgent, type FakeHandler } from './test-fixtures.js';
 
@@ -187,6 +187,50 @@ describe('connectAgent', () => {
       { id: 'e4', method: 'chat.event', payload: { type: 'cancelled', streamId } },
     ]);
     expect(removed).toEqual([]);
+    client.close();
+  });
+
+  it('serves validated reverse requests and never echoes handler errors', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const server = await fake((envelope, socket) => {
+      if (envelope.method === 'system.ping') {
+        const ask = (id: string, method: string, payload: unknown) =>
+          socket.write(encodeFrame({ id, kind: 'req', method, payload }));
+        ask('r1', 'shell.chooseFile', {});
+        ask('r2', 'shell.getSecret', { key: 'ollama.authToken' });
+        ask('r3', 'shell.chooseFolder', { defaultPath: 5 });
+        ask('r4', 'tasks.counts', {});
+        ask('r5', 'shell.encryptionAvailable', {});
+        ask('r6', 'shell.chooseBackupPath', {});
+      }
+      return envelope.kind === 'req' ? pingHandler(envelope, socket) : 'ignore';
+    });
+    const client = await connectAgent({ port: server.port, token });
+    client.serve({
+      'shell.chooseFile': () => ({ path: 'C:\\docs\\a.pdf' }),
+      'shell.getSecret': () => {
+        throw new Error('secret-value-xyz');
+      },
+      'shell.chooseFolder': () => ({ path: null }),
+      'shell.chooseBackupPath': () => ({ path: 3 }) as never,
+    });
+    await client.request('system.ping', {});
+    const answers = () => server.received.filter((e) => e.kind === 'res' || e.kind === 'error');
+    await vi.waitFor(() => expect(answers()).toHaveLength(6));
+    const byId = Object.fromEntries(answers().map((e) => [e.id, e]));
+    expect(byId['r1']).toMatchObject({ kind: 'res', payload: { path: 'C:\\docs\\a.pdf' } });
+    expect(byId['r2']).toEqual({
+      id: 'r2',
+      kind: 'error',
+      method: 'shell.getSecret',
+      payload: { code: 'internal', message: 'shell.getSecret failed in the shell.' },
+    });
+    expect(byId['r3']).toMatchObject({ kind: 'error', payload: { code: 'bad_request' } });
+    expect(byId['r4']).toMatchObject({ kind: 'error', payload: { code: 'unknown_method' } });
+    expect(byId['r5']).toMatchObject({ kind: 'error', payload: { code: 'not_implemented' } });
+    expect(byId['r6']).toMatchObject({ kind: 'error', payload: { code: 'internal' } });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-value-xyz');
+    warn.mockRestore();
     client.close();
   });
 });

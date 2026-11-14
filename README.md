@@ -137,12 +137,14 @@ packages/
   `electron`; renderer and preload may not import it (ESLint).
 - Electron main uses the service only when `AGENT_TRANSPORT=service` (default
   `inprocess`). It then opens no database (`openAppStorage` refuses) and builds no
-  local agent host: the Dashboard, Chat, model-health and research task channels are
-  proxied to the agent over one long-lived connection (Chat events go to the window
-  that started the reply, and closing it stops the reply; research progress goes to
-  every window), and the other channels (Settings, Research Tools, backup) report
-  that they are not available in this mode yet. In the default mode everything runs
-  in-process through `createAgentHost`, as before.
+  local agent host: the Dashboard, Chat, model-health, research task, Research Tools
+  and backup channels are proxied to the agent over one long-lived connection (Chat
+  events go to the window that started the reply, and closing it stops the reply;
+  research progress goes to every window). When the agent needs a file dialog, the
+  browser or a stored secret, it asks Electron back over the same connection (reverse
+  calls); picked paths stay in the agent behind tokens. Settings report that they are
+  not available in this mode yet. In the default mode everything runs in-process
+  through `createAgentHost`, as before.
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under
@@ -466,10 +468,10 @@ startup with a message naming the variable.
 Development-only agent service switches (process environment or dev `.env`; not read
 from `settings.env`):
 
-| Variable           | Default     | Notes                                                                                                                                                                                                          |
-| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TRANSPORT`  | `inprocess` | `service`: the agent from `pnpm agent:dev` owns the database and serves the Dashboard; Chat, Settings and Research Tools are unavailable. The app refuses to start (with a dialog) if the agent is unreachable |
-| `AGENT_STATE_FILE` | (dev path)  | State file to read in service mode; default `apps/agent/.agent-data/agent-state.json` (packaged: `%APPDATA%\…\agent-state.json`)                                                                               |
+| Variable           | Default     | Notes                                                                                                                                                                                                                            |
+| ------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TRANSPORT`  | `inprocess` | `service`: the agent from `pnpm agent:dev` owns the database and serves the Dashboard, Chat, research, Research Tools and backup; Settings are unavailable. The app refuses to start (with a dialog) if the agent is unreachable |
+| `AGENT_STATE_FILE` | (dev path)  | State file to read in service mode; default `apps/agent/.agent-data/agent-state.json` (packaged: `%APPDATA%\…\agent-state.json`)                                                                                                 |
 
 Try it: run `pnpm agent:dev` in one terminal, then in another
 `$env:AGENT_TRANSPORT='service'; pnpm dev` (PowerShell). The terminal logs

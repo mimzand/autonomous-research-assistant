@@ -64,11 +64,18 @@ const getAppInfo = () => ({
 
 /**
  * AGENT_TRANSPORT=service (development): the standalone agent (`pnpm agent:dev`)
- * owns SQLite and serves the Dashboard, Chat and research tasks; this process opens
- * no database. Startup stops if the agent is unreachable.
+ * owns SQLite and serves the Dashboard, Chat, research tasks, Research Tools and
+ * backup; this process opens no database and answers the agent's dialog, link and
+ * secret requests. Startup stops if the agent is unreachable.
  */
 function startServiceShellMode(): Promise<void> {
+  // No database here: no saved backup folder (Documents) and no stored secrets until Phase 7.
+  const ports = createElectronHostPorts({
+    backupDirectory: () => null,
+    getSecret: () => undefined,
+  });
   return startServiceShell({
+    ports,
     ipc: ipcMain,
     stateFile: agentStateFilePath({
       env: process.env,
@@ -140,7 +147,10 @@ function startInProcessAgent(): () => void {
   }
 
   // OS capabilities (windows, dialogs, browser, key store) for the host and Settings.
-  const ports = createElectronHostPorts(config);
+  const ports = createElectronHostPorts({
+    backupDirectory: () => config.getSetting('backup.defaultDirectory'),
+    getSecret: (key) => config.getSecret(key),
+  });
 
   // The agent: tools, runtime, Chat/Research engines, Chat, Dashboard and Research Tools.
   const host = createAgentHost({

@@ -1,10 +1,15 @@
 import { readFileSync } from 'node:fs';
-import { AgentClientError } from '@rka/agent-client';
-import { type ParsedEvent } from '@rka/agent-protocol';
+import { AgentClientError, type ShellHandlers } from '@rka/agent-client';
+import { SHELL_DIALOG_TIMEOUT_MS, type ParsedEvent } from '@rka/agent-protocol';
 import { IpcChannels, IpcEvents, type AppInfo } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { type InvokeEventLike, type IpcMainLike } from './ipc.js';
-import { SERVICE_REQUEST_TIMEOUT_MS, SERVICE_ROUTES } from './service-ipc.js';
+import {
+  SERVICE_DIALOG_TIMEOUT_MS,
+  SERVICE_REQUEST_TIMEOUT_MS,
+  SERVICE_ROUTES,
+  SERVICE_TOOLS_TIMEOUT_MS,
+} from './service-ipc.js';
 import { startServiceShell } from './service-shell.js';
 
 const openStorage = vi.hoisted(() =>
@@ -50,10 +55,12 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
     onClose: (listener: (error: AgentClientError) => void) => {
       closeListeners.push(listener);
     },
+    serve: vi.fn<(handlers: ShellHandlers) => void>(),
     close: vi.fn(),
   };
   const log = { info: vi.fn(), warn: vi.fn() };
   const broadcast = vi.fn();
+  const ports = fakePorts();
   await startServiceShell({
     ipc,
     stateFile: 'agent-state.json',
@@ -61,6 +68,7 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
     getAppInfo: () => appInfo,
     isTrustedSender: (url) => url === APP_URL,
     broadcast,
+    ports,
     onQuit: (listener) => quitListeners.push(listener),
     connect: () => Promise.resolve({ client: client as never, state: {} as never }),
     log,
@@ -78,7 +86,20 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const push = (event: ParsedEvent) => {
     for (const listener of eventListeners) listener(event);
   };
-  return { handlers, invoke, request, client, log, quitListeners, close, broadcast, push };
+  return { handlers, invoke, request, client, log, quitListeners, close, broadcast, push, ports };
+}
+
+function fakePorts() {
+  return {
+    chooseBackupPath: vi.fn(() => Promise.resolve<string | null>('C:\\backups\\rka.db')),
+    chooseFile: vi.fn(() => Promise.resolve<string | null>(null)),
+    chooseFolder: vi.fn((current: string | null) => Promise.resolve(current)),
+    openExternal: vi.fn((url: string) =>
+      url.startsWith('https://') ? Promise.resolve() : Promise.reject(new Error('Refused')),
+    ),
+    encryptionAvailable: vi.fn(() => true),
+    getSecret: vi.fn((): string | undefined => undefined),
+  };
 }
 
 describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
@@ -103,7 +124,49 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ['tasks.get', { id: 'task-1' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
       ['tasks.list', expect.any(Object), { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
     ]);
-    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(17);
+    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(27);
+  });
+
+  it('proxies Research Tools and backup with timeouts that outlast a dialog', async () => {
+    const { invoke, request } = await setup();
+    await invoke(IpcChannels.storageBackup);
+    await invoke(IpcChannels.researchPickFile);
+    await invoke(IpcChannels.researchSearch, { requestId: 'r1', query: 'solar wind' });
+    await invoke(IpcChannels.researchFetch, { requestId: 'r2', url: 'https://example.com/' });
+    await invoke(IpcChannels.researchOpenUrl, { url: 'https://example.com/' });
+    await invoke(IpcChannels.researchStatus);
+    expect(request.mock.calls).toEqual([
+      ['storage.backup', {}, { timeoutMs: SERVICE_DIALOG_TIMEOUT_MS }],
+      ['researchTools.pickFile', {}, { timeoutMs: SERVICE_DIALOG_TIMEOUT_MS }],
+      ['researchTools.search', expect.any(Object), { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+      ['researchTools.fetchUrl', expect.any(Object), { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+      ['researchTools.openUrl', expect.any(Object), { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+      ['researchTools.status', {}, { timeoutMs: SERVICE_TOOLS_TIMEOUT_MS }],
+    ]);
+    expect(SERVICE_DIALOG_TIMEOUT_MS).toBeGreaterThan(SHELL_DIALOG_TIMEOUT_MS);
+  });
+
+  it('answers the agent dialog, link and secret requests with the Electron ports', async () => {
+    const { client, ports } = await setup();
+    expect(client.serve).toHaveBeenCalledTimes(1);
+    const served = client.serve.mock.calls[0]?.[0];
+    if (!served) throw new Error('not served');
+    await expect(served['shell.chooseBackupPath']?.({})).resolves.toEqual({
+      path: 'C:\\backups\\rka.db',
+    });
+    await expect(served['shell.chooseFile']?.({})).resolves.toEqual({ path: null });
+    await expect(served['shell.chooseFolder']?.({ defaultPath: 'C:\\x' })).resolves.toEqual({
+      path: 'C:\\x',
+    });
+    await expect(served['shell.openExternal']?.({ url: 'https://example.com/' })).resolves.toBe(
+      null,
+    );
+    await expect(served['shell.openExternal']?.({ url: 'http://example.com/' })).rejects.toThrow();
+    expect(ports.openExternal).toHaveBeenCalledTimes(2);
+    expect(await served['shell.getSecret']?.({ key: 'ollama.authToken' })).toEqual({
+      value: null,
+    });
+    expect(await served['shell.encryptionAvailable']?.({})).toEqual({ available: true });
   });
 
   it('proxies the research task lifecycle with validated params', async () => {
@@ -185,8 +248,8 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
     const { invoke, request } = await setup();
     for (const channel of [
       IpcChannels.settingsGet,
-      IpcChannels.storageBackup,
-      IpcChannels.researchSearch,
+      IpcChannels.settingsChooseBackupFolder,
+      IpcChannels.settingsSetSecret,
     ]) {
       await expect(invoke(channel)).rejects.toThrow(
         `${channel} is not available with AGENT_TRANSPORT=service yet.`,
@@ -235,6 +298,7 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       'service-shell.ts',
       'service-ipc.ts',
       'service-chat.ts',
+      'service-shell-ports.ts',
       'agent-transport.ts',
     ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');

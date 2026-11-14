@@ -174,6 +174,8 @@ describe('security guards', () => {
     expect(
       offenders(/openExternal\s*\(|openPath\s*\(|showItemInFolder\s*\(/, [
         'apps/desktop/src/main/host-ports.ts',
+        // Service mode: delegates to the host-ports implementation above.
+        'apps/desktop/src/main/service-shell-ports.ts',
         'apps/desktop/src/main/window.ts',
         'packages/agent-host/src/research-tools.ts',
       ]),

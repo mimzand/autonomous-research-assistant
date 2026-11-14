@@ -5,6 +5,8 @@ export {
   type AgentClientErrorCode,
   type AgentClientOptions,
   type RequestOptions,
+  type ShellHandler,
+  type ShellHandlers,
 } from './client.js';
 export {
   connectFromStateFile,

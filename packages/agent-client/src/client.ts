@@ -5,14 +5,21 @@ import {
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
   parseEvent,
+  parseRequest,
   parseResult,
+  protocolError,
   type ClientKind,
+  type Envelope,
   type HelloAck,
   type ParsedEvent,
+  type ProtocolError,
   type ProtocolErrorCode,
+  type RequestEnvelope,
   type RequestMethodName,
+  type RequestParams,
   type RequestParamsInput,
   type RequestResult,
+  type ShellMethodName,
 } from '@rka/agent-protocol';
 import { randomUUID } from 'node:crypto';
 import { connect, type Socket } from 'node:net';
@@ -65,10 +72,22 @@ export interface AgentClient {
    * validated with `parseEvent`; invalid ones are dropped. Returns an unsubscribe function.
    */
   onEvent(listener: (event: ParsedEvent) => void): () => void;
+  /**
+   * Answers the agent's reverse requests (`shell.*`, e.g. a file dialog). Replaces any
+   * earlier handlers. Params and results are validated against the protocol; a method
+   * without a handler answers `not_implemented`, a failing handler `internal` with a
+   * generic message (details stay in this process).
+   */
+  serve(handlers: ShellHandlers): void;
   /** Called once when the connection ends for any reason (including `close()`). */
   onClose(listener: (error: AgentClientError) => void): void;
   close(): void;
 }
+
+export type ShellHandler<M extends ShellMethodName> = (
+  params: RequestParams<M>,
+) => RequestResult<M> | Promise<RequestResult<M>>;
+export type ShellHandlers = { readonly [M in ShellMethodName]?: ShellHandler<M> };
 
 interface Pending {
   readonly method: RequestMethodName;
@@ -118,7 +137,40 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
   const pending = new Map<string, Pending>();
   const closeListeners: ((error: AgentClientError) => void)[] = [];
   const eventListeners = new Set<(event: ParsedEvent) => void>();
+  let shellHandlers: ShellHandlers = {};
   let closeReason: AgentClientError | null = null;
+
+  const send = (envelope: Envelope) => {
+    if (!socket.destroyed) socket.write(encodeFrame(envelope));
+  };
+  const sendError = (id: string, method: string, error: ProtocolError) =>
+    send({ id, kind: 'error', method, payload: error });
+
+  /** Answers one reverse request from the agent. */
+  const answer = async (envelope: RequestEnvelope) => {
+    const parsed = parseRequest(envelope, 'toShell');
+    if (!parsed.ok) return sendError(envelope.id, envelope.method, parsed.error);
+    const { id, method, params } = parsed.value;
+    const handler = shellHandlers[method as ShellMethodName] as
+      ((params: unknown) => unknown) | undefined;
+    if (!handler) {
+      return sendError(id, method, protocolError('not_implemented', `${method} is not served.`));
+    }
+    let result: unknown;
+    try {
+      result = await handler(params);
+    } catch (error) {
+      // Never the details: an error near a secret must not travel or be logged with it.
+      console.warn(`Agent request ${method} failed in the shell.`);
+      if (method !== 'shell.getSecret') console.warn(error);
+      return sendError(id, method, protocolError('internal', `${method} failed in the shell.`));
+    }
+    const checked = parseResult(method, result);
+    if (!checked.ok) {
+      return sendError(id, method, protocolError('internal', `Invalid result for ${method}.`));
+    }
+    send({ id, kind: 'res', method, payload: checked.value });
+  };
   const failAll = (error: AgentClientError) => {
     closeReason ??= error;
     for (const p of pending.values()) {
@@ -139,6 +191,10 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       if (envelope.kind === 'event') {
         const event = parseEvent(envelope, 'toShell');
         if (event.ok) for (const listener of [...eventListeners]) notify(listener, event.value);
+        continue;
+      }
+      if (envelope.kind === 'req') {
+        void answer(envelope);
         continue;
       }
       if (envelope.kind !== 'res' && envelope.kind !== 'error') continue;
@@ -188,7 +244,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
         reject,
         timer,
       });
-      socket.write(encodeFrame({ id, kind: 'req', method, payload: params }));
+      send({ id, kind: 'req', method, payload: params });
     });
 
   try {
@@ -204,6 +260,9 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       onEvent: (listener) => {
         eventListeners.add(listener);
         return () => void eventListeners.delete(listener);
+      },
+      serve: (handlers) => {
+        shellHandlers = handlers;
       },
       onClose: (listener) => {
         if (socket.destroyed)

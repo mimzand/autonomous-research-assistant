@@ -1,5 +1,5 @@
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from '@rka/agent-protocol';
-import { startAgentServer, type AgentBroadcast, type AgentServer } from './server.js';
+import { startAgentServer, type AgentServer, type AgentServerLink } from './server.js';
 import { isProcessAlive, readStateFile } from '@rka/agent-client';
 import { type RequestHandlers } from './handlers.js';
 import { removeStateFile, writeStateFile } from './state-file.js';
@@ -10,8 +10,11 @@ export interface AgentServiceSet {
   readonly handlers: RequestHandlers;
   /** A client connection closed (e.g. stop the Chat stream it was receiving). */
   onDisconnect?(connectionId: number): void;
-  /** Called once the server listens: where to push events for every client (research progress). */
-  attachEvents?(broadcast: AgentBroadcast): void;
+  /**
+   * Called once the server listens: `broadcast` pushes events to every client
+   * (research progress); `connections` lets reverse calls find a shell (secrets).
+   */
+  attachServer?(server: AgentServerLink): void;
   close(): void;
 }
 
@@ -64,7 +67,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
     services?.close();
     throw error;
   }
-  services?.attachEvents?.(server.broadcast);
+  services?.attachServer?.(server);
   try {
     writeStateFile(options.stateFile, {
       protocol: PROTOCOL_NAME,

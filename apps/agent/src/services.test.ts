@@ -82,15 +82,25 @@ describe('openAgentServices', () => {
     expect(logs).toContain('Marked 1 task(s) as interrupted after an unexpected shutdown.');
   });
 
-  it('serves the dashboard (Phase 3), Chat and model health (Phase 4) and research (Phase 5) only', () => {
+  it('serves the dashboard, Chat, research, Research Tools and backup (Phases 3–6) only', () => {
     expect(Object.keys(open(dataDir()).handlers).sort()).toEqual([
       'chat.start',
       'chat.stop',
       'model.health',
       'reports.get',
       'reports.list',
+      'researchTools.cancel',
+      'researchTools.checkSearch',
+      'researchTools.extractFile',
+      'researchTools.fetchUrl',
+      'researchTools.openUrl',
+      'researchTools.pickFile',
+      'researchTools.saveSource',
+      'researchTools.search',
+      'researchTools.status',
       'sources.get',
       'sources.list',
+      'storage.backup',
       'storage.integrityCheck',
       'storage.status',
       'tasks.cancel',
@@ -162,7 +172,7 @@ describe('dashboard methods over the protocol', () => {
 
   it('answers not_implemented for later-phase methods and keeps the connection', async () => {
     const client = await serve(open(dataDir()));
-    await expect(client.request('storage.backup', {})).rejects.toMatchObject({
+    await expect(client.request('settings.get', {})).rejects.toMatchObject({
       code: 'not_implemented',
     });
     await expect(client.request('tasks.counts', {})).resolves.toBeDefined();

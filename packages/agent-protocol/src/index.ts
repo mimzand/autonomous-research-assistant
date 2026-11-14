@@ -56,6 +56,7 @@ export {
   ShellGetSecretRequestSchema,
   ShellGetSecretResultSchema,
   ShellPathResultSchema,
+  SHELL_DIALOG_TIMEOUT_MS,
   VoidResultSchema,
   isMethodName,
   parseEvent,
@@ -71,4 +72,5 @@ export {
   type RequestParams,
   type RequestParamsInput,
   type RequestResult,
+  type ShellMethodName,
 } from './methods.js';

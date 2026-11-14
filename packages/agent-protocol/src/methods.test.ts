@@ -19,6 +19,7 @@ import {
   type ParsedRequest,
   type RequestParamsInput,
   type RequestResult,
+  type ShellMethodName,
 } from './methods.js';
 
 const streamId = '7d3b2c1a-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
@@ -114,6 +115,14 @@ describe('method types', () => {
     expectTypeOf<RequestResult<'tasks.pause'>>().toEqualTypeOf<TaskActionResult>();
     expectTypeOf<EventPayload<'chat.event'>>().toEqualTypeOf<ChatEvent>();
     expectTypeOf<RequestResult<'shell.chooseFile'>>().toEqualTypeOf<{ path: string | null }>();
+    expectTypeOf<ShellMethodName>().toEqualTypeOf<
+      | 'shell.chooseBackupPath'
+      | 'shell.chooseFile'
+      | 'shell.chooseFolder'
+      | 'shell.openExternal'
+      | 'shell.getSecret'
+      | 'shell.encryptionAvailable'
+    >();
   });
 
   it('narrows a parsed request by method', () => {
