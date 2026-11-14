@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { isProcessAlive, readStateFile, removeStateFile, writeStateFile } from './state-file.js';
+import { isProcessAlive, readStateFile } from '@rka/agent-client';
+import { removeStateFile, writeStateFile } from './state-file.js';
 import { generateToken, tokensEqual } from './token.js';
 
 const dirs: string[] = [];

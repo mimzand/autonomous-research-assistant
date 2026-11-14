@@ -1,6 +1,7 @@
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from '@rka/agent-protocol';
 import { startAgentServer, type AgentServer } from './server.js';
-import { isProcessAlive, readStateFile, removeStateFile, writeStateFile } from './state-file.js';
+import { isProcessAlive, readStateFile } from '@rka/agent-client';
+import { removeStateFile, writeStateFile } from './state-file.js';
 import { generateToken } from './token.js';
 
 export interface RunAgentOptions {

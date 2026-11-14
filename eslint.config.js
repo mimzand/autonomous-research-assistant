@@ -141,6 +141,7 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('The renderer may only import @rka/shared.', [
+              '@rka/agent-client',
               '@rka/agent-host',
               '@rka/agent-protocol',
               '@rka/agent-runtime',
@@ -170,6 +171,7 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('Preload may only import electron and @rka/shared.', [
+              '@rka/agent-client',
               '@rka/agent-host',
               '@rka/agent-protocol',
               '@rka/agent-runtime',
@@ -295,6 +297,7 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('@rka/agent-protocol may depend only on @rka/shared.', [
+              '@rka/agent-client',
               '@rka/agent-host',
               '@rka/agent-runtime',
               '@rka/adk-runtime',
@@ -302,6 +305,33 @@ export default defineConfig(
               '@rka/tools',
               '@rka/storage',
             ]),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  },
+
+  // @rka/agent-client: Node client of the agent service. Only the protocol (+ shared).
+  {
+    files: ['packages/agent-client/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'Packages must stay Electron-agnostic.' }],
+          patterns: [
+            banPackages(
+              '@rka/agent-client may depend only on @rka/agent-protocol and @rka/shared.',
+              [
+                '@rka/agent-host',
+                '@rka/agent-runtime',
+                '@rka/adk-runtime',
+                '@rka/model-provider',
+                '@rka/tools',
+                '@rka/storage',
+              ],
+            ),
             banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
           ],
         },
@@ -330,6 +360,7 @@ export default defineConfig(
           ],
           patterns: [
             banPackages('Leaf packages may depend only on @rka/shared.', [
+              '@rka/agent-client',
               '@rka/agent-host',
               '@rka/agent-protocol',
               '@rka/agent-runtime',

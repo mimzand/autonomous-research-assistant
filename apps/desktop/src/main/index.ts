@@ -5,6 +5,11 @@ import { SettingsChangedEventSchema } from '@rka/shared';
 import { createReconfigurableWebServices } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session } from 'electron';
 import { probeAdkRuntime } from './adk-probe.js';
+import {
+  agentStateFilePath,
+  agentTransportFromEnv,
+  connectServiceAgent,
+} from './agent-transport.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
@@ -48,7 +53,37 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
-function bootstrap(): void {
+/**
+ * AGENT_TRANSPORT=service (development, Phase 2): connect to the standalone agent
+ * before anything else and stop startup if it is unreachable. The agent is not used
+ * for app features yet; the in-process host below still serves everything.
+ */
+async function connectAgentService(): Promise<void> {
+  if (agentTransportFromEnv(process.env) !== 'service') return;
+  const stateFile = agentStateFilePath({
+    env: process.env,
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    userDataDir: app.getPath('userData'),
+  });
+  const { client, summary } = await connectServiceAgent({
+    stateFile,
+    appVersion: app.getVersion(),
+  });
+  console.info(`Agent service: ${summary}`);
+  let quitting = false;
+  client.onClose((error) => {
+    if (!quitting) console.warn(`Agent service disconnected: ${error.message}`);
+  });
+  app.on('will-quit', () => {
+    quitting = true;
+    client.close();
+  });
+}
+
+async function bootstrap(): Promise<void> {
+  await connectAgentService();
+
   // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
   // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
   const { storage, recovery } = openAppStorage({

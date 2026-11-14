@@ -17,14 +17,24 @@ import { connect, type Socket } from 'node:net';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-/** An `error` envelope from the agent, or a local protocol failure. */
-export class AgentProtocolError extends Error {
+export type AgentClientErrorCode =
+  | ProtocolErrorCode
+  /** No state file, or it names a process that is not running. */
+  | 'not_running'
+  /** The state file exists but does not match AgentStateFileSchema (e.g. a non-loopback host). */
+  | 'state_file_invalid'
+  /** The TCP connection to 127.0.0.1 could not be opened. */
+  | 'connect_failed'
+  | 'connection_closed';
+
+/** An `error` envelope from the agent, or a local connection failure. Never carries the token. */
+export class AgentClientError extends Error {
   constructor(
-    readonly code: ProtocolErrorCode | 'connection_closed',
+    readonly code: AgentClientErrorCode,
     message: string,
   ) {
     super(message);
-    this.name = 'AgentProtocolError';
+    this.name = 'AgentClientError';
   }
 }
 
@@ -32,6 +42,7 @@ export interface AgentClientOptions {
   readonly port: number;
   readonly token: string;
   readonly client?: { readonly kind: ClientKind; readonly version: string };
+  /** Limit for the TCP connect, the handshake and each request (default 10 s). */
   readonly timeoutMs?: number;
 }
 
@@ -41,6 +52,8 @@ export interface AgentClient {
     method: M,
     params: RequestParamsInput<M>,
   ): Promise<RequestResult<M>>;
+  /** Called once when the connection ends for any reason (including `close()`). */
+  onClose(listener: (error: AgentClientError) => void): void;
   close(): void;
 }
 
@@ -51,20 +64,40 @@ interface Pending {
   readonly timer: NodeJS.Timeout;
 }
 
+function openSocket(port: number, timeoutMs: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: AGENT_LOOPBACK_HOST, port });
+    const fail = (message: string) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new AgentClientError('connect_failed', message));
+    };
+    const timer = setTimeout(
+      () => fail(`Connecting to ${AGENT_LOOPBACK_HOST}:${port} timed out.`),
+      timeoutMs,
+    );
+    socket.once('error', (error: NodeJS.ErrnoException) =>
+      fail(`Cannot connect to ${AGENT_LOOPBACK_HOST}:${port} (${error.code ?? error.message}).`),
+    );
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.removeAllListeners('error');
+      resolve(socket);
+    });
+  });
+}
+
 /** Connects to the agent on 127.0.0.1 and completes the `system.hello` handshake. */
 export async function connectAgent(options: AgentClientOptions): Promise<AgentClient> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const socket = await new Promise<Socket>((resolve, reject) => {
-    const s = connect({ host: AGENT_LOOPBACK_HOST, port: options.port }, () => {
-      s.off('error', reject);
-      resolve(s);
-    });
-    s.once('error', reject);
-  });
+  const socket = await openSocket(options.port, timeoutMs);
 
   const decoder = new FrameDecoder();
   const pending = new Map<string, Pending>();
-  const failAll = (error: AgentProtocolError) => {
+  const closeListeners: ((error: AgentClientError) => void)[] = [];
+  let closeReason: AgentClientError | null = null;
+  const failAll = (error: AgentClientError) => {
+    closeReason ??= error;
     for (const p of pending.values()) {
       clearTimeout(p.timer);
       p.reject(error);
@@ -75,7 +108,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
   socket.on('data', (chunk: Buffer) => {
     for (const result of decoder.push(chunk)) {
       if (!result.ok) {
-        failAll(new AgentProtocolError(result.error.code, result.error.message));
+        failAll(new AgentClientError(result.error.code, result.error.message));
         socket.destroy();
         return;
       }
@@ -84,25 +117,27 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       const p = pending.get(envelope.id);
       if (!p) {
         if (envelope.kind === 'error') {
-          failAll(new AgentProtocolError(envelope.payload.code, envelope.payload.message));
+          failAll(new AgentClientError(envelope.payload.code, envelope.payload.message));
         }
         continue;
       }
       pending.delete(envelope.id);
       clearTimeout(p.timer);
       if (envelope.kind === 'error') {
-        p.reject(new AgentProtocolError(envelope.payload.code, envelope.payload.message));
+        p.reject(new AgentClientError(envelope.payload.code, envelope.payload.message));
         continue;
       }
       const checked = parseResult(p.method, envelope.payload);
       if (checked.ok) p.resolve(checked.value);
-      else p.reject(new AgentProtocolError(checked.error.code, checked.error.message));
+      else p.reject(new AgentClientError(checked.error.code, checked.error.message));
     }
   });
   socket.on('error', () => socket.destroy());
-  socket.on('close', () =>
-    failAll(new AgentProtocolError('connection_closed', 'The agent closed the connection.')),
-  );
+  socket.on('close', () => {
+    failAll(new AgentClientError('connection_closed', 'The agent closed the connection.'));
+    const reason = closeReason ?? new AgentClientError('connection_closed', 'Closed.');
+    for (const listener of closeListeners.splice(0)) listener(reason);
+  });
 
   const request = <M extends RequestMethodName>(
     method: M,
@@ -110,13 +145,13 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
   ): Promise<RequestResult<M>> =>
     new Promise((resolve, reject) => {
       if (socket.destroyed) {
-        reject(new AgentProtocolError('connection_closed', 'The connection is closed.'));
+        reject(new AgentClientError('connection_closed', 'The connection is closed.'));
         return;
       }
       const id = randomUUID();
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(new AgentProtocolError('timeout', `${method} timed out.`));
+        reject(new AgentClientError('timeout', `${method} timed out.`));
       }, timeoutMs);
       pending.set(id, {
         method,
@@ -134,7 +169,19 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       token: options.token,
       client: options.client ?? { kind: 'cli', version: '0.0.0' },
     });
-    return { ack, request, close: () => socket.destroy() };
+    return {
+      ack,
+      request,
+      onClose: (listener) => {
+        if (socket.destroyed)
+          listener(closeReason ?? new AgentClientError('connection_closed', 'Closed.'));
+        else closeListeners.push(listener);
+      },
+      close: () => {
+        closeReason ??= new AgentClientError('connection_closed', 'Closed by the client.');
+        socket.destroy();
+      },
+    };
   } catch (error) {
     socket.destroy();
     throw error;

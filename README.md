@@ -75,6 +75,7 @@ packages/
   adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
   agent-host/             @rka/agent-host     createAgentHost composition (in-process); HostPorts contract
   agent-protocol/         @rka/agent-protocol Agent ↔ shell protocol contract (Zod) + frame codec
+  agent-client/           @rka/agent-client   Node client for the agent service (state file, handshake, requests)
 ```
 
 ### Package boundaries
@@ -120,7 +121,16 @@ packages/
 - `apps/agent` (`@rka/agent → @rka/agent-protocol`) is the standalone agent service:
   plain Node, never Electron (ESLint). It listens on `127.0.0.1` only and writes a
   connection state file (`apps/agent/.agent-data/agent-state.json` in dev, gitignored).
-  It does not open SQLite or run agents yet; the desktop app does not use it yet.
+  It does not open SQLite or run agents yet.
+- `@rka/agent-client` (`→ @rka/agent-protocol`) is the Node client for that service:
+  reads and validates the state file (loopback host only, stale pid detection),
+  connects, authenticates and sends typed requests. It is shared by `apps/agent`
+  (`agent:ping`, tests) and Electron main, so neither app depends on the other. Never
+  `electron`; renderer and preload may not import it (ESLint).
+- Electron main connects to the service only when `AGENT_TRANSPORT=service` (default
+  `inprocess`): it handshakes and pings at startup, logs the result and refuses to
+  start if the agent is unreachable. All work, including SQLite, still runs in-process
+  through `createAgentHost`.
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under
@@ -440,6 +450,18 @@ precedence. See `.env.example`:
 
 No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
 startup with a message naming the variable.
+
+Development-only agent service switches (process environment or dev `.env`; not read
+from `settings.env`):
+
+| Variable           | Default     | Notes                                                                                                                                 |
+| ------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TRANSPORT`  | `inprocess` | `service`: handshake + ping the agent from `pnpm agent:dev` at startup; the app refuses to start (with a dialog) if it is unreachable |
+| `AGENT_STATE_FILE` | (dev path)  | State file to read in service mode; default `apps/agent/.agent-data/agent-state.json` (packaged: `%APPDATA%\…\agent-state.json`)      |
+
+Try it: run `pnpm agent:dev` in one terminal, then in another
+`$env:AGENT_TRANSPORT='service'; pnpm dev` (PowerShell). The terminal logs
+`Agent service: connected to 127.0.0.1:… handshake + ping … ms.`
 
 ## Troubleshooting
 

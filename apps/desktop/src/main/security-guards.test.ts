@@ -17,6 +17,7 @@ const roots = [
   'apps/agent/src',
   'apps/desktop/src',
   'packages/adk-runtime/src',
+  'packages/agent-client/src',
   'packages/agent-host/src',
   'packages/agent-protocol/src',
   'packages/agent-runtime/src',

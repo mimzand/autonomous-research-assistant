@@ -7,7 +7,7 @@ import {
 } from '@rka/agent-protocol';
 import { connect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { connectAgent } from './client.js';
+import { connectAgent } from '@rka/agent-client';
 import { startAgentServer, type AgentServer } from './server.js';
 import { generateToken } from './token.js';
 

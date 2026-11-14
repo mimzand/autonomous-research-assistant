@@ -202,6 +202,9 @@ importers:
 
   apps/agent:
     dependencies:
+      '@rka/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
       '@rka/agent-protocol':
         specifier: workspace:*
         version: link:../../packages/agent-protocol
@@ -222,9 +225,15 @@ importers:
       '@rka/adk-runtime':
         specifier: workspace:*
         version: link:../../packages/adk-runtime
+      '@rka/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
       '@rka/agent-host':
         specifier: workspace:*
         version: link:../../packages/agent-host
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
       '@rka/agent-runtime':
         specifier: workspace:*
         version: link:../../packages/agent-runtime
@@ -289,6 +298,12 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  packages/agent-client:
+    dependencies:
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../agent-protocol
 
   packages/agent-host:
     dependencies:

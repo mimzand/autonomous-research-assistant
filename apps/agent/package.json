@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@rka/agent-client": "workspace:*",
     "@rka/agent-protocol": "workspace:*",
     "zod": "4.6.7"
   },

@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CliUsageError, DEFAULT_DATA_DIR, parseCliArgs } from './cli.js';
-import { connectAgent } from './client.js';
+import { connectAgent, readStateFile } from '@rka/agent-client';
 import { runAgent, type RunningAgent } from './run.js';
-import { readStateFile, writeStateFile } from './state-file.js';
+import { writeStateFile } from './state-file.js';
 import { generateToken } from './token.js';
 
 const dirs: string[] = [];
