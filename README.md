@@ -3,9 +3,10 @@
 Windows desktop research assistant that runs entirely on a **local LLM through Ollama**.
 No cloud model providers are used — prompts and documents never leave the machine.
 
-> Status: project skeleton. The desktop shell, package boundaries and a live Ollama
-> health check are in place. Agent functionality (planning, tool calling, research)
-> is not implemented yet.
+> Status: **complete** (educational project). Chat (Legacy and Google ADK engines) with
+> opt-in web search, autonomous Research with cited reports, Knowledge Base, Reports and
+> Settings. **Start here: [User guide](docs/user-guide.md)** (install, configure Ollama and
+> SearXNG, use the app, known limitations).
 
 ## Requirements
 
