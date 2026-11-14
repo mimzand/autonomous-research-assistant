@@ -158,14 +158,29 @@ describe('ADK integration guards', () => {
     expect(wiring).toEqual([]);
   });
 
-  it('production Chat (phase 6) builds its agent with no tools of any kind', () => {
+  it('production Chat: the plain path has no tools; web search only through the ToolGateway (Phase 8)', () => {
     const chat = files.filter((file) => rel(file).startsWith('packages/adk-runtime/src/chat/'));
-    expect(chat.map(rel)).toEqual(['packages/adk-runtime/src/chat/adk-chat.ts']);
-    for (const file of chat) {
-      expect(code(file)).not.toMatch(
-        /\btools\s*:|RegistryTool|createRegistryTools|registryTools|allowedTools|allowToolCalls|BaseTool/,
-      );
-    }
+    expect(chat.map(rel).sort()).toEqual([
+      'packages/adk-runtime/src/chat/adk-chat-tools.ts',
+      'packages/adk-runtime/src/chat/adk-chat.ts',
+    ]);
+    // The plain Chat path (phase 6) still builds its agent with no tools of any kind.
+    expect(code(join(repo, 'packages/adk-runtime/src/chat/adk-chat.ts'))).not.toMatch(
+      /\btools\s*:|RegistryTool|createRegistryTools|registryTools|allowedTools|allowToolCalls|BaseTool/,
+    );
+    // The web-search path: only RegistryTool in gateway mode, round budget enforced, hard
+    // LLM-call cap, no test-only tools, no own tool classes, no provider flag.
+    const tools = code(join(repo, 'packages/adk-runtime/src/chat/adk-chat-tools.ts'));
+    expect(tools).not.toMatch(/allowedTools|allowToolCalls|BaseTool|FunctionTool|new\s+\w*Tool\(/);
+    expect(tools).toMatch(
+      /createRegistryTools\(options\.registry, \{[\s\S]{0,400}gateway: \{ turn,/,
+    );
+    expect(tools).toMatch(/registryTools: tools/);
+    expect(tools).toMatch(
+      /if \(!turn\.beginRound\(\)\) \{[\s\S]{0,200}delete request\.config\.tools;/,
+    );
+    expect(tools).toMatch(/maxLlmCalls: gateway\.limits\.maxRounds \+ 1/);
+    expect(tools).toMatch(/abortSignal: turn\.signal/);
     // The desktop main process wires Chat only through the engine selector.
     const desktop = files.filter((file) => rel(file).startsWith('apps/desktop/src/'));
     for (const file of desktop) {
@@ -199,6 +214,8 @@ describe('ADK integration guards', () => {
       'packages/adk-runtime/src/tools/outcomes.ts', // the authoritative result
       'packages/adk-runtime/src/sessions/history.ts', // incomplete-invocation detection
       'packages/adk-runtime/src/chat/adk-chat.ts', // only to reject a tool call in Chat
+      // Only to tell tool rounds from the answer; tool outcomes come from the ToolGateway.
+      'packages/adk-runtime/src/chat/adk-chat-tools.ts',
       'packages/adk-runtime/src/research/adk-research-model.ts', // only to reject a tool call
     ];
     const readers = files

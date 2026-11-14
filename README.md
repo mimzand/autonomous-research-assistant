@@ -123,10 +123,13 @@ await generateObject(ollama, { messages }, zodSchema); // JSON-schema constraine
   IPC; a test enforces that renderer code has no network calls and CSP is `connect-src 'self'`.
 
 - Tool calling (`tools` in a request; native Ollama `/api/chat` format) is supported by the
-  provider but **off by default**: a provider must be created with `allowToolCalls: true`,
-  and the app never does, so Chat and Research cannot let the model call tools. Tool calls
-  are only returned after the whole response has arrived and been parsed; the provider never
-  executes a tool. `checkToolSupport()` reports what the model advertises in `/api/show`.
+  provider but **off by default**: the shared provider refuses tool-calling requests. The
+  only exception is the opt-in **Web search in Chat** setting (off by default, Legacy and ADK
+  Chat): it uses a dedicated snapshot from `withToolCalling()`, and every tool call goes
+  through the app's ToolGateway (ADK via RegistryTool in gateway mode) (only `web_search`, fixed limits). Research never lets the
+  model call tools. Tool calls are only returned after the whole response has arrived and
+  been parsed; the provider never executes a tool. `checkToolSupport()` reports what the
+  model advertises in `/api/show`.
 
 Tests: unit tests (mocked fetch), integration tests (real HTTP against a local fake
 Ollama server: streaming, cancellation, timeouts, connection refused), and live tests

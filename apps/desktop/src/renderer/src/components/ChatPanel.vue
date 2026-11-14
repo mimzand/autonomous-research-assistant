@@ -3,6 +3,7 @@ import { ollamaConnectionLabel } from '@rka/shared';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { isSubmitKey } from '../chat/keyboard';
 import { createChatSession } from '../chat/session';
+import { toolStepLabel, toolStepStatusText } from '../chat/tool-steps';
 import { useModelHealth } from '../composables/useModelHealth';
 
 const { health, refresh: refreshHealth } = useModelHealth();
@@ -127,6 +128,29 @@ onBeforeUnmount(() => chat.dispose());
         :data-status="message.status"
         data-testid="chat-message"
       >
+        <!-- Web searches the model made for this reply (Legacy Chat with web search). -->
+        <ul v-if="message.tools.length" class="tools" data-testid="chat-tools">
+          <li
+            v-for="step in message.tools"
+            :key="step.callId"
+            class="tool"
+            :data-status="step.status"
+            data-testid="chat-tool"
+          >
+            <span class="tool-label">{{ toolStepLabel(step) }}</span>
+            <span v-if="step.query" class="tool-query">“{{ step.query }}”</span>
+            <span class="tool-status" data-testid="chat-tool-status">{{
+              toolStepStatusText(step)
+            }}</span>
+          </li>
+          <li
+            v-if="message.tools.some((t) => t.status === 'completed')"
+            class="tool-note muted"
+            data-testid="chat-tool-note"
+          >
+            Search results are unverified web content; check important facts at the source.
+          </li>
+        </ul>
         <div class="bubble">
           <span class="sr-only">{{ message.role === 'user' ? 'You:' : 'Assistant:' }}</span>
           <!-- Plain text only (no HTML rendering of model output). -->
@@ -242,6 +266,39 @@ h2 {
   flex-direction: column;
   max-width: 85%;
   gap: 4px;
+}
+.tools {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+  border-left: 3px solid var(--border, #ccc);
+}
+.tool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.tool-label {
+  font-weight: 600;
+}
+.tool-query {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.tool-status {
+  color: var(--muted);
+}
+.tool[data-status='failed'] .tool-status,
+.tool[data-status='skipped'] .tool-status {
+  color: var(--danger, var(--muted));
+}
+.tool-note {
+  font-size: 0.8rem;
 }
 .message[data-role='user'] {
   align-self: flex-end;

@@ -51,7 +51,8 @@ async function collect(
       turns,
       signal ? { signal } : {},
     )) {
-      chunks.push(c);
+      // Without webSearch the engine yields provider chunks only.
+      chunks.push(c as GenerateChunk);
     }
     return { chunks };
   } catch (error) {

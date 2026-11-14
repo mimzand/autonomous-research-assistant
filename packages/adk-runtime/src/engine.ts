@@ -19,6 +19,13 @@ export {
   type AdkChatOptions,
 } from './chat/adk-chat.js';
 export {
+  type AdkChatChunk,
+  type AdkChatGateway,
+  type AdkChatWebSearch,
+  type AdkGatewayTurn,
+  type AdkUsageChunk,
+} from './chat/adk-chat-tools.js';
+export {
   AdkResearchError,
   AdkResearchModel,
   RESEARCH_AGENT_NAME,

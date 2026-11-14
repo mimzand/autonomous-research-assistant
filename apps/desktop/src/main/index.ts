@@ -8,7 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell 
 import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
-import { createAppChatEngines } from './chat-engine.js';
+import { createAppChatEngines, createChatWebSearch } from './chat-engine.js';
 import { researchTaskModelsFor } from './research-engine.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
@@ -233,6 +233,16 @@ function bootstrap(): void {
         runtime,
         provider: modelProvider,
         readFlag: () => config.getSettings()['engine.chat'],
+        // Settings → Agent Engines → Web search in Chat (default off). Legacy Chat only:
+        // every model-produced tool call goes through the ToolGateway (web_search only).
+        webSearch: createChatWebSearch({
+          registry: tools,
+          provider: modelProvider,
+          settingEnabled: () => config.getSettings()['chat.webSearch'],
+          searchConfigured: () => webServices.isSearchConfigured(),
+          // Diagnostics only: tool, status, reason, sizes and a short hash; never the query.
+          audit: (entry) => console.info(`Chat tool call: ${JSON.stringify(entry)}`),
+        }),
       }),
     }),
     dashboard,

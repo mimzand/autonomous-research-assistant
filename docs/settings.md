@@ -135,14 +135,26 @@ model's own default (shown under AI Models → Details).
 
 ### Agent Engines
 
-| Setting         | Key               | Default  | Env variable      | Allowed values    | Applies     |
-| --------------- | ----------------- | -------- | ----------------- | ----------------- | ----------- |
-| Chat engine     | `engine.chat`     | `legacy` | `AGENT_ENGINE`    | `legacy` or `adk` | immediately |
-| Research engine | `engine.research` | `legacy` | `RESEARCH_ENGINE` | `legacy` or `adk` | new tasks   |
+| Setting            | Key               | Default  | Env variable      | Allowed values    | Applies     |
+| ------------------ | ----------------- | -------- | ----------------- | ----------------- | ----------- |
+| Chat engine        | `engine.chat`     | `legacy` | `AGENT_ENGINE`    | `legacy` or `adk` | immediately |
+| Research engine    | `engine.research` | `legacy` | `RESEARCH_ENGINE` | `legacy` or `adk` | new tasks   |
+| Web search in Chat | `chat.webSearch`  | `false`  | —                 | on / off          | immediately |
 
 - **Legacy** is the existing runtime; **Google ADK** runs the same Ollama server, model
-  and settings through Google ADK. The model never calls tools on its own with either
-  engine, and ADK sessions are not persisted.
+  and settings through Google ADK. ADK sessions are not persisted. Research never lets the
+  model call tools (its searches and downloads are fixed steps run by the app).
+- **Web search in Chat** (`chat.webSearch`, **off by default**, no environment variable):
+  when on **and** a SearXNG URL is set, Chat (**Legacy and Google ADK**) may let the model
+  search the web while answering, through the same ToolGateway. Changing engines never
+  turns it on. Only the `web_search` tool is offered.
+  Limits, enforced by the app: 2 tool rounds, 3 searches, 1 identical search, 5 results
+  per search, 8 KB of result text per search, 24 KB per message, 60 s for the whole reply
+  (including the answer). **Search queries chosen by the model are sent to your SearXNG
+  service and possibly to the search engines it uses**; with a remote Ollama, the results
+  are sent to that server as part of the conversation. Each search is shown in Chat
+  (query, status, result count). Results are unverified web content. When off, Chat
+  requests are exactly as before.
 - **Precedence:** `AGENT_ENGINE` / `RESEARCH_ENGINE`, when set and valid, override the
   value saved here (see "Environment overrides" above); otherwise the saved value, else
   `legacy`. A value entered here must be exactly `legacy` or `adk`.

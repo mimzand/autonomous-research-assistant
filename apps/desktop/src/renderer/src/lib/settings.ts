@@ -230,3 +230,40 @@ export function effectiveConnection(view: SettingsView) {
     modelSource: sourceText(view, 'model.name'),
   };
 }
+
+/**
+ * Whether "Web search in Chat" is in effect (Phase 8.2), from the effective
+ * values: it needs the setting and a SearXNG URL (Legacy and ADK Chat).
+ */
+export function webSearchAvailability(values: SettingsView['values']): {
+  active: boolean;
+  tone: 'ok' | 'warn' | 'muted';
+  text: string;
+} {
+  if (!values['chat.webSearch']) {
+    return {
+      active: false,
+      tone: 'muted',
+      text: 'Off: Chat answers without searching the web, and the model cannot call tools.',
+    };
+  }
+  const url = values['searxng.url'];
+  if (!url) {
+    return {
+      active: false,
+      tone: 'warn',
+      text: 'On, but inactive: set the SearXNG URL in Research & Web Search.',
+    };
+  }
+  let origin = url;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    // Shown as entered.
+  }
+  return {
+    active: true,
+    tone: 'ok',
+    text: `Active for Chat (Legacy and Google ADK). Search queries are sent to ${origin} and possibly to the search engines it uses.`,
+  };
+}

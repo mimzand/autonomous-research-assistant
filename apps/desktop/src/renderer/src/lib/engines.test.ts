@@ -6,8 +6,12 @@ const view = (chat: string, research: string) =>
   ({ values: { 'engine.chat': chat, 'engine.research': research } }) as unknown as SettingsView;
 
 describe('Settings → Agent Engines', () => {
-  it('shows the two engine selectors in their own category', () => {
-    expect(definitionsFor('engines').map((d) => d.key)).toEqual(['engine.chat', 'engine.research']);
+  it('shows the two engine selectors and the web-search switch in their own category', () => {
+    expect(definitionsFor('engines').map((d) => d.key)).toEqual([
+      'engine.chat',
+      'engine.research',
+      'chat.webSearch',
+    ]);
   });
 
   it('lists Legacy and Google ADK with explanations and marks the active choice per engine', () => {

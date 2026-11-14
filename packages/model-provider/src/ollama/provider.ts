@@ -165,6 +165,16 @@ export class OllamaProvider implements ModelProvider {
     return new OllamaProvider(config, this.options);
   }
 
+  /**
+   * An independent provider fixed to the current configuration that accepts
+   * tool-calling requests (Phase 8.2). Only the Legacy Chat web-search path
+   * may use it; this provider and its other snapshots keep tool calling off.
+   * Same server, model, credentials, transport options and timeouts.
+   */
+  withToolCalling(): OllamaProvider {
+    return new OllamaProvider(this.config, { ...this.options, allowToolCalls: true });
+  }
+
   // ---------------------------------------------------------------------------
   // Health & models
   // ---------------------------------------------------------------------------

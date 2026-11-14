@@ -12,7 +12,11 @@ import {
 } from './chat-engine.js';
 import { isAllowedSetting } from './security.js';
 
-const engine = (name: ChatEngine['name'], text = name): ChatEngine & { calls: number } => {
+// The fake yields provider chunks only, so it can also stand in for AgentRuntime.streamChat.
+const engine = (
+  name: ChatEngine['name'],
+  text = name,
+): ChatEngine & { calls: number; streamChat(): AsyncGenerator<GenerateChunk> } => {
   const e = {
     name,
     calls: 0,

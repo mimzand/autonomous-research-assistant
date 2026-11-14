@@ -18,8 +18,13 @@ export {
 export {
   CHAT_MAX_MESSAGES,
   CHAT_MAX_MESSAGE_CHARS,
+  CHAT_TOOL_REASONS,
+  CHAT_TOOL_STATUSES,
   ChatErrorCodeSchema,
   ChatEventSchema,
+  ChatToolEventSchema,
+  ChatToolReasonSchema,
+  ChatToolStatusSchema,
   ChatStartRequestSchema,
   ChatStartResultSchema,
   ChatStopRequestSchema,
@@ -31,6 +36,9 @@ export {
   type ChatStartRequest,
   type ChatStartResult,
   type ChatStopRequest,
+  type ChatToolEvent,
+  type ChatToolReason,
+  type ChatToolStatus,
   type ChatTurn,
 } from './chat.js';
 export {

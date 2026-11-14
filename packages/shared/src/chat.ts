@@ -54,6 +54,48 @@ export type ChatStartResult = z.infer<typeof ChatStartResultSchema>;
 export const ChatStopRequestSchema = z.strictObject({ streamId: StreamIdSchema });
 export type ChatStopRequest = z.infer<typeof ChatStopRequestSchema>;
 
+/** Status of a model-initiated web search shown in the Chat timeline (Phase 8.2). */
+export const CHAT_TOOL_STATUSES = [
+  'running',
+  'completed',
+  'failed',
+  'skipped',
+  'cancelled',
+] as const;
+export const ChatToolStatusSchema = z.enum(CHAT_TOOL_STATUSES);
+export type ChatToolStatus = z.infer<typeof ChatToolStatusSchema>;
+
+/** Why a tool call produced no result. Fixed codes: never raw error text. */
+export const CHAT_TOOL_REASONS = [
+  'not-allowed',
+  'invalid-arguments',
+  'limit-reached',
+  'duplicate',
+  'context-limit',
+  'timeout',
+  'unavailable',
+  'invalid-result',
+  'failed',
+  'cancelled',
+] as const;
+export const ChatToolReasonSchema = z.enum(CHAT_TOOL_REASONS);
+export type ChatToolReason = z.infer<typeof ChatToolReasonSchema>;
+
+/** One web-search step of a reply. Several events per call (running, then the outcome). */
+export const ChatToolEventSchema = z.strictObject({
+  type: z.literal('tool'),
+  streamId: StreamIdSchema,
+  callId: z.string().min(1).max(256),
+  /** Tool name, e.g. "web_search" (sanitised; unknown names become "invalid_tool"). */
+  name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  /** The search query the model sent; null when its arguments were invalid. */
+  query: z.string().max(400).nullable(),
+  status: ChatToolStatusSchema,
+  reason: ChatToolReasonSchema.nullable(),
+  resultCount: z.int().min(0).max(10).nullable(),
+});
+export type ChatToolEvent = z.infer<typeof ChatToolEventSchema>;
+
 export const ChatEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), streamId: StreamIdSchema, content: z.string() }),
   z.object({
@@ -71,6 +113,7 @@ export const ChatEventSchema = z.discriminatedUnion('type', [
     message: z.string(),
   }),
   z.object({ type: z.literal('cancelled'), streamId: StreamIdSchema }),
+  ChatToolEventSchema,
 ]);
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 

@@ -87,14 +87,71 @@ describe('security guards', () => {
     ).toEqual([]);
   });
 
-  it('never lets the model call tools in the app (tool calling stays off)', () => {
-    // Model-driven tool use is not enabled in Chat or Research: no shipped code
-    // turns on the provider's tool calling, and the test harness that executes
-    // tools is never imported by shipped code.
-    expect(offenders(/\ballowToolCalls\s*:/)).toEqual([]);
+  it('keeps model tool calling off except for the one gated Legacy Chat web-search path', () => {
+    // Phase 8.2: the only provider that accepts tool calls is created by
+    // OllamaProvider.withToolCalling() (the only place that sets allowToolCalls),
+    // and only the Legacy Chat engine wiring asks for one. The shared provider,
+    // Research and ADK never get tool calling, and the test harness that
+    // executes tools is never imported by shipped code.
+    expect(
+      offenders(/\ballowToolCalls\s*:/, ['packages/model-provider/src/ollama/provider.ts']),
+    ).toEqual([]);
+    const provider = readFileSync(
+      join(repo, 'packages/model-provider/src/ollama/provider.ts'),
+      'utf8',
+    );
+    expect(provider.match(/\ballowToolCalls\s*:/g)).toHaveLength(1);
+    expect(provider).toMatch(
+      /withToolCalling\(\): OllamaProvider \{\s*return new OllamaProvider\(this\.config, \{ \.\.\.this\.options, allowToolCalls: true \}\);/,
+    );
+    expect(offenders(/\.withToolCalling\(\)/, ['apps/desktop/src/main/chat-engine.ts'])).toEqual(
+      [],
+    );
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).not.toMatch(/allowToolCalls|withToolCalling/);
     expect(offenders(/testing\/tool-harness/)).toEqual([]);
     const entry = readFileSync(join(repo, 'packages/model-provider/src/index.ts'), 'utf8');
     expect(entry).not.toMatch(/from '\.\/testing\//);
+  });
+
+  it('routes every model-driven tool call through the ToolGateway (Phase 8.2)', () => {
+    // The tool loop is used only by the Legacy Chat engine; it never executes a
+    // tool itself, it only asks the gateway.
+    expect(
+      offenders(/\bstreamChatWithTools\b/, [
+        'packages/agent-runtime/src/chat/tool-chat.ts',
+        'packages/agent-runtime/src/index.ts',
+        'apps/desktop/src/main/chat-engine.ts',
+      ]),
+    ).toEqual([]);
+    const loop = readFileSync(join(repo, 'packages/agent-runtime/src/chat/tool-chat.ts'), 'utf8');
+    expect(loop).not.toMatch(/\.execute\(|ToolRegistry|registry/);
+    // Registry execution only from: the gateway (model-driven), the code-controlled
+    // Research workflow, the user-driven Research Tools page, and the (unused) ADK bridge.
+    expect(
+      offenders(/\b(?:tools|registry)\.execute\(/, [
+        'packages/agent-runtime/src/tools/gateway.ts',
+        'packages/agent-runtime/src/research/workflow.ts',
+        'apps/desktop/src/main/research-tools.ts',
+        'packages/adk-runtime/src/tools/registry-tool.ts',
+      ]),
+    ).toEqual([]);
+    // Research (Legacy and ADK) never uses the gateway or the tool loop.
+    const research = files.filter((f) =>
+      /packages\/(agent|adk)-runtime\/src\/research\//.test(rel(f)),
+    );
+    expect(research.length).toBeGreaterThan(0);
+    for (const file of research) {
+      expect(readFileSync(file, 'utf8'), rel(file)).not.toMatch(
+        /tools\/gateway|chat\/tool-chat|createToolGateway|streamChatWithTools|withToolCalling/,
+      );
+    }
+    // The gateway can offer web_search only, and never passes an approval or task id.
+    const gateway = readFileSync(join(repo, 'packages/agent-runtime/src/tools/gateway.ts'), 'utf8');
+    expect(gateway).toMatch(
+      /MODEL_EXPOSABLE_TOOLS: readonly string\[\] = Object\.freeze\(\['web_search'\]\)/,
+    );
+    expect(gateway).not.toMatch(/approvalId\s*:|taskId\s*:/);
   });
 
   it('never evaluates dynamic code', () => {

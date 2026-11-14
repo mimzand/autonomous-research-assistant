@@ -137,7 +137,24 @@ export class ChatController {
       for await (const chunk of engine.streamChat(turns, { signal: controller.signal })) {
         if (chunk.type === 'delta') {
           if (chunk.content) emit({ type: 'delta', streamId, content: chunk.content });
+        } else if (chunk.type === 'tool') {
+          // A web-search step (Legacy Chat with web search): shown in the timeline.
+          emit({
+            type: 'tool',
+            streamId,
+            callId: chunk.callId,
+            name: chunk.name,
+            query: chunk.query,
+            status: chunk.status,
+            reason: chunk.reason,
+            resultCount: chunk.resultCount,
+          });
+        } else if (chunk.type === 'usage') {
+          // A model round that ended in tool calls: its tokens count too.
+          this.reportUsage({ model: chunk.result.model, ...chunk.result.usage });
         } else {
+          // Never report a success after the user cancelled.
+          if (controller.signal.aborted) throw new Error('cancelled');
           this.reportUsage({ model: chunk.result.model, ...chunk.result.usage });
           emit({
             type: 'done',

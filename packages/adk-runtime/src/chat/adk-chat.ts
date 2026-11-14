@@ -35,9 +35,14 @@ import {
 import { createGuardedRunner } from '../guards.js';
 import { ADAPTER_ERROR_CODES, PROVIDER_ERROR_CODES } from '../ollama/errors.js';
 import { OllamaLlm } from '../ollama/ollama-llm.js';
+import {
+  streamChatWithWebSearch,
+  type AdkChatChunk,
+  type AdkChatWebSearch,
+} from './adk-chat-tools.js';
 
-const APP_NAME = 'rka-chat';
-const USER_ID = 'local';
+export const APP_NAME = 'rka-chat';
+export const USER_ID = 'local';
 /** The agent's name is also the author of earlier assistant turns. */
 export const CHAT_AGENT_NAME = 'chat';
 const HISTORY_INVOCATION_ID = 'chat-history';
@@ -45,6 +50,12 @@ const HISTORY_INVOCATION_ID = 'chat-history';
 export interface AdkChatOptions {
   /** The app's Ollama provider (tool calling disabled, as in production). */
   readonly provider: OllamaProvider;
+  /**
+   * Web search (Phase 8, opt-in `chat.webSearch`): when set, this request runs
+   * with the app's ToolGateway (see adk-chat-tools.ts). Without it, Chat is the
+   * plain, tool-free path below.
+   */
+  readonly webSearch?: AdkChatWebSearch;
 }
 
 export interface AdkChatEngine {
@@ -52,29 +63,28 @@ export interface AdkChatEngine {
   streamChat(
     turns: readonly ChatTurn[],
     options?: { readonly signal?: AbortSignal },
-  ): AsyncGenerator<GenerateChunk, void>;
+  ): AsyncGenerator<AdkChatChunk, void>;
 }
 
 /** A Chat failure with a message that is safe to show (no internal details). */
-class AdkChatError extends Error {
+export class AdkChatError extends Error {
   override readonly name = 'AdkChatError';
 }
 
-const cancelled = () => new ModelProviderError('cancelled', 'The request was cancelled.');
+export const cancelled = () => new ModelProviderError('cancelled', 'The request was cancelled.');
 
 export function createAdkChatEngine(options: AdkChatOptions): AdkChatEngine {
   return {
     name: 'adk',
-    streamChat: (turns, { signal } = {}) => streamChat(options.provider, turns, signal),
+    streamChat: (turns, { signal } = {}) =>
+      options.webSearch
+        ? streamChatWithWebSearch(turns, signal, options.webSearch)
+        : streamChat(options.provider, turns, signal),
   };
 }
 
-async function* streamChat(
-  provider: OllamaProvider,
-  turns: readonly ChatTurn[],
-  signal: AbortSignal | undefined,
-): AsyncGenerator<GenerateChunk, void> {
-  if (signal?.aborted) throw cancelled();
+/** Checks the turns: the last one must be a non-empty user message; no empty history turns. */
+export function splitTurns(turns: readonly ChatTurn[]): { last: ChatTurn; earlier: ChatTurn[] } {
   const last = turns.at(-1);
   if (last?.role !== 'user' || !last.content.trim()) {
     throw new ModelProviderError(
@@ -91,18 +101,14 @@ async function* streamChat(
       'The ADK chat engine cannot send empty messages in the conversation history.',
     );
   }
+  return { last, earlier };
+}
 
-  const llm = new OllamaLlm({ provider }); // snapshot: settings are fixed for this request
-  const agent = new LlmAgent({
-    name: CHAT_AGENT_NAME,
-    model: llm,
-    // No transfer targets: ADK then adds no identity system prompt.
-    disallowTransferToParent: true,
-    disallowTransferToPeers: true,
-  });
-  const sessionService = new InMemorySessionService();
-  const runner = createGuardedRunner({ appName: APP_NAME, agent, sessionService });
-
+/** A fresh in-memory session holding the earlier turns as ordinary ADK events. */
+export async function openChatSession(
+  sessionService: InMemorySessionService,
+  earlier: readonly ChatTurn[],
+) {
   let session;
   try {
     session = await sessionService.createSession({ appName: APP_NAME, userId: USER_ID });
@@ -124,6 +130,30 @@ async function* streamChat(
       cause: error,
     });
   }
+
+  return session;
+}
+
+async function* streamChat(
+  provider: OllamaProvider,
+  turns: readonly ChatTurn[],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<GenerateChunk, void> {
+  if (signal?.aborted) throw cancelled();
+  const { last, earlier } = splitTurns(turns);
+
+  const llm = new OllamaLlm({ provider }); // snapshot: settings are fixed for this request
+  const agent = new LlmAgent({
+    name: CHAT_AGENT_NAME,
+    model: llm,
+    // No transfer targets: ADK then adds no identity system prompt.
+    disallowTransferToParent: true,
+    disallowTransferToPeers: true,
+  });
+  const sessionService = new InMemorySessionService();
+  const runner = createGuardedRunner({ appName: APP_NAME, agent, sessionService });
+
+  const session = await openChatSession(sessionService, earlier);
 
   let emitted = '';
   let final: Event | undefined;
@@ -181,14 +211,14 @@ async function* streamChat(
 }
 
 /** Visible answer text: text parts that are not the model's thoughts. */
-function visibleText(event: Event): string {
+export function visibleText(event: Event): string {
   return (event.content?.parts ?? [])
     .filter((p) => typeof p.text === 'string' && !p.thought)
     .map((p) => p.text ?? '')
     .join('');
 }
 
-function toResult(event: Event, model: string, content: string): GenerateResult {
+export function toResult(event: Event, model: string, content: string): GenerateResult {
   const meta = (event.customMetadata?.['ollama'] ?? {}) as {
     model?: unknown;
     totalDurationMs?: unknown;
@@ -225,13 +255,13 @@ const ADK_TO_PROVIDER: Readonly<Record<string, ModelErrorCode>> = {
 };
 
 /** ADK error event → the provider error the legacy path would have thrown. */
-function toProviderError(code: string, message: string | undefined): Error {
+export function toProviderError(code: string, message: string | undefined): Error {
   const mapped = ADK_TO_PROVIDER[code];
   if (mapped) return new ModelProviderError(mapped, message ?? 'The model request failed.');
   // An ADK-internal error: report the code, not its (possibly internal) message.
   return new AdkChatError(`The ADK chat engine failed (${code}).`);
 }
 
-function errorName(error: unknown): string {
+export function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }

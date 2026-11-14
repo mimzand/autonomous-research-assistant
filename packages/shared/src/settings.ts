@@ -124,6 +124,7 @@ export const SettingsValuesSchema = z.strictObject({
   // Agent engines
   'engine.chat': EngineChoiceSchema,
   'engine.research': EngineChoiceSchema,
+  'chat.webSearch': z.boolean(),
   // Advanced
   'ollama.streamIdleTimeoutMs': ms(1000, 3_600_000),
   'research.modelRetries': z.int().min(0).max(3),
@@ -544,6 +545,16 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
       { value: 'legacy', label: 'Legacy', description: 'Existing research pipeline.' },
       { value: 'adk', label: 'Google ADK', description: 'ADK-backed research pipeline.' },
     ],
+  },
+  {
+    key: 'chat.webSearch',
+    category: 'engines',
+    label: 'Web search in Chat',
+    description:
+      'Lets the model search the web while answering in Chat (Legacy and Google ADK Chat engines). Needs a SearXNG URL (Research & Web Search). Search queries chosen by the model are sent to your SearXNG service and possibly to the search engines it uses. At most 3 searches and 60 s per message. Results are unverified web content.',
+    kind: 'boolean',
+    applies: 'immediately',
+    builtin: false,
   },
   // --- Advanced --------------------------------------------------------------
   {

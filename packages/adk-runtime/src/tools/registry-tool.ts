@@ -53,7 +53,89 @@ export interface ApprovalResolver {
   >;
 }
 
+/*
+ * Gateway mode (Phase 8, ADK Chat web search): the app's ToolGateway turn
+ * decides and executes every call (allowlist, capability, strict arguments,
+ * budgets, cancellation, fenced results). The bridge then only adapts ADK's
+ * function call to the gateway and its outcome back; its own budget and
+ * approval checks are not used, so there is one permission system.
+ * Typed structurally: adk-runtime does not depend on agent-runtime.
+ */
+
+/** Why a gateway call produced no result (agent-runtime ToolOutcomeReason). */
+export type GatewayReason =
+  | 'not-allowed'
+  | 'invalid-arguments'
+  | 'limit-reached'
+  | 'duplicate'
+  | 'context-limit'
+  | 'timeout'
+  | 'unavailable'
+  | 'invalid-result'
+  | 'failed'
+  | 'cancelled';
+
+/** Outcome of one gateway call (agent-runtime ToolCallOutcome). */
+export interface GatewayCallOutcome {
+  readonly callId: string;
+  readonly tool: string;
+  readonly query: string | null;
+  readonly status: 'completed' | 'failed' | 'skipped' | 'cancelled';
+  readonly reason: GatewayReason | null;
+  readonly resultCount: number | null;
+  /** Model-facing text: fenced untrusted results or an app-generated error (JSON). */
+  readonly content: string;
+}
+
+/** One ToolGateway turn (agent-runtime GatewayTurn), as the bridge uses it. */
+export interface GatewayTurnLike {
+  prepare(call: { readonly id: string; readonly name: string; readonly arguments: unknown }):
+    | { readonly kind: 'refused'; readonly outcome: GatewayCallOutcome }
+    | {
+        readonly kind: 'ready';
+        readonly callId: string;
+        readonly tool: string;
+        readonly query: string | null;
+        run(): Promise<GatewayCallOutcome>;
+      };
+}
+
+/** A tool step for the Chat timeline (same shape as Legacy Chat's). */
+export interface GatewayActivity {
+  readonly type: 'tool';
+  readonly callId: string;
+  readonly name: string;
+  readonly query: string | null;
+  readonly status: 'running' | GatewayCallOutcome['status'];
+  readonly reason: GatewayReason | null;
+  readonly resultCount: number | null;
+}
+
+export interface RegistryToolGateway {
+  readonly turn: GatewayTurnLike;
+  /** Declarations from the gateway (its allowlist and caps). */
+  readonly declarations: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly parameters: Record<string, unknown>;
+  }[];
+  readonly onActivity?: (activity: GatewayActivity) => void;
+}
+
+const GATEWAY_STATUS: Readonly<Record<string, Exclude<RegistryToolStatus, 'ok'>>> = {
+  'not-allowed': 'unknown_tool',
+  'invalid-arguments': 'invalid_input',
+  'limit-reached': 'limit_exceeded',
+  'context-limit': 'limit_exceeded',
+  duplicate: 'duplicate_call',
+  timeout: 'timeout',
+  cancelled: 'cancelled',
+  'invalid-result': 'invalid_output',
+};
+
 export interface RegistryToolsOptions {
+  /** Gateway mode: every call is decided and executed by this ToolGateway turn. */
+  readonly gateway?: RegistryToolGateway;
   /** Names of the registered tools to expose. Required; nothing is exposed by default. */
   readonly allow: readonly string[];
   readonly limits: RegistryToolLimits;
@@ -221,6 +303,16 @@ export class RegistryTool extends BaseTool {
   }
 
   override _getDeclaration(): FunctionDeclaration {
+    const fromGateway = this.options.gateway?.declarations.find(
+      (d) => d.name === this.summary.name,
+    );
+    if (fromGateway) {
+      return {
+        name: fromGateway.name,
+        description: fromGateway.description,
+        parametersJsonSchema: fromGateway.parameters,
+      };
+    }
     // The registry's JSON Schema comes straight from the tool's Zod input schema.
     const { $schema: _ignored, ...parameters } = this.summary.inputJsonSchema;
     return {
@@ -231,6 +323,7 @@ export class RegistryTool extends BaseTool {
   }
 
   override async runAsync(request: ToolRunRequest): Promise<RegistryToolResult> {
+    if (this.options.gateway) return this.runThroughGateway(request, this.options.gateway);
     const progress: Progress = {
       started: false,
       approval: this.summary.requiresApproval ? 'required' : 'not_required',
@@ -348,6 +441,53 @@ export class RegistryTool extends BaseTool {
       );
     }
     return { status: 'ok', tool: name, trust: 'untrusted-data', data };
+  }
+
+  /** Gateway mode: the gateway decides, executes and fences; the bridge only adapts. */
+  private async runThroughGateway(
+    { args, toolContext }: ToolRunRequest,
+    gateway: RegistryToolGateway,
+  ): Promise<RegistryToolResult> {
+    const name = this.summary.name;
+    const callId = toolContext.functionCallId ?? `${toolContext.invocationId}:${name}`;
+    const report = (outcome: GatewayCallOutcome, status?: GatewayActivity['status']) =>
+      gateway.onActivity?.({
+        type: 'tool',
+        callId: outcome.callId,
+        name: outcome.tool,
+        query: outcome.query,
+        status: status ?? outcome.status,
+        reason: status === 'running' ? null : outcome.reason,
+        resultCount: status === 'running' ? null : outcome.resultCount,
+      });
+    const prepared = gateway.turn.prepare({ id: callId, name, arguments: args });
+    let outcome: GatewayCallOutcome;
+    if (prepared.kind === 'refused') {
+      outcome = prepared.outcome;
+    } else {
+      gateway.onActivity?.({
+        type: 'tool',
+        callId: prepared.callId,
+        name: prepared.tool,
+        query: prepared.query,
+        status: 'running',
+        reason: null,
+        resultCount: null,
+      });
+      outcome = await prepared.run();
+    }
+    report(outcome);
+    if (outcome.status === 'completed') {
+      return { status: 'ok', tool: name, trust: 'untrusted-data', data: outcome.content };
+    }
+    let message = 'The tool call was not run.';
+    try {
+      const parsed = JSON.parse(outcome.content) as { message?: unknown };
+      if (typeof parsed.message === 'string') message = parsed.message;
+    } catch {
+      // App-generated content is JSON; keep the generic message otherwise.
+    }
+    return fail(name, GATEWAY_STATUS[outcome.reason ?? ''] ?? 'failed', message);
   }
 
   private toFailure(error: ToolExecutionError): RegistryToolResult {

@@ -5,6 +5,7 @@ export {
   type ToolPermissions,
   type ToolSummary,
 } from './tool.js';
+export { capabilityOf, type ToolCapability } from './capabilities.js';
 export {
   createToolRegistry,
   type ToolExecutionError,
