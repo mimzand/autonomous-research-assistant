@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { type ChatEngine, legacyChatEngine } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { isModelProviderError } from '@rka/model-provider';
 import {
@@ -10,8 +9,12 @@ import {
   type ChatEvent,
   type ChatStartResult,
 } from '@rka/shared';
+import { type ChatEngine, legacyChatEngine } from './chat-engine.js';
 
-/** Where a stream's events go: one renderer (webContents). */
+/**
+ * Where a stream's events go: one renderer. The Electron adapter (a webContents
+ * wrapper) is created at the IPC boundary in apps/desktop/src/main/ipc.ts.
+ */
 export interface ChatEventSink {
   readonly id: number;
   isDestroyed(): boolean;
@@ -48,8 +51,9 @@ interface ActiveStream {
 }
 
 /**
- * Runs chat generations for the renderer. Lives in the main process: the
- * renderer only sends validated requests and receives validated events.
+ * Runs chat generations for the renderer. Runs in the Electron main process
+ * (in-process host): the renderer only sends validated requests and receives
+ * validated events.
  * One generation at a time (single local model, single GPU).
  */
 export class ChatController {

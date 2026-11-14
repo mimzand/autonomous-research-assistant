@@ -33,12 +33,13 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { chatUsageRecorder } from './app-storage.js';
-import { ChatController, type ChatEventSink } from './chat.js';
 import {
+  ChatController,
   createAppChatEngines,
   createChatWebSearch,
   researchTaskModelsFor,
   type AgentEngine,
+  type ChatEventSink,
 } from '@rka/agent-host';
 
 const TUNNEL = 'example-tunnel.ngrok-free.dev';

@@ -6,6 +6,13 @@ export type {
   HostUiPort,
 } from './ports.js';
 export {
+  ChatController,
+  toChatError,
+  type ChatControllerDeps,
+  type ChatEventSink,
+  type ChatUsage,
+} from './chat-controller.js';
+export {
   adkChatEngine,
   AGENT_ENGINE_ENV,
   AgentEngineSchema,

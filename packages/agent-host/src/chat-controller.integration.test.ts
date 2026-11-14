@@ -1,6 +1,6 @@
 /**
  * Integration: ChatController → AgentRuntime → real OllamaProvider → HTTP,
- * against a local fake Ollama server. Same wiring as main/index.ts.
+ * against a local fake Ollama server. Same wiring as apps/desktop/src/main/index.ts.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
@@ -10,7 +10,7 @@ import { type ChatEvent } from '@rka/shared';
 import { openStorage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ChatController, type ChatEventSink } from './chat.js';
+import { ChatController, type ChatEventSink } from './chat-controller.js';
 
 type Handler = (req: IncomingMessage, res: ServerResponse, body: string) => void;
 

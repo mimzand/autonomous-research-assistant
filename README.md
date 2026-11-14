@@ -157,7 +157,7 @@ adds a new line). The model status panel sits beside it.
 
 ```text
 ChatPanel.vue → chat/session.ts → window.api.chat (preload)
-  → IPC chat:start / chat:stop (validated in main) → ChatController (main)
+  → IPC chat:start / chat:stop (validated in main) → ChatController (@rka/agent-host, in main)
   → runtime.streamChat() → OllamaProvider.generateStream()
   ← chat:event (delta | done | error | cancelled), validated in the preload
 ```

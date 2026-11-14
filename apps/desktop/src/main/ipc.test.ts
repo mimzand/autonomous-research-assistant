@@ -5,7 +5,7 @@ import { createSourceStore } from '@rka/agent-runtime';
 import { createToolRegistry, createWebServices, loadWebConfig } from '@rka/tools';
 import { IpcChannels, IpcEvents, type AppInfo, type ModelHealth } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatController } from './chat.js';
+import { ChatController } from '@rka/agent-host';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import { createSettingsService } from './config/settings-service.js';
 import { createDashboardService } from './dashboard.js';

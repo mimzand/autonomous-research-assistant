@@ -1,9 +1,9 @@
-import { type ChatEngine } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { ModelProviderError, type GenerateChunk } from '@rka/model-provider';
 import { type ChatEvent } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatController, toChatError, type ChatEventSink } from './chat.js';
+import { ChatController, toChatError, type ChatEventSink } from './chat-controller.js';
+import { type ChatEngine } from './chat-engine.js';
 
 const IDS = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
 

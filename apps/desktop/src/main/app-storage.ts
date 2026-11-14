@@ -1,6 +1,6 @@
 import { join } from 'node:path';
+import { type ChatUsage } from '@rka/agent-host';
 import { openStorage, type RecoveryReport, type SecretCipher, type Storage } from '@rka/storage';
-import { type ChatUsage } from './chat.js';
 
 /** `%APPDATA%/<app>/data/research.db` on Windows (Electron userData). */
 export function databasePath(userDataDir: string): string {
