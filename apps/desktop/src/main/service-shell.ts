@@ -33,7 +33,7 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
   client.onClose((error) => {
     if (!quitting) {
       log.warn(
-        `Agent service disconnected: ${error.message} Dashboard requests fail until the app restarts.`,
+        `Agent service disconnected: ${error.message} Dashboard and Chat requests fail until the app restarts.`,
       );
     }
   });
@@ -45,9 +45,10 @@ export async function startServiceShell(deps: ServiceShellDeps): Promise<void> {
     client,
     getAppInfo: deps.getAppInfo,
     isTrustedSender: deps.isTrustedSender,
+    log,
   });
   log.info(
-    'Agent service: the agent owns the database and serves the Dashboard. Chat, Settings, ' +
+    'Agent service: the agent owns the database and serves the Dashboard and Chat. Settings, ' +
       'Research Tools, research actions and backup are not available in this mode yet.',
   );
 }

@@ -279,6 +279,42 @@ describe('agent server over 127.0.0.1 TCP', () => {
     client.close();
   });
 
+  it('pushes only valid events to the connection and reports its disconnect', async () => {
+    const logs: string[] = [];
+    const disconnected: number[] = [];
+    const streamId = '3b241101-e2bb-4255-8caf-4136c566a962';
+    const server = await startAgentServer({
+      token,
+      agentVersion: '1',
+      log: (m) => logs.push(m),
+      onDisconnect: (id) => disconnected.push(id),
+      handlers: {
+        'chat.stop': (_params, connection) => {
+          connection.emit('chat.event', { type: 'eval', streamId } as never);
+          connection.emit('chat.event', { type: 'cancelled', streamId });
+          return null;
+        },
+      },
+    });
+    servers.push(server);
+
+    // An unauthenticated connection never reaches onDisconnect.
+    await exchange(server.port, [hello({ token: 'x'.repeat(43) })], 1);
+
+    const client = await connectAgent({ port: server.port, token });
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event.payload));
+    await expect(client.request('chat.stop', { streamId })).resolves.toBeNull();
+    expect(events).toEqual([{ type: 'cancelled', streamId }]);
+    expect(logs).toContain('Refusing to send an invalid chat.event event.');
+
+    client.close();
+    for (let i = 0; i < 50 && disconnected.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(disconnected).toHaveLength(1);
+  });
+
   it('disconnects clients on close', async () => {
     const server = await start();
     const client = await connectAgent({ port: server.port, token });

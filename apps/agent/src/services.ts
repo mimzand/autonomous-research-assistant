@@ -7,7 +7,7 @@ import {
 } from '@rka/model-provider';
 import { appDatabasePath, openStorage, type RecoveryReport } from '@rka/storage';
 import { createReconfigurableWebServices, loadWebConfig } from '@rka/tools';
-import { dashboardHandlers, type RequestHandlers } from './handlers.js';
+import { chatHandlers, dashboardHandlers, type RequestHandlers } from './handlers.js';
 
 export interface AgentServicesOptions {
   /** Same layout as Electron's userData: the database is `<dataDir>/data/research.db`. */
@@ -20,6 +20,10 @@ export interface AgentServices {
   readonly handlers: RequestHandlers;
   readonly databasePath: string;
   readonly recovery: RecoveryReport;
+  /** Stops the Chat stream a closed connection was receiving. */
+  onDisconnect(connectionId: number): void;
+  /** Resolves when no Chat reply is being generated. For tests and shutdown. */
+  whenChatIdle(): Promise<void>;
   /** Closes the database. Idempotent. */
   close(): void;
 }
@@ -37,7 +41,8 @@ const noShellPorts: AgentHostPorts = {
 
 /**
  * Opens the database (migrations, then recovery of tasks left running) and builds
- * the agent host on it. The agent is then the only SQLite writer.
+ * the agent host on it. The agent is then the only SQLite writer. Serves the
+ * Dashboard (Phase 3) and Chat plus model health (Phase 4).
  *
  * Model, web and research settings come from the environment only (as defaults
  * in the desktop app). Saved Settings, the Ollama access token and live
@@ -69,11 +74,19 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
         chatWebSearch: () => false,
       },
       ports: noShellPorts,
+      // The agent owns the database, so Chat usage is recorded here (as Electron does in-process).
+      onChatUsage: (usage) =>
+        storage.modelUsage.record({ provider: 'ollama', purpose: 'chat', ...usage }),
     });
     return {
-      handlers: dashboardHandlers(host.dashboard),
+      handlers: {
+        ...dashboardHandlers(host.dashboard),
+        ...chatHandlers(host.chat, host.runtime),
+      },
       databasePath,
       recovery,
+      onDisconnect: (connectionId) => host.chat.stopForSink(connectionId),
+      whenChatIdle: () => host.chat.whenIdle(),
       close: () => storage.close(),
     };
   } catch (error) {

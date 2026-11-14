@@ -4,9 +4,11 @@ import {
   FrameDecoder,
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
+  parseEvent,
   parseResult,
   type ClientKind,
   type HelloAck,
+  type ParsedEvent,
   type ProtocolErrorCode,
   type RequestMethodName,
   type RequestParamsInput,
@@ -58,6 +60,11 @@ export interface AgentClient {
     params: RequestParamsInput<M>,
     options?: RequestOptions,
   ): Promise<RequestResult<M>>;
+  /**
+   * Subscribes to events the agent pushes (e.g. `chat.event`). Each event is
+   * validated with `parseEvent`; invalid ones are dropped. Returns an unsubscribe function.
+   */
+  onEvent(listener: (event: ParsedEvent) => void): () => void;
   /** Called once when the connection ends for any reason (including `close()`). */
   onClose(listener: (error: AgentClientError) => void): void;
   close(): void;
@@ -93,6 +100,15 @@ function openSocket(port: number, timeoutMs: number): Promise<Socket> {
   });
 }
 
+/** A failing listener must not break the connection or the other listeners. */
+function notify(listener: (event: ParsedEvent) => void, event: ParsedEvent): void {
+  try {
+    listener(event);
+  } catch (error) {
+    console.error('Agent event listener failed:', error);
+  }
+}
+
 /** Connects to the agent on 127.0.0.1 and completes the `system.hello` handshake. */
 export async function connectAgent(options: AgentClientOptions): Promise<AgentClient> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -101,6 +117,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
   const decoder = new FrameDecoder();
   const pending = new Map<string, Pending>();
   const closeListeners: ((error: AgentClientError) => void)[] = [];
+  const eventListeners = new Set<(event: ParsedEvent) => void>();
   let closeReason: AgentClientError | null = null;
   const failAll = (error: AgentClientError) => {
     closeReason ??= error;
@@ -119,6 +136,11 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
         return;
       }
       const envelope = result.value;
+      if (envelope.kind === 'event') {
+        const event = parseEvent(envelope, 'toShell');
+        if (event.ok) for (const listener of [...eventListeners]) notify(listener, event.value);
+        continue;
+      }
       if (envelope.kind !== 'res' && envelope.kind !== 'error') continue;
       const p = pending.get(envelope.id);
       if (!p) {
@@ -179,6 +201,10 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
     return {
       ack,
       request,
+      onEvent: (listener) => {
+        eventListeners.add(listener);
+        return () => void eventListeners.delete(listener);
+      },
       onClose: (listener) => {
         if (socket.destroyed)
           listener(closeReason ?? new AgentClientError('connection_closed', 'Closed.'));

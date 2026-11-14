@@ -37,12 +37,13 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
   const handlers = new Map<string, Listener>();
   const ipc: IpcMainLike = { handle: (channel, listener) => void handlers.set(channel, listener) };
   const quitListeners: (() => void)[] = [];
-  let closeListener: ((error: AgentClientError) => void) | undefined;
+  const closeListeners: ((error: AgentClientError) => void)[] = [];
   const client = {
     ack: { agent: { pid: 4321, version: '0.1.0' }, version: 1 } as never,
     request,
+    onEvent: () => () => undefined,
     onClose: (listener: (error: AgentClientError) => void) => {
-      closeListener = listener;
+      closeListeners.push(listener);
     },
     close: vi.fn(),
   };
@@ -64,7 +65,10 @@ async function setup(request = vi.fn<RequestFn>((method) => Promise.resolve({ fr
     if (!handler) throw new Error(`no handler for ${channel}`);
     return Promise.resolve(handler(event(), ...args));
   };
-  return { handlers, invoke, request, client, log, quitListeners, close: () => closeListener };
+  const close = (error: AgentClientError) => {
+    for (const listener of closeListeners) listener(error);
+  };
+  return { handlers, invoke, request, client, log, quitListeners, close };
 }
 
 describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
@@ -89,7 +93,24 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ['tasks.get', { id: 'task-1' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
       ['tasks.list', expect.any(Object), { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
     ]);
-    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(11);
+    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(12);
+  });
+
+  it('proxies model health and Chat to the agent', async () => {
+    const { invoke, request } = await setup(
+      vi.fn<RequestFn>((method) =>
+        Promise.resolve(
+          method === 'chat.start'
+            ? { status: 'rejected', code: 'busy', message: 'busy' }
+            : { from: method },
+        ),
+      ),
+    );
+    await expect(invoke(IpcChannels.modelGetHealth)).resolves.toEqual({ from: 'model.health' });
+    await expect(
+      invoke(IpcChannels.chatStart, { messages: [{ role: 'user', content: 'Hi' }] }),
+    ).resolves.toEqual({ status: 'rejected', code: 'busy', message: 'busy' });
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['model.health', 'chat.start']);
   });
 
   it('rejects invalid renderer payloads before they reach the agent', async () => {
@@ -104,9 +125,7 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
   it('fails clearly for features that still need the in-process agent', async () => {
     const { invoke, request } = await setup();
     for (const channel of [
-      IpcChannels.chatStart,
       IpcChannels.settingsGet,
-      IpcChannels.modelGetHealth,
       IpcChannels.tasksStartResearch,
       IpcChannels.storageBackup,
       IpcChannels.researchSearch,
@@ -142,19 +161,24 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
 
   it('closes the connection on quit and warns only on an unexpected disconnect', async () => {
     const { client, log, quitListeners, close } = await setup();
-    close()?.(new AgentClientError('connection_closed', 'The agent closed the connection.'));
+    close(new AgentClientError('connection_closed', 'The agent closed the connection.'));
     expect(log.warn).toHaveBeenCalledWith(
       expect.stringContaining('Agent service disconnected: The agent closed the connection.'),
     );
     log.warn.mockClear();
     for (const listener of quitListeners) listener();
     expect(client.close).toHaveBeenCalled();
-    close()?.(new AgentClientError('connection_closed', 'Closed by the client.'));
+    close(new AgentClientError('connection_closed', 'Closed by the client.'));
     expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('never imports the storage modules on the service path', () => {
-    for (const file of ['service-shell.ts', 'service-ipc.ts', 'agent-transport.ts']) {
+    for (const file of [
+      'service-shell.ts',
+      'service-ipc.ts',
+      'service-chat.ts',
+      'agent-transport.ts',
+    ]) {
       const source = readFileSync(new URL(file, import.meta.url), 'utf8');
       expect(source, file).not.toMatch(/from '(@rka\/storage|\.\/app-storage\.js)'/);
     }

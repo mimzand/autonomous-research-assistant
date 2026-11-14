@@ -82,8 +82,11 @@ describe('openAgentServices', () => {
     expect(logs).toContain('Marked 1 task(s) as interrupted after an unexpected shutdown.');
   });
 
-  it('serves only the Phase 3 dashboard methods', () => {
+  it('serves the dashboard (Phase 3), Chat and model health (Phase 4) only', () => {
     expect(Object.keys(open(dataDir()).handlers).sort()).toEqual([
+      'chat.start',
+      'chat.stop',
+      'model.health',
       'reports.get',
       'reports.list',
       'sources.get',

@@ -5,6 +5,7 @@ import {
   FrameDecoder,
   HANDSHAKE_TIMEOUT_MS,
   MAX_FRAME_BYTES,
+  parseEvent,
   parseHello,
   parseRequest,
   parseResult,
@@ -13,6 +14,7 @@ import {
   PROTOCOL_VERSION,
   UNATTRIBUTED_ERROR_METHOD,
   type Envelope,
+  type EventEnvelope,
   type HelloAck,
   type ParsedRequest,
   type ProtocolError,
@@ -20,7 +22,7 @@ import {
 } from '@rka/agent-protocol';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Socket } from 'node:net';
-import { type RequestHandlers } from './handlers.js';
+import { type AgentConnection, type RequestHandlers } from './handlers.js';
 import { tokensEqual } from './token.js';
 
 /** Frame limit before the handshake; a hello is a few hundred bytes. */
@@ -38,6 +40,8 @@ export interface AgentServerOptions {
   readonly handshakeTimeoutMs?: number;
   /** Methods served after the handshake besides `system.*`. */
   readonly handlers?: RequestHandlers;
+  /** Called once when an authenticated connection closes (e.g. to stop its Chat stream). */
+  readonly onDisconnect?: (connectionId: number) => void;
   /** Must never receive the token. */
   readonly log?: (message: string) => void;
 }
@@ -64,13 +68,16 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
     agent: { pid: process.pid, version: options.agentVersion, startedAt },
   });
 
+  let nextConnectionId = 1;
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     serveConnection(socket, {
+      id: nextConnectionId++,
       token: options.token,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
       handlers: options.handlers ?? {},
+      onDisconnect: options.onDisconnect ?? (() => undefined),
       ack,
       log,
     });
@@ -103,9 +110,11 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
 }
 
 interface ConnectionContext {
+  readonly id: number;
   readonly token: string;
   readonly handshakeTimeoutMs: number;
   readonly handlers: RequestHandlers;
+  readonly onDisconnect: (connectionId: number) => void;
   readonly ack: () => HelloAck;
   readonly log: (message: string) => void;
 }
@@ -117,6 +126,23 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
 
   const send = (envelope: Envelope) => {
     if (!socket.destroyed) socket.write(encodeFrame(envelope));
+  };
+
+  const connection: AgentConnection = {
+    id: ctx.id,
+    get closed() {
+      return socket.destroyed;
+    },
+    emit(method, payload) {
+      if (socket.destroyed) return;
+      const envelope: EventEnvelope = { id: randomUUID(), kind: 'event', method, payload };
+      const checked = parseEvent(envelope, 'toShell');
+      if (!checked.ok) {
+        ctx.log(`Refusing to send an invalid ${method} event.`);
+        return;
+      }
+      send({ ...envelope, payload: checked.value.payload });
+    },
   };
   const sendError = (id: string, method: string, error: ProtocolError) =>
     send({ id, kind: 'error', method, payload: error });
@@ -177,7 +203,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
           protocolError('bad_request', 'Already authenticated.'),
         );
       default: {
-        const handler = ctx.handlers[request.method] as ((params: unknown) => unknown) | undefined;
+        const handler = ctx.handlers[request.method] as Handler | undefined;
         if (!handler) {
           return sendError(
             request.id,
@@ -191,10 +217,10 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
   };
 
   /** Runs a handler; a failure is logged here and answered without its details. */
-  const serve = async (request: ParsedRequest, handler: (params: unknown) => unknown) => {
+  const serve = async (request: ParsedRequest, handler: Handler) => {
     let result: unknown;
     try {
-      result = await handler(request.params);
+      result = await handler(request.params, connection);
     } catch (error) {
       ctx.log(
         `${request.method} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -235,5 +261,17 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     }
   });
   socket.on('error', () => socket.destroy());
-  socket.on('close', () => clearTimeout(handshakeTimer));
+  socket.on('close', () => {
+    clearTimeout(handshakeTimer);
+    if (!authenticated) return;
+    try {
+      ctx.onDisconnect(ctx.id);
+    } catch (error) {
+      ctx.log(
+        `Disconnect handling failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  });
 }
+
+type Handler = (params: unknown, connection: AgentConnection) => unknown;

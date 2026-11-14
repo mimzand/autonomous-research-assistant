@@ -156,4 +156,37 @@ describe('connectAgent', () => {
       code: 'connection_closed',
     });
   });
+
+  it('delivers valid pushed events to subscribers and drops invalid ones', async () => {
+    const streamId = '3b241101-e2bb-4255-8caf-4136c566a962';
+    const server = await fake((envelope, socket) => {
+      if (envelope.method === 'system.ping') {
+        let n = 0;
+        const event = (method: string, payload: unknown) =>
+          socket.write(encodeFrame({ id: `e${++n}`, kind: 'event', method, payload }));
+        event('chat.event', { type: 'delta', streamId, content: 'Hel' });
+        event('chat.event', { type: 'eval', streamId }); // not a ChatEvent
+        event('tasks.mystery', {}); // not a registered event
+        event('chat.event', { type: 'cancelled', streamId });
+      }
+      return pingHandler(envelope, socket);
+    });
+    const client = await connectAgent({ port: server.port, token });
+    const seen: unknown[] = [];
+    const removed: unknown[] = [];
+    client.onEvent(() => {
+      throw new Error('a broken listener');
+    });
+    client.onEvent((event) => seen.push(event));
+    const unsubscribe = client.onEvent((event) => removed.push(event));
+    unsubscribe();
+
+    await expect(client.request('system.ping', {})).resolves.toBeTruthy();
+    expect(seen).toEqual([
+      { id: 'e1', method: 'chat.event', payload: { type: 'delta', streamId, content: 'Hel' } },
+      { id: 'e4', method: 'chat.event', payload: { type: 'cancelled', streamId } },
+    ]);
+    expect(removed).toEqual([]);
+    client.close();
+  });
 });

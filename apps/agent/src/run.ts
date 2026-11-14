@@ -8,6 +8,8 @@ import { generateToken } from './token.js';
 /** What the agent serves (e.g. the database-backed host); closed when the agent stops. */
 export interface AgentServiceSet {
   readonly handlers: RequestHandlers;
+  /** A client connection closed (e.g. stop the Chat stream it was receiving). */
+  onDisconnect?(connectionId: number): void;
   close(): void;
 }
 
@@ -50,7 +52,10 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
       token,
       port: options.port,
       agentVersion: options.agentVersion,
-      ...(services && { handlers: services.handlers }),
+      ...(services && {
+        handlers: services.handlers,
+        onDisconnect: (id: number) => services.onDisconnect?.(id),
+      }),
       log: options.log,
     });
   } catch (error) {

@@ -123,18 +123,23 @@ packages/
   (`apps/agent/.agent-data/agent-state.json` in dev, gitignored). It opens its own
   database (`<data-dir>/data/research.db`, the userData layout), runs recovery, builds
   `createAgentHost` on it and serves the Dashboard methods (task/source/report reads,
-  persistence check, storage status and integrity). Model and web settings come from
-  the environment only for now.
+  persistence check, storage status and integrity), Chat (`chat.start` / `chat.stop`,
+  with replies pushed as `chat.event` events) and `model.health`. Chat usage is
+  recorded in the agent's database. Model and web settings come from the environment
+  only for now (e.g. `OLLAMA_HOST`, `OLLAMA_MODEL`).
 - `@rka/agent-client` (`→ @rka/agent-protocol`) is the Node client for that service:
   reads and validates the state file (loopback host only, stale pid detection),
-  connects, authenticates and sends typed requests. It is shared by `apps/agent`
+  connects, authenticates, sends typed requests and delivers validated pushed events
+  (`onEvent`). It is shared by `apps/agent`
   (`agent:ping`, tests) and Electron main, so neither app depends on the other. Never
   `electron`; renderer and preload may not import it (ESLint).
 - Electron main uses the service only when `AGENT_TRANSPORT=service` (default
   `inprocess`). It then opens no database (`openAppStorage` refuses) and builds no
-  local agent host: the Dashboard channels are proxied to the agent over one
-  long-lived connection, and the other channels (Chat, Settings, Research Tools,
-  research actions, backup) report that they are not available in this mode yet. In
+  local agent host: the Dashboard, Chat and model-health channels are proxied to the
+  agent over one long-lived connection (Chat events go to the window that started
+  the reply; closing it stops the reply), and the other channels (Settings, Research
+  Tools, research actions, backup) report that they are not available in this mode
+  yet. In
   the default mode everything runs in-process through `createAgentHost`, as before.
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is

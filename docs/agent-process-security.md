@@ -5,13 +5,14 @@ app (or a CLI) talks to over a local protocol. Part of
 [agent-process-separation-plan.md](agent-process-separation-plan.md); the in-process app
 is covered by [security.md](security.md), whose controls all remain in force.
 
-**Status:** Phase 3 — the contract and frame codec live in `@rka/agent-protocol`; the
-standalone server (`apps/agent`) serves the handshake, `system.ping` and the Dashboard
-methods on loopback, and owns SQLite. `@rka/agent-client` (Node) is the shared client.
-With `AGENT_TRANSPORT=service` Electron main opens no database and proxies the
-Dashboard channels to the agent. Chat, research actions, settings and process spawn
-have not moved yet. The Status column names the phase that implements (or implemented)
-each rule.
+**Status:** Phase 4 — the contract and frame codec live in `@rka/agent-protocol`; the
+standalone server (`apps/agent`) serves the handshake, `system.ping`, the Dashboard
+methods, Chat (`chat.start` / `chat.stop`, `chat.event` pushed to the shell) and
+`model.health` on loopback, and owns SQLite. `@rka/agent-client` (Node) is the shared
+client. With `AGENT_TRANSPORT=service` Electron main opens no database and proxies the
+Dashboard, Chat and model-health channels to the agent. Research actions, settings and
+process spawn have not moved yet. The Status column names the phase that implements
+(or implemented) each rule.
 
 ## Process model
 
@@ -70,7 +71,7 @@ Renderer ──(window.api, Zod IPC)──▶ Electron main (shell) ──(loopb
 
 | Rule                                                                                                                                                                 | Status                                                                                                                                                                         |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| In service mode only the agent opens `better-sqlite3` (migrations, recovery, every read and write). Electron proxies dashboard/storage/task calls over the protocol. | Done (Phase 3): `services.ts`, `service-ipc.ts`; `services.test.ts`, `service-shell.test.ts`                                                                                   |
+| In service mode only the agent opens `better-sqlite3` (migrations, recovery, every read and write). Electron proxies dashboard/storage/task calls over the protocol. | Done (Phase 3): `services.ts`, `service-ipc.ts`; `services.test.ts`, `service-shell.test.ts`. Chat usage is written by the agent (Phase 4, `chat.test.ts`)                     |
 | Electron asserts it does not call `openAppStorage` / `openStorage` when `AGENT_TRANSPORT=service` (code assertion + test).                                           | Done (Phase 3): `openAppStorage` throws in service mode (`app-storage.test.ts`); the service path never calls `openStorage` (`service-shell.test.ts`, storage mocked to throw) |
 | No dual-write path ships: the in-process host is removed from the production bootstrap at cutover.                                                                   | Phase 8                                                                                                                                                                        |
 | The agent keeps SQLite journaling and the existing recovery on open, so an agent crash cannot leave a half-written database.                                         | Done (Phase 3): same `openStorage` (WAL) and `recoverInterruptedTasks` on open (`services.test.ts`)                                                                            |
@@ -136,6 +137,11 @@ added in Phase 8 and nowhere else:
 - Each method has a fixed direction: the agent never serves `shell.*`, the shell never
   serves agent methods; a method in the wrong direction is `unknown_method`.
 - Methods in the registry that a build does not serve yet answer `not_implemented`.
+- Events are validated on both sides: the agent refuses to send a `chat.event` that
+  fails `parseEvent` (logged, dropped), and `@rka/agent-client` drops any pushed event
+  that fails `parseEvent` before a listener sees it. Electron forwards only these
+  validated `ChatEvent`s to the window that started the stream, as in-process
+  (Phase 4: `server.test.ts`, `client.test.ts`, `service-chat.test.ts`).
 - Web content and model output inside payloads stay untrusted data, exactly as today;
   the protocol carries no instructions.
 
