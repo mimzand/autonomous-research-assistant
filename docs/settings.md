@@ -38,7 +38,7 @@ variable wins over the saved value:
   `OLLAMA_HOST` is not used while it is on, and it cannot be turned on while such an
   override is active.
 - Not overridable (security): the HTTPS requirement, the access token (Settings only,
-  encrypted), and `OLLAMA_NGROK_BYPASS_HOSTS` (a main-process trust list, never shown or
+  encrypted), and `OLLAMA_NGROK_BYPASS_HOSTS` (an app-level trust list read at startup, never shown or
   editable in Settings).
 
 The page shows the source of every value: **Default**, **From `VAR`** (environment) or

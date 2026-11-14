@@ -4,17 +4,24 @@ Full process separation: a **standalone Node agent service** owns the agent grap
 SQLite; the Electron app becomes a **UI shell** that talks to it over a local protocol.
 Agents can run **without** Electron.
 
-**Status:** planning only — implement phase-by-phase using the Claude prompts below.
+**Status:** **Phase 9 complete** — process separation is implemented and accepted
+(Phases 0–9; final audit in
+[agent-process-separation-phase9-report.md](agent-process-separation-phase9-report.md)).
+The agent service owns SQLite and the agent graph; Electron is the shell and, when
+packaged, supervises the agent as an Electron `utilityProcess` that speaks the same
+protocol (Phase 8). `pnpm agent:dev` runs the same service without Electron. The
+prompts below are kept as the historical record.
 **Prerequisite:** logical package separation is complete (`@rka/agent-host`,
 `docs/agent-host-separation-plan.md`, Phase 5).
 
 **Locked decisions**
 
-| Decision | Choice |
-| -------- | ------ |
-| Runtime model | **B — separate Node service** (`apps/agent`), runnable without Electron |
-| SQLite ownership | **A — agent process owns the DB** (single writer); Electron never opens SQLite |
-| Not chosen | Electron `utilityProcess` as the primary model (may still be a later packaging option that speaks the same protocol) |
+| Decision          | Choice                                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime model     | **B — separate Node service** (`apps/agent`), runnable without Electron                                                                                                                   |
+| SQLite ownership  | **A — agent process owns the DB** (single writer); Electron never opens SQLite                                                                                                            |
+| Not chosen        | Electron `utilityProcess` as the primary model (may still be a later packaging option that speaks the same protocol)                                                                      |
+| Outcome (Phase 8) | Packaged runtime of model B: the same agent service, started by Electron as a `utilityProcess` (no `ELECTRON_RUN_AS_NODE`, no shipped Node binary); the service stays runnable standalone |
 
 ---
 
@@ -82,13 +89,13 @@ protocol. Do not design two protocols.
 
 ## 4. Target packages / apps
 
-| Piece | Role |
-| ----- | ---- |
-| `packages/agent-protocol` (new) | Transport-agnostic Zod schemas: requests, responses, events, handshake, error codes. No Electron, no SQLite. |
-| `packages/agent-host` (existing) | Still the composition root inside the agent process. Evolve ports to support async reverse shell calls. |
-| `apps/agent` (new) | Node entry: load settings, open storage, create provider/web/host, serve protocol. Scripts: `agent:dev`, `agent:start`. |
-| `apps/desktop` | Shell: `AgentClient`, proxy existing Electron IPC → protocol, HostPorts reverse handlers, optional process supervisor. |
-| `@rka/shared` | Keep renderer↔Electron IPC stable. Prefer putting **agent↔shell** contracts in `agent-protocol`, reusing shared domain schemas. |
+| Piece                            | Role                                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/agent-protocol` (new)  | Transport-agnostic Zod schemas: requests, responses, events, handshake, error codes. No Electron, no SQLite.                    |
+| `packages/agent-host` (existing) | Still the composition root inside the agent process. Evolve ports to support async reverse shell calls.                         |
+| `apps/agent` (new)               | Node entry: load settings, open storage, create provider/web/host, serve protocol. Scripts: `agent:dev`, `agent:start`.         |
+| `apps/desktop`                   | Shell: `AgentClient`, proxy existing Electron IPC → protocol, HostPorts reverse handlers, optional process supervisor.          |
+| `@rka/shared`                    | Keep renderer↔Electron IPC stable. Prefer putting **agent↔shell** contracts in `agent-protocol`, reusing shared domain schemas. |
 
 ### Suggested dependency DAG
 
@@ -115,11 +122,11 @@ apps/agent          apps/desktop (AgentClient only; no createAgentHost in produc
 
 **Directions**
 
-| Direction | Examples |
-| --------- | -------- |
-| Shell → Agent | `chat.start`, `chat.stop`, `tasks.*`, `sources.*`, `reports.*`, `storage.*`, `researchTools.*`, `settings.apply`, `model.health`, `shutdown` |
+| Direction               | Examples                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell → Agent           | `chat.start`, `chat.stop`, `tasks.*`, `sources.*`, `reports.*`, `storage.*`, `researchTools.*`, `settings.apply`, `model.health`, `shutdown`                              |
 | Agent → Shell (reverse) | `ui.researchProgress`, `ui.settingsChanged` (if agent emits), `shell.chooseBackupPath`, `shell.chooseFile`, `shell.chooseFolder`, `shell.openExternal`, `shell.getSecret` |
-| Agent → Shell (push) | Chat stream events (`chat.event`), research progress |
+| Agent → Shell (push)    | Chat stream events (`chat.event`), research progress                                                                                                                      |
 
 **Reuse:** map almost 1:1 from existing `@rka/shared` IPC payloads (`ChatEvent`,
 `StartResearchRequest`, dashboard DTOs, settings view/patch). Do **not** invent parallel
@@ -132,36 +139,36 @@ domain shapes.
 
 ## 6. Ownership after cutover
 
-| Concern | Owner |
-| ------- | ----- |
-| SQLite file under userData | Agent |
-| Migrations / recovery on open | Agent |
-| Ollama HTTP + auth token use | Agent (token supplied by shell or loaded via reverse `getSecret`) |
-| SearXNG / web tool config | Agent (settings applied over protocol) |
-| `RuntimeConfig` persistence | Prefer agent-owned settings rows already in SQLite; Electron Settings UI becomes a protocol client |
-| `safeStorage` encrypt/decrypt | Electron only |
-| Native dialogs / `openExternal` | Electron (reverse RPC) |
-| Window / preload / renderer IPC | Electron |
-| Process lifecycle (packaged) | Electron supervises agent child; standalone mode has no supervisor |
+| Concern                         | Owner                                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| SQLite file under userData      | Agent                                                                                              |
+| Migrations / recovery on open   | Agent                                                                                              |
+| Ollama HTTP + auth token use    | Agent (token supplied by shell or loaded via reverse `getSecret`)                                  |
+| SearXNG / web tool config       | Agent (settings applied over protocol)                                                             |
+| `RuntimeConfig` persistence     | Prefer agent-owned settings rows already in SQLite; Electron Settings UI becomes a protocol client |
+| `safeStorage` encrypt/decrypt   | Electron only                                                                                      |
+| Native dialogs / `openExternal` | Electron (reverse RPC)                                                                             |
+| Window / preload / renderer IPC | Electron                                                                                           |
+| Process lifecycle (packaged)    | Electron supervises agent child; standalone mode has no supervisor                                 |
 
 ---
 
 ## 7. Phases overview
 
-| Phase | Name | Outcome |
-| ----- | ---- | ------- |
-| **0** | Protocol package + threat model | `@rka/agent-protocol` schemas; security note; no runtime cutover |
-| **1** | Agent app scaffold + loopback server | `apps/agent` boots, handshake works, health ping |
-| **2** | Electron AgentClient + dual-mode flag | Shell can talk to agent; still may run in-process behind a flag |
-| **3** | Storage cutover | Agent opens DB; dashboard/storage/tasks read/write via protocol |
-| **4** | Chat over protocol | Stream/stop/usage via protocol; in-process chat path optional behind flag |
-| **5** | Research + progress | Lifecycle + push events; reverse not yet required beyond UI emit |
-| **6** | Reverse shell ports | Dialogs / openExternal / secrets over reverse RPC; Research Tools complete |
-| **7** | Settings + provider in agent | Live settings apply on agent; Electron keeps safeStorage + UI |
-| **8** | Supervise + package + standalone | Spawn allow-list, `pnpm agent:dev`, packaged layout, cut in-process host from prod |
-| **9** | Acceptance | Thin Electron, single writer, security docs/guards, `pnpm check`, smoke |
+| Phase | Name                                  | Outcome                                                                            |
+| ----- | ------------------------------------- | ---------------------------------------------------------------------------------- |
+| **0** | Protocol package + threat model       | `@rka/agent-protocol` schemas; security note; no runtime cutover                   |
+| **1** | Agent app scaffold + loopback server  | `apps/agent` boots, handshake works, health ping                                   |
+| **2** | Electron AgentClient + dual-mode flag | Shell can talk to agent; still may run in-process behind a flag                    |
+| **3** | Storage cutover                       | Agent opens DB; dashboard/storage/tasks read/write via protocol                    |
+| **4** | Chat over protocol                    | Stream/stop/usage via protocol; in-process chat path optional behind flag          |
+| **5** | Research + progress                   | Lifecycle + push events; reverse not yet required beyond UI emit                   |
+| **6** | Reverse shell ports                   | Dialogs / openExternal / secrets over reverse RPC; Research Tools complete         |
+| **7** | Settings + provider in agent          | Live settings apply on agent; Electron keeps safeStorage + UI                      |
+| **8** | Supervise + package + standalone      | Spawn allow-list, `pnpm agent:dev`, packaged layout, cut in-process host from prod |
+| **9** | Acceptance                            | Thin Electron, single writer, security docs/guards, `pnpm check`, smoke            |
 
-**Rule:** do not start phase *N+1* until phase *N* report is reviewed.
+**Rule:** do not start phase _N+1_ until phase _N_ report is reviewed.
 
 **Feature flag:** until Phase 8 cutover, prefer `AGENT_TRANSPORT=inprocess|service`
 (or equivalent) so development can roll back. Production default becomes `service` at
@@ -177,27 +184,33 @@ Each phase writes `docs/agent-process-separation-phaseN-report.md`:
 # Agent Process Separation — Phase N Report
 
 ## Summary
+
 - Status: complete | blocked | partial
 - One-paragraph outcome
 
 ## Changes
+
 - Files added / moved / deleted
 - Protocol / public API changes
 
 ## Boundaries
+
 - Who opens SQLite?
 - Can renderer reach the agent port?
 - child_process / spawn allow-list status
 - electron imports in agent packages?
 
 ## Checks run
+
 - typecheck / lint / test / build (/ check)
 
 ## Behaviour
+
 - Intentional changes?
 - Flag defaults (`inprocess` vs `service`)?
 
 ## Risks / decisions
+
 - Deviations from this plan and why
 ```
 
@@ -641,9 +654,9 @@ After Phase 9: new agent behaviour goes in `apps/agent` / `@rka/agent-host`; Ele
 
 ## 12. Relation to prior plan
 
-| Plan | Result |
-| ---- | ------ |
-| `docs/agent-host-separation-plan.md` | Logical package split — **done** (in-process) |
-| `docs/agent-process-separation-plan.md` (this file) | Process + standalone service — **to do** |
+| Plan                                                | Result                                        |
+| --------------------------------------------------- | --------------------------------------------- |
+| `docs/agent-host-separation-plan.md`                | Logical package split — **done** (in-process) |
+| `docs/agent-process-separation-plan.md` (this file) | Process + standalone service — **to do**      |
 
 The host separation is a prerequisite, not a substitute.

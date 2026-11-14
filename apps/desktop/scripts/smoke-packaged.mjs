@@ -606,6 +606,18 @@ async function runtimeChecks() {
       );
     }
 
+    // Phase 9: the renderer cannot open a connection to the agent port. A plain fetch would
+    // fail anyway (the agent drops HTTP), so the proof is the CSP violation for that URL.
+    const agentBlocked = await s.evaluate(`new Promise((done) => {
+      document.addEventListener('securitypolicyviolation', (e) => done(e.blockedURI), { once: true });
+      fetch('http://127.0.0.1:${agent.port}/').catch(() => undefined);
+      setTimeout(() => done('no violation'), 3000);
+    })`);
+    check(
+      'renderer cannot connect to the agent port (CSP violation, nothing sent)',
+      String(agentBlocked).includes(`127.0.0.1:${agent.port}`),
+      String(agentBlocked),
+    );
     check(
       'renderer loaded from the package (file://), no dev server',
       s.url.startsWith('file://') && s.url.includes('app.asar'),

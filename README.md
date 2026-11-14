@@ -62,10 +62,10 @@ Run a single package's checks with a filter, e.g. `pnpm --filter @rka/tools test
 ```text
 apps/
   desktop/                Electron app (@rka/desktop)
-    src/main/             Main process: window, IPC handlers, Electron HostPorts, settings
+    src/main/             Main process (shell): window, IPC proxy to the agent, agent supervisor, dialogs, safeStorage
     src/preload/          Preload bridge: exposes window.api (sandboxed, CommonJS)
     src/renderer/         Vue 3 UI (browser code only)
-  agent/                  Standalone agent service (@rka/agent): loopback protocol server (handshake + ping so far)
+  agent/                  Agent service (@rka/agent): owns SQLite and createAgentHost; loopback protocol server
 packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
@@ -73,7 +73,7 @@ packages/
   storage/                @rka/storage        SQLite (better-sqlite3 + Drizzle): migrations, repositories, recovery
   agent-runtime/          @rka/agent-runtime  Legacy research workflow, ToolGateway, chat with tools
   adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
-  agent-host/             @rka/agent-host     createAgentHost composition (in-process); HostPorts contract
+  agent-host/             @rka/agent-host     createAgentHost composition (runs in the agent service); HostPorts contract, Runtime config
   agent-protocol/         @rka/agent-protocol Agent ↔ shell protocol contract (Zod) + frame codec
   agent-client/           @rka/agent-client   Node client for the agent service (state file, handshake, requests)
 ```
@@ -91,7 +91,9 @@ packages/
              └──────────────── @rka/agent-host ─────────────┘
                           createAgentHost(HostPorts)
                                   ▲
-                    apps/desktop  src/main   (Electron main process: thin adapter)
+                    apps/agent    (agent service: SQLite, Settings, engines; plain Node or utility process)
+                                  ▲  @rka/agent-protocol over 127.0.0.1 (token) via @rka/agent-client
+                    apps/desktop  src/main   (Electron main process: shell, supervises the agent)
                     apps/desktop  src/preload  → @rka/shared only
                     apps/desktop  src/renderer → @rka/shared only (types)
 ```
@@ -102,33 +104,39 @@ packages/
 - `model-provider`, `tools` and `storage` depend only on `@rka/shared`.
 - `@rka/agent-runtime` and `@rka/adk-runtime` never import each other or `@rka/agent-host`.
 - `@rka/agent-host` is the only package that may depend on both runtimes. It runs in the
-  Electron main process (no separate process) and receives OS capabilities (UI event
-  fan-out, native dialogs, `openExternal`, secrets) through its `HostPorts` interface.
+  agent service process (Phase 8) and receives OS capabilities (UI event fan-out, native
+  dialogs, `openExternal`, secrets) through its `HostPorts` interface, which the agent
+  implements with reverse calls to the Electron shell.
   `createAgentHost` is the agent composition root: tools, runtime, Chat/Research engine
   selection (Legacy | ADK, Research engine pinning), `ChatController`, Dashboard and
   Research Tools. New agent wiring belongs here, not in `src/main`
   (see [docs/agent-host-separation-plan.md](docs/agent-host-separation-plan.md)).
-- `src/main` is a thin Electron adapter: storage, settings, the live Ollama provider and
-  web services, the Electron `HostPorts` (`host-ports.ts`), IPC, window and session. It
-  does not import `@rka/adk-runtime`, except for the startup ADK self-check
-  (`adk-probe.ts`) and tests (enforced by ESLint).
+- `src/main` is the Electron shell: window and session, the renderer IPC (proxied to the
+  agent), the agent supervisor, and the OS capabilities the agent asks for (dialogs,
+  `openExternal`, `safeStorage`; `host-ports.ts`). In production it opens no database
+  and builds no agent host; storage, settings, the Ollama provider, web services and the
+  ADK self-check exist there only in the development `inprocess` mode
+  (`dev-inprocess.ts`, compiled out of production builds).
 - `@rka/agent-protocol` sits directly above `@rka/shared` (its only workspace
   dependency, no Node.js APIs): handshake, envelopes, error codes and the method
   registry, plus the byte frame codec, reusing the `@rka/shared` schemas. Used by
   `apps/agent`; renderer and preload may never import it. See
   [docs/agent-process-separation-plan.md](docs/agent-process-separation-plan.md) and
   [docs/agent-process-security.md](docs/agent-process-security.md).
-- `apps/agent` (`@rka/agent`) is the standalone agent service: plain Node, never
-  Electron (ESLint). It listens on `127.0.0.1` only and writes a connection state file
-  (`apps/agent/.agent-data/agent-state.json` in dev, gitignored). It opens its own
+- `apps/agent` (`@rka/agent`) is the agent service: never imports Electron (ESLint).
+  It runs under plain Node (`pnpm agent:dev`) or, in the app, as an Electron utility
+  process started from its bundle (`out/agent/main.js`). It listens on `127.0.0.1` only
+  and writes a connection state file (`apps/agent/.agent-data/agent-state.json` in
+  dev, gitignored; `<userData>/agent-state.json` in the app). It opens its own
   database (`<data-dir>/data/research.db`, the userData layout), runs recovery, builds
   `createAgentHost` on it and serves the Dashboard methods (task/source/report reads,
   persistence check, storage status and integrity), Chat (`chat.start` / `chat.stop`,
   with replies pushed as `chat.event` events), `model.health` and the research task
   lifecycle (`tasks.startResearch|pause|resume|cancel|retry`, with progress broadcast
-  to every connected shell as `ui.researchProgress`). Chat usage is recorded in the
-  agent's database. Model, web and research settings come from the environment only
-  for now (e.g. `OLLAMA_HOST`, `OLLAMA_MODEL`, `SEARXNG_URL`).
+  to every connected shell as `ui.researchProgress`), Research Tools, backup and
+  Settings (applied live; `ui.settingsChanged` to every shell). Chat usage is recorded
+  in the agent's database. Secrets stay safeStorage ciphertext; the shell decrypts on
+  the agent's request.
 - `@rka/agent-client` (`→ @rka/agent-protocol`) is the Node client for that service:
   reads and validates the state file (loopback host only, stale pid detection),
   connects, authenticates, sends typed requests and delivers validated pushed events
@@ -179,8 +187,9 @@ await generateObject(ollama, { messages }, zodSchema); // JSON-schema constraine
 - Cancellation: pass an `AbortSignal`, or stop iterating a stream; the HTTP request is
   aborted either way. Timeouts are reported separately from cancellation.
 - Thinking is off by default (`think: false`) so tool and JSON calls stay clean.
-- Only the Electron main process uses the provider. The renderer sees health data via
-  IPC; a test enforces that renderer code has no network calls and CSP is `connect-src 'self'`.
+- Only the agent service uses the provider. The renderer sees health data via IPC
+  (proxied by Electron main); a test enforces that renderer code has no network calls,
+  and the packaged CSP is `connect-src 'none'`.
 
 - Tool calling (`tools` in a request; native Ollama `/api/chat` format) is supported by the
   provider but **off by default**: the shared provider refuses tool-calling requests. The
@@ -313,7 +322,7 @@ Tools never receive the registry, so a tool cannot call another tool.
   - **Save as test source** stores the page in the _Research tools playground_ task, with
     duplicate detection. Nothing is saved otherwise.
 - **Local File Extraction**
-  - Choose a PDF or DOCX in a native dialog. The main process reads it into memory and
+  - Choose a PDF or DOCX in a native dialog. The agent service reads it into memory and
     extracts it; it is never saved, and the page only sees the file name and size.
   - The file must match its extension (a renamed executable is refused), and the
     `WEB_MAX_DOWNLOAD_BYTES` limit applies.
@@ -415,7 +424,7 @@ Manual test with a real model: [docs/manual-testing-research-agent.md](docs/manu
   Zod. The preload validates it again before handing it to the renderer.
 - Strict Content-Security-Policy; navigation away from the app and new windows are
   blocked; browser permission requests are denied; `<webview>` is disabled.
-- Only the main process talks to Ollama. The renderer never makes network requests.
+- Only the agent service talks to Ollama. The renderer never makes network requests.
 - Packaged builds: production CSP with `default-src 'none'` and `connect-src 'none'`,
   no DevTools, no menu, and Electron fuses that disable `ELECTRON_RUN_AS_NODE`,
   `NODE_OPTIONS` and `--inspect` and require an intact `app.asar`.
