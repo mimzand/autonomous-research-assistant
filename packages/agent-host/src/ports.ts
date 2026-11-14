@@ -54,5 +54,10 @@ export interface HostSecretsPort {
  * Everything the agent host needs from its embedding shell. Electron main builds
  * one implementation and passes it to the host; tests pass fakes. The host itself
  * never imports `electron`, and runs in the same process as its shell.
+ *
+ * `createAgentHost` consumes only `AgentHostPorts` (research progress, backup and
+ * file dialogs, `openExternal`). `emitSettingsChanged` and `chooseFolder` are used by
+ * the shell's own Settings service, which stays outside the host. `HostSecretsPort`
+ * has no consumer yet: the shell wires the Ollama access token into the provider.
  */
 export interface HostPorts extends HostUiPort, HostDialogPort, HostShellPort, HostSecretsPort {}

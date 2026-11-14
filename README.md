@@ -84,8 +84,9 @@ packages/
      @rka/agent-runtime  ──────── ╳ ────────  @rka/adk-runtime
              ▲                                              ▲
              └──────────────── @rka/agent-host ─────────────┘
+                          createAgentHost(HostPorts)
                                   ▲
-                    apps/desktop  src/main   (Electron main process)
+                    apps/desktop  src/main   (Electron main process: thin adapter)
                     apps/desktop  src/preload  → @rka/shared only
                     apps/desktop  src/renderer → @rka/shared only (types)
 ```
@@ -98,9 +99,14 @@ packages/
 - `@rka/agent-host` is the only package that may depend on both runtimes. It runs in the
   Electron main process (no separate process) and receives OS capabilities (UI event
   fan-out, native dialogs, `openExternal`, secrets) through its `HostPorts` interface.
-  Chat/Research engine selection (Legacy | ADK, Research engine pinning) lives here;
-  the remaining agent wiring will move here from `src/main`
+  `createAgentHost` is the agent composition root: tools, runtime, Chat/Research engine
+  selection (Legacy | ADK, Research engine pinning), `ChatController`, Dashboard and
+  Research Tools. New agent wiring belongs here, not in `src/main`
   (see [docs/agent-host-separation-plan.md](docs/agent-host-separation-plan.md)).
+- `src/main` is a thin Electron adapter: storage, settings, the live Ollama provider and
+  web services, the Electron `HostPorts` (`host-ports.ts`), IPC, window and session. It
+  does not import `@rka/adk-runtime`, except for the startup ADK self-check
+  (`adk-probe.ts`) and tests (enforced by ESLint).
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under

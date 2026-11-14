@@ -3,7 +3,9 @@
 Logical / package separation only. Agents stay **in-process** inside Electron main.
 No utility process, no sidecar, no new agent↔main RPC.
 
-**Status:** planning complete — implement phase-by-phase using the Claude prompts below.
+**Status:** Phase 5 complete — all phases (0–5) implemented; see
+`docs/agent-host-separation-phase0-report.md` … `phase5-report.md`. Process separation was
+not part of this plan and is not done (§9).
 **Master workflow:** run one phase → paste the phase report back into the planning chat → unlock the next phase.
 
 ---
@@ -13,13 +15,13 @@ No utility process, no sidecar, no new agent↔main RPC.
 Move agent composition out of `apps/desktop/src/main` into a new workspace package
 `@rka/agent-host`, so Electron becomes a thin shell:
 
-| Electron owns | `@rka/agent-host` owns |
-| ------------- | ---------------------- |
-| Window, session, CSP | Engine selection (Chat / Research: legacy \| adk) |
-| Preload + Zod IPC | `ChatController` |
-| `safeStorage` / `userData` path | Dashboard + Research Tools **cores** (OS ports injected) |
-| Native dialogs / `shell.openExternal` | `createAgentHost(...)` composition root |
-| Thin bootstrap that builds ports + registers IPC | Wiring of Ollama, tools, storage, runtimes |
+| Electron owns                                    | `@rka/agent-host` owns                                   |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| Window, session, CSP                             | Engine selection (Chat / Research: legacy \| adk)        |
+| Preload + Zod IPC                                | `ChatController`                                         |
+| `safeStorage` / `userData` path                  | Dashboard + Research Tools **cores** (OS ports injected) |
+| Native dialogs / `shell.openExternal`            | `createAgentHost(...)` composition root                  |
+| Thin bootstrap that builds ports + registers IPC | Wiring of Ollama, tools, storage, runtimes               |
 
 **Non-goals**
 
@@ -74,25 +76,25 @@ Renderer (Vue, sandboxed)
 
 ### Coupling inventory (move candidates)
 
-| File under `apps/desktop/src/main/` | Role | Target |
-| ----------------------------------- | ---- | ------ |
-| `chat-engine.ts` (+ unit/integration/live tests) | Chat engine select + web search gateway wiring | `@rka/agent-host` |
-| `research-engine.ts` (+ tests) | Research engine pin + `researchTaskModelsFor` | `@rka/agent-host` |
-| `chat.ts` (+ tests) | `ChatController`, `ChatEventSink`, usage | `@rka/agent-host` |
-| `dashboard.ts` (+ tests that are host-agnostic) | Tasks/sources/reports/storage façade | `@rka/agent-host` (inject `chooseBackupPath`) |
-| `research-tools.ts` (+ tests) | Research Tools playground | `@rka/agent-host` (inject `chooseFile`, `openExternal`) |
-| `config/services.ts` pieces used by engines (`taskModelsFor`, …) | As needed for engines / host | Prefer host; leave Electron-only config in main |
-| Wiring block in `index.ts` | Storage→provider→tools→runtime→engines→services | `createAgentHost` in host |
+| File under `apps/desktop/src/main/`                              | Role                                            | Target                                                  |
+| ---------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------- |
+| `chat-engine.ts` (+ unit/integration/live tests)                 | Chat engine select + web search gateway wiring  | `@rka/agent-host`                                       |
+| `research-engine.ts` (+ tests)                                   | Research engine pin + `researchTaskModelsFor`   | `@rka/agent-host`                                       |
+| `chat.ts` (+ tests)                                              | `ChatController`, `ChatEventSink`, usage        | `@rka/agent-host`                                       |
+| `dashboard.ts` (+ tests that are host-agnostic)                  | Tasks/sources/reports/storage façade            | `@rka/agent-host` (inject `chooseBackupPath`)           |
+| `research-tools.ts` (+ tests)                                    | Research Tools playground                       | `@rka/agent-host` (inject `chooseFile`, `openExternal`) |
+| `config/services.ts` pieces used by engines (`taskModelsFor`, …) | As needed for engines / host                    | Prefer host; leave Electron-only config in main         |
+| Wiring block in `index.ts`                                       | Storage→provider→tools→runtime→engines→services | `createAgentHost` in host                               |
 
 ### Stays in Electron main
 
-| File / concern | Why |
-| -------------- | --- |
-| `window.ts`, `security.ts`, `ipc.ts`, preload | Shell / trust boundary |
-| `app-storage.ts` | `safeStorage` + `userData` |
-| `env.ts`, settings file next to userData | Electron paths |
-| Dialog / shell adapters | OS UI |
-| Thin `bootstrap()` in `index.ts` | Builds ports, calls host, registers IPC |
+| File / concern                                | Why                                     |
+| --------------------------------------------- | --------------------------------------- |
+| `window.ts`, `security.ts`, `ipc.ts`, preload | Shell / trust boundary                  |
+| `app-storage.ts`                              | `safeStorage` + `userData`              |
+| `env.ts`, settings file next to userData      | Electron paths                          |
+| Dialog / shell adapters                       | OS UI                                   |
+| Thin `bootstrap()` in `index.ts`              | Builds ports, calls host, registers IPC |
 
 ---
 
@@ -117,16 +119,16 @@ Copy these into every Claude prompt (also restated per phase):
 
 ## 5. Phases overview
 
-| Phase | Name | Outcome |
-| ----- | ---- | ------- |
-| **0** | Scaffold + HostPorts contract | Empty `@rka/agent-host` + ports types + ESLint/workspace/README |
-| **1** | Extract engines | `chat-engine` + `research-engine` live in host; desktop imports them |
-| **2** | Extract ChatController | Chat session control in host; sinks stay injectable |
-| **3** | Extract host services | Dashboard + Research Tools cores in host with OS ports |
-| **4** | Extract composition root | `createAgentHost`; `index.ts` thin adapter |
-| **5** | Boundaries + acceptance | ESLint harden, docs sync, thin-main checklist, full `pnpm check` |
+| Phase | Name                          | Outcome                                                              |
+| ----- | ----------------------------- | -------------------------------------------------------------------- |
+| **0** | Scaffold + HostPorts contract | Empty `@rka/agent-host` + ports types + ESLint/workspace/README      |
+| **1** | Extract engines               | `chat-engine` + `research-engine` live in host; desktop imports them |
+| **2** | Extract ChatController        | Chat session control in host; sinks stay injectable                  |
+| **3** | Extract host services         | Dashboard + Research Tools cores in host with OS ports               |
+| **4** | Extract composition root      | `createAgentHost`; `index.ts` thin adapter                           |
+| **5** | Boundaries + acceptance       | ESLint harden, docs sync, thin-main checklist, full `pnpm check`     |
 
-**Rule:** do not start phase *N+1* until phase *N* report is reviewed and accepted.
+**Rule:** do not start phase _N+1_ until phase _N_ report is reviewed and accepted.
 
 ---
 
@@ -592,19 +594,23 @@ Each phase writes `docs/agent-host-separation-phaseN-report.md`:
 # Agent Host Separation — Phase N Report
 
 ## Summary
+
 - Status: complete | blocked | partial
 - One-paragraph outcome
 
 ## Changes
+
 - Files added / moved / deleted (paths)
 - Public API changes on `@rka/agent-host`
 
 ## Boundaries
+
 - electron imports in host? (must be none)
 - agent-runtime ↔ adk-runtime? (must remain disconnected)
 - renderer/preload still shared-only?
 
 ## Checks run
+
 - pnpm typecheck: pass/fail
 - pnpm lint: pass/fail
 - pnpm test: pass/fail
@@ -612,10 +618,12 @@ Each phase writes `docs/agent-host-separation-phaseN-report.md`:
 - (phase 5) pnpm check / format:check
 
 ## Behaviour
+
 - Intentional behaviour changes? (should be none)
 - Follow-ups / known gaps for later phases
 
 ## Risks / decisions
+
 - Any deviation from docs/agent-host-separation-plan.md and why
 ```
 
@@ -642,19 +650,19 @@ When you paste the report into the planning chat, also note anything Claude skip
 
 ## 10. Reference paths
 
-| Path | Notes |
-| ---- | ----- |
-| `CLAUDE.md` | Project standards |
-| `apps/desktop/src/main/index.ts` | Current composition root |
-| `apps/desktop/src/main/chat-engine.ts` | Phase 1 move |
-| `apps/desktop/src/main/research-engine.ts` | Phase 1 move |
-| `apps/desktop/src/main/chat.ts` | Phase 2 move |
-| `apps/desktop/src/main/dashboard.ts` | Phase 3 move |
-| `apps/desktop/src/main/research-tools.ts` | Phase 3 move |
-| `apps/desktop/src/main/ipc.ts` | Stays; updates imports |
-| `packages/agent-runtime` | Research step machine, ToolGateway — stays |
-| `packages/adk-runtime` | Lazy ADK boundary — stays |
-| `packages/shared/src/ipc.ts` | Renderer↔main contracts — keep stable |
-| `eslint.config.js` | Architecture bans |
-| `docs/phase8.1-tool-architecture-audit.md` | Tool/gateway architecture context |
-| `docs/adk-migration-assessment.md` | Historical “stay in main process” decision |
+| Path                                       | Notes                                      |
+| ------------------------------------------ | ------------------------------------------ |
+| `CLAUDE.md`                                | Project standards                          |
+| `apps/desktop/src/main/index.ts`           | Current composition root                   |
+| `apps/desktop/src/main/chat-engine.ts`     | Phase 1 move                               |
+| `apps/desktop/src/main/research-engine.ts` | Phase 1 move                               |
+| `apps/desktop/src/main/chat.ts`            | Phase 2 move                               |
+| `apps/desktop/src/main/dashboard.ts`       | Phase 3 move                               |
+| `apps/desktop/src/main/research-tools.ts`  | Phase 3 move                               |
+| `apps/desktop/src/main/ipc.ts`             | Stays; updates imports                     |
+| `packages/agent-runtime`                   | Research step machine, ToolGateway — stays |
+| `packages/adk-runtime`                     | Lazy ADK boundary — stays                  |
+| `packages/shared/src/ipc.ts`               | Renderer↔main contracts — keep stable      |
+| `eslint.config.js`                         | Architecture bans                          |
+| `docs/phase8.1-tool-architecture-audit.md` | Tool/gateway architecture context          |
+| `docs/adk-migration-assessment.md`         | Historical “stay in main process” decision |

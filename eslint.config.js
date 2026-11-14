@@ -53,6 +53,11 @@ const nodePrefixPattern = {
  */
 const banPackages = (message, packages) => ({ group: packages, message });
 
+const mainCrossFolderBan = banPackages('Do not import across Electron process folders.', [
+  '**/preload/**',
+  '**/renderer/**',
+]);
+
 export default defineConfig(
   {
     ignores: [
@@ -183,14 +188,25 @@ export default defineConfig(
   {
     files: ['apps/desktop/src/main/**/*.ts'],
     rules: {
+      'no-restricted-imports': ['error', { patterns: [mainCrossFolderBan] }],
+    },
+  },
+
+  // Main reaches the agents through @rka/agent-host (createAgentHost). Exceptions:
+  // the ADK startup self-check (adk-probe.ts) and tests that inject an ADK runtime.
+  {
+    files: ['apps/desktop/src/main/**/*.ts'],
+    ignores: ['apps/desktop/src/main/adk-probe.ts', 'apps/desktop/src/main/**/*.test.ts'],
+    rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
-            banPackages('Do not import across Electron process folders.', [
-              '**/preload/**',
-              '**/renderer/**',
-            ]),
+            mainCrossFolderBan,
+            banPackages(
+              'Electron main uses ADK only through @rka/agent-host (createAgentHost); the startup self-check lives in adk-probe.ts.',
+              ['@rka/adk-runtime'],
+            ),
           ],
         },
       ],
