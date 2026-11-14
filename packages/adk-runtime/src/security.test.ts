@@ -128,7 +128,9 @@ describe('ADK integration guards', () => {
         'isLlmAgent',
       ].sort(),
     );
-  });
+    // The first import of @google/adk in a test file is a cold load of a large
+    // package (~6 s on Windows while all test files run in parallel).
+  }, 30_000);
 
   it('never names a code executor, LocalEnvironment, a Google model or a built-in cloud tool', () => {
     const offenders = files.flatMap((file) =>

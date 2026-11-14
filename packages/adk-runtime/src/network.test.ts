@@ -109,7 +109,9 @@ describe('network and telemetry isolation', () => {
     expect(check).toMatchObject({ ok: true });
 
     expect(attempts).toEqual([]);
-  });
+    // The first import of @google/adk in a test file is a cold load of a large
+    // package (~6 s on Windows while all test files run in parallel).
+  }, 30_000);
 
   it('registers no OpenTelemetry tracer, meter or logger provider', () => {
     // @opentelemetry/api keeps registered providers on this global symbol.
