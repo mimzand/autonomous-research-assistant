@@ -68,7 +68,9 @@ packages/
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
   tools/                  @rka/tools          Tool contract + registry, web research tools
   storage/                @rka/storage        SQLite (better-sqlite3 + Drizzle): migrations, repositories, recovery
-  agent-runtime/          @rka/agent-runtime  Composition root for the agent (no loop yet)
+  agent-runtime/          @rka/agent-runtime  Legacy research workflow, ToolGateway, chat with tools
+  adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
+  agent-host/             @rka/agent-host     Agent host composition (in-process); HostPorts contract
 ```
 
 ### Package boundaries
@@ -78,7 +80,10 @@ packages/
              │                    ▲                         │
    @rka/model-provider      @rka/tools               @rka/storage
              ▲                    ▲                         ▲
-             └────────────── @rka/agent-runtime ────────────┘
+             ├────────────────────┼─────────────────────────┤
+     @rka/agent-runtime  ──────── ╳ ────────  @rka/adk-runtime
+             ▲                                              ▲
+             └──────────────── @rka/agent-host ─────────────┘
                                   ▲
                     apps/desktop  src/main   (Electron main process)
                     apps/desktop  src/preload  → @rka/shared only
@@ -89,6 +94,12 @@ packages/
   Deep imports such as `@rka/tools/src/registry` are rejected by ESLint.
 - `@rka/shared` is platform-neutral: no Node.js, no Electron, no other workspace packages.
 - `model-provider`, `tools` and `storage` depend only on `@rka/shared`.
+- `@rka/agent-runtime` and `@rka/adk-runtime` never import each other or `@rka/agent-host`.
+- `@rka/agent-host` is the only package that may depend on both runtimes. It runs in the
+  Electron main process (no separate process) and receives OS capabilities (UI event
+  fan-out, native dialogs, `openExternal`, secrets) through its `HostPorts` interface.
+  Chat/Research engine selection and agent wiring will move here from `src/main`
+  (see [docs/agent-host-separation-plan.md](docs/agent-host-separation-plan.md)).
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under

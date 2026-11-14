@@ -134,7 +134,9 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('The renderer may only import @rka/shared.', [
+              '@rka/agent-host',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -160,7 +162,9 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('Preload may only import electron and @rka/shared.', [
+              '@rka/agent-host',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -258,7 +262,9 @@ export default defineConfig(
           ],
           patterns: [
             banPackages('Leaf packages may depend only on @rka/shared.', [
+              '@rka/agent-host',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -269,6 +275,37 @@ export default defineConfig(
       ],
     },
   },
+
+  // The two runtimes never depend on each other, and neither depends on the agent
+  // host that composes them (@rka/agent-host may import both).
+  ...[
+    { pkg: 'agent-runtime', other: '@rka/adk-runtime' },
+    { pkg: 'adk-runtime', other: '@rka/agent-runtime' },
+  ].map(({ pkg, other }) => ({
+    files: [`packages/${pkg}/src/**/*.ts`],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+            {
+              name: 'fflate',
+              message:
+                "Import 'fflate/browser'. The Node build declares its own `require`, which clashes with the require shim in the Electron main bundle and crashes the app at startup.",
+            },
+          ],
+          patterns: [
+            banPackages(
+              '@rka/agent-runtime and @rka/adk-runtime must not depend on each other or on @rka/agent-host.',
+              [other, '@rka/agent-host'],
+            ),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  })),
 
   // Must stay last: turns off stylistic rules that conflict with Prettier.
   prettier,

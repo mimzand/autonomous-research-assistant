@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@rka/adk-runtime": "workspace:*",
+    "@rka/agent-host": "workspace:*",
     "@rka/agent-runtime": "workspace:*",
     "@rka/model-provider": "workspace:*",
     "@rka/shared": "workspace:*",
