@@ -58,20 +58,42 @@ Windows **zip** can also be built there with
 `electron-builder --win zip -c.win.signAndEditExecutable=false`. The **installer** and the
 exe metadata step need Windows, or Wine.
 
-Check the fuses of the built exe:
+Verify the built exe and installer (read-only; nothing is run, changed or installed):
 
 ```powershell
-# npx fetches the @electron/fuses CLI (already a dependency of electron-builder) if needed.
-cd apps/desktop
-npx @electron/fuses read --app "release/win-unpacked/Autonomous Research Assistant.exe"
+pnpm verify:win-build                  # defaults to apps/desktop/release
 ```
 
-Expected:
+`@electron/fuses` is only a transitive dependency of electron-builder, so pnpm links no
+`electron-fuses` command and `npx @electron/fuses read …` does not work in this
+repository. `scripts/verify-windows-build.mjs` reads the fuse wire from the exe itself
+and cross-checks it with `getCurrentFuseWire()` of the copy electron-builder already
+uses (no download, no new dependency). It also checks:
 
-- `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments`
-  are **Disabled**.
-- `EnableEmbeddedAsarIntegrityValidation`, `OnlyLoadAppFromAsar` and
-  `EnableCookieEncryption` are **Enabled**.
+- the exe is x64 and its version info names the product;
+- the embedded ASAR integrity resource (`INTEGRITY/ELECTRONASAR`) exists and its SHA-256
+  equals the hash of the `resources\app.asar` header;
+- the setup exe and portable zip exist and are non-empty, and prints their SHA-256;
+- the installer embeds one 7z payload. **If 7-Zip is installed**, every file in that
+  payload is compared (size and CRC32) with `win-unpacked`, without extracting anything;
+  otherwise this check is reported as SKIP.
+
+Expected fuses (from `electronFuses` in `apps/desktop/electron-builder.yml`):
+
+| Fuse                                    | Expected | Why                                                  |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `RunAsNode`                             | Disabled | `ELECTRON_RUN_AS_NODE` cannot turn the exe into Node |
+| `EnableNodeOptionsEnvironmentVariable`  | Disabled | `NODE_OPTIONS` is ignored                            |
+| `EnableNodeCliInspectArguments`         | Disabled | `--inspect` is ignored                               |
+| `EnableEmbeddedAsarIntegrityValidation` | Enabled  | a modified `app.asar` is refused                     |
+| `OnlyLoadAppFromAsar`                   | Enabled  | no `resources/app` folder is loaded                  |
+| `EnableCookieEncryption`                | Enabled  | cookies encrypted at rest (DPAPI)                    |
+| `LoadBrowserProcessSpecificV8Snapshot`  | Disabled | not used                                             |
+| `GrantFileProtocolExtraPrivileges`      | Enabled  | accepted risk: the renderer is loaded from `file://` |
+| `WasmTrapHandlers`                      | Enabled  | not configured; Electron default                     |
+
+Do not infer fuse values from the electron-builder log, and never disable a fuse or edit
+the installer to make this check pass.
 
 ## 4. Test the packaged app
 
@@ -108,6 +130,8 @@ Windows 10 or 11 machine, ideally a fresh Windows user account.
    ```powershell
    Get-FileHash "release\*.exe","release\*.zip" -Algorithm SHA256
    ```
+
+   `pnpm verify:win-build` prints the same SHA-256 values.
 
 3. Attach the setup exe, the portable zip and the checksums to the release.
 4. In the release notes, link [installation.md](installation.md#7-update) for the update
@@ -147,7 +171,7 @@ Copy this list into the release issue and tick each item.
 - [ ] No new runtime dependency besides `better-sqlite3` (`dependencies` in `apps/desktop/package.json`)
 - [ ] New migrations have an upgrade test and only add data structures
 - [ ] `pnpm package:win` produces `…-setup.exe` and `…-portable.zip`
-- [ ] Fuses read as expected (section 3)
+- [ ] `pnpm verify:win-build` passes: fuses, ASAR integrity, x64 identity, installer payload (section 3)
 - [ ] `resources/app.asar.unpacked` contains only `better-sqlite3` with `win32-x64.node`; there is no `resources/app` folder
 
 ### Automated tests of the packaged app
