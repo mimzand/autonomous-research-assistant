@@ -40,3 +40,11 @@ export {
   type ResearchTaskModelsOptions,
 } from './research-engine.js';
 export { taskModelsFor } from './task-models.js';
+export { createDashboardService, type DashboardDeps, type DashboardService } from './dashboard.js';
+export {
+  createResearchToolsService,
+  MAX_DISPLAY_CHARS,
+  PLAYGROUND_TASK_KIND,
+  type ResearchToolsDeps,
+  type ResearchToolsService,
+} from './research-tools.js';

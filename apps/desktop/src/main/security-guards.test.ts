@@ -133,7 +133,7 @@ describe('security guards', () => {
       offenders(/\b(?:tools|registry)\.execute\(/, [
         'packages/agent-runtime/src/tools/gateway.ts',
         'packages/agent-runtime/src/research/workflow.ts',
-        'apps/desktop/src/main/research-tools.ts',
+        'packages/agent-host/src/research-tools.ts',
         'packages/adk-runtime/src/tools/registry-tool.ts',
       ]),
     ).toEqual([]);
@@ -164,7 +164,7 @@ describe('security guards', () => {
       offenders(/openExternal\s*\(|openPath\s*\(|showItemInFolder\s*\(/, [
         'apps/desktop/src/main/index.ts',
         'apps/desktop/src/main/window.ts',
-        'apps/desktop/src/main/research-tools.ts',
+        'packages/agent-host/src/research-tools.ts',
         // Type-only HostPorts declaration; the Electron adapter is in main/index.ts.
         'packages/agent-host/src/ports.ts',
       ]),

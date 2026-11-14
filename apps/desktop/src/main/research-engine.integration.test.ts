@@ -28,8 +28,8 @@ import {
 } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRuntimeConfig } from './config/runtime-config.js';
-import { createDashboardService } from './dashboard.js';
 import {
+  createDashboardService,
   PINNED_ENGINE_KEY,
   researchTaskInfo,
   researchTaskModelsFor,

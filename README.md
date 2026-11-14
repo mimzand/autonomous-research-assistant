@@ -189,7 +189,7 @@ and nothing is kept only in the frontend.
 ```text
 pages/*.vue → window.api.{tasks,knowledge,reports,storage} (preload, response re-validated)
   → IPC tasks:* / sources:* / reports:* / storage:* (sender + Zod-validated in main)
-  → DashboardService (main) → storage.inspect / repositories, runtime.tasks
+  → DashboardService (@rka/agent-host, in main) → storage.inspect / repositories, runtime.tasks
 ```
 
 - **Tasks:**

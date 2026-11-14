@@ -1,4 +1,8 @@
-import { type ChatController } from '@rka/agent-host';
+import {
+  type ChatController,
+  type DashboardService,
+  type ResearchToolsService,
+} from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import {
   AppInfoSchema,
@@ -8,9 +12,7 @@ import {
   ModelHealthSchema,
   type AppInfo,
 } from '@rka/shared';
-import { type DashboardService } from './dashboard.js';
 import { type SettingsService } from './config/settings-service.js';
-import { type ResearchToolsService } from './research-tools.js';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
 export interface SenderLike {

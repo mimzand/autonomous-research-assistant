@@ -43,6 +43,7 @@ import {
   WebSearchOutputSchema,
 } from '@rka/tools';
 import { type z } from 'zod';
+import { type HostDialogPort, type HostShellPort } from './ports.js';
 
 /** Kind stored in the input of the task that collects playground sources. */
 export const PLAYGROUND_TASK_KIND = 'research-tools-playground';
@@ -52,7 +53,12 @@ export const MAX_DISPLAY_CHARS = 200_000;
 const SELECTION_TTL_MS = 15 * 60_000;
 const MAX_CACHED_RESULTS = 20;
 
-export interface ResearchToolsDeps {
+/**
+ * `chooseFile` is the native "Open file" dialog (the only way a local path reaches
+ * the service); `openExternal` opens a URL in the default browser.
+ */
+export interface ResearchToolsDeps
+  extends Pick<HostDialogPort, 'chooseFile'>, Pick<HostShellPort, 'openExternal'> {
   /** Web settings; a function when they can change at run time (Settings page). */
   readonly config: WebConfig | (() => WebConfig);
   readonly services: WebServices;
@@ -60,10 +66,6 @@ export interface ResearchToolsDeps {
   readonly tools: ToolRegistry;
   readonly storage: Storage;
   readonly sourceStore: SourceStore;
-  /** Native "Open file" dialog. Returns the chosen path, or null. */
-  readonly chooseFile: () => Promise<string | null>;
-  /** Opens a URL in the default browser. */
-  readonly openExternal: (url: string) => Promise<void>;
   readonly now?: () => number;
 }
 

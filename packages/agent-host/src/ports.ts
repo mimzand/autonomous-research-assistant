@@ -7,9 +7,9 @@ import type { ResearchProgressEvent, SecretSettingKey, SettingsChangedEvent } fr
  */
 export interface HostUiPort {
   /** Electron adapter sends on `IpcEvents.researchProgress`. */
-  emitResearchProgress(event: ResearchProgressEvent): void;
+  readonly emitResearchProgress: (event: ResearchProgressEvent) => void;
   /** Electron adapter sends on `IpcEvents.settingsChanged`. */
-  emitSettingsChanged(event: SettingsChangedEvent): void;
+  readonly emitSettingsChanged: (event: SettingsChangedEvent) => void;
 }
 
 /**
@@ -21,15 +21,15 @@ export interface HostDialogPort {
    * "Save backup" dialog (Electron: `dialog.showSaveDialog`). The adapter owns the
    * overwrite confirmation and the default folder/file name.
    */
-  chooseBackupPath(): Promise<string | null>;
+  readonly chooseBackupPath: () => Promise<string | null>;
   /** "Open file" dialog for local PDF/DOCX extraction (Electron: `dialog.showOpenDialog`). */
-  chooseFile(): Promise<string | null>;
+  readonly chooseFile: () => Promise<string | null>;
   /**
    * "Choose folder" dialog for the default backup folder (Electron:
    * `dialog.showOpenDialog` with `openDirectory`).
    * @param defaultPath Currently configured folder, or `null` for the platform default.
    */
-  chooseFolder(defaultPath: string | null): Promise<string | null>;
+  readonly chooseFolder: (defaultPath: string | null) => Promise<string | null>;
 }
 
 /** Hands a URL to the OS. */
@@ -39,15 +39,15 @@ export interface HostShellPort {
    * must refuse anything that is not a safe http(s) URL, in addition to any checks
    * made by the caller.
    */
-  openExternal(url: string): Promise<void>;
+  readonly openExternal: (url: string) => Promise<void>;
 }
 
 /** OS-backed secret storage (Electron: `safeStorage`, DPAPI on Windows). */
 export interface HostSecretsPort {
   /** Whether OS encryption is available (Electron: `safeStorage.isEncryptionAvailable()`). */
-  encryptionAvailable(): boolean;
+  readonly encryptionAvailable: () => boolean;
   /** Decrypted secret value, or `undefined` when unset or unreadable. Never logged. */
-  getSecret(key: SecretSettingKey): string | undefined;
+  readonly getSecret: (key: SecretSettingKey) => string | undefined;
 }
 
 /**

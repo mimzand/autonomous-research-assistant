@@ -4,6 +4,8 @@ import {
   ChatController,
   createAppChatEngines,
   createChatWebSearch,
+  createDashboardService,
+  createResearchToolsService,
   researchTaskModelsFor,
 } from '@rka/agent-host';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
@@ -23,11 +25,9 @@ import {
   webApplier,
 } from './config/services.js';
 import { createSettingsService } from './config/settings-service.js';
-import { createDashboardService } from './dashboard.js';
 import { backupDialogOptions } from './backup-dialog.js';
 import { loadDevEnvFile, loadSettingsFile } from './env.js';
 import { registerIpcHandlers } from './ipc.js';
-import { createResearchToolsService } from './research-tools.js';
 import { installConsoleRedaction } from './log.js';
 import { isAllowedSetting, isAppUrl, isSafeExternalUrl, type AppUrlOptions } from './security.js';
 import { checkStartup } from './startup.js';

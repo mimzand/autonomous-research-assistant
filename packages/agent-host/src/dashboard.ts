@@ -34,16 +34,16 @@ import {
   type TaskStatusCounts,
 } from '@rka/shared';
 import { type Storage } from '@rka/storage';
-import { researchTaskInfo } from '@rka/agent-host';
+import { type HostDialogPort } from './ports.js';
+import { researchTaskInfo } from './research-engine.js';
 
-export interface DashboardDeps {
+/**
+ * `chooseBackupPath` asks the user where to save a backup. It must use a dialog
+ * that confirms overwriting an existing file, and returns null when cancelled.
+ */
+export interface DashboardDeps extends Pick<HostDialogPort, 'chooseBackupPath'> {
   readonly storage: Storage;
   readonly runtime: AgentRuntime;
-  /**
-   * Asks the user where to save a backup. Must use a dialog that confirms
-   * overwriting an existing file. Returns null when cancelled.
-   */
-  readonly chooseBackupPath: () => Promise<string | null>;
 }
 
 /**

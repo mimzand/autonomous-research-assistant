@@ -4,7 +4,6 @@ import { type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSourceStore } from '@rka/agent-runtime';
-import { IpcChannels } from '@rka/shared';
 import { openStorage } from '@rka/storage';
 import {
   buildDocx,
@@ -19,8 +18,7 @@ import {
   type Resolver,
   type WebServices,
 } from '@rka/tools';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   createResearchToolsService,
   MAX_DISPLAY_CHARS,
@@ -493,71 +491,5 @@ describe('opening URLs', () => {
       status: 'refused',
     });
     expect(opened).toEqual(['https://energy.example/heat']);
-  });
-});
-
-describe('IPC', () => {
-  function ipcSetup() {
-    const handlers = new Map<string, (event: InvokeEventLike, ...args: unknown[]) => unknown>();
-    const ipc: IpcMainLike = {
-      handle: (channel, listener) => void handlers.set(channel, listener),
-    };
-    const { service, storage } = setup();
-    const fake = vi.fn();
-    registerIpcHandlers(ipc, {
-      runtime: { getModelHealth: fake, listTools: fake } as never,
-      chat: {} as never,
-      dashboard: {} as never,
-      researchTools: service,
-      settings: {} as never,
-      getAppInfo: fake,
-      isTrustedSender: (url) => url === 'app://renderer',
-    });
-    const sender = { id: 1, isDestroyed: () => false, send: fake, once: fake };
-    const invoke = (channel: string, payload?: unknown, url = 'app://renderer') => {
-      const handler = handlers.get(channel);
-      if (!handler) throw new Error(`no handler for ${channel}`);
-      return Promise.resolve(handler({ senderFrame: { url }, sender }, payload));
-    };
-    return { invoke, storage, handlers };
-  }
-
-  it('registers a fixed set of research channels and no generic fetch', () => {
-    const { handlers } = ipcSetup();
-    const research = [...handlers.keys()].filter((c) => c.startsWith('research:')).sort();
-    expect(research).toEqual([
-      'research:cancel',
-      'research:check-search',
-      'research:extract-file',
-      'research:fetch',
-      'research:open-url',
-      'research:pick-file',
-      'research:save-source',
-      'research:search',
-      'research:status',
-    ]);
-  });
-
-  it('serves validated results and rejects bad payloads and untrusted senders', async () => {
-    const { invoke } = ipcSetup();
-    expect(await invoke(IpcChannels.researchStatus)).toMatchObject({
-      search: { configured: true },
-    });
-    expect(
-      await invoke(IpcChannels.researchFetch, {
-        requestId: 'r1',
-        url: 'http://public.test/article',
-      }),
-    ).toMatchObject({
-      status: 'ok',
-      source: { title: 'Article title' },
-    });
-    await expect(invoke(IpcChannels.researchFetch, { url: 42 })).rejects.toThrow();
-    await expect(
-      invoke(IpcChannels.researchFetch, { requestId: 'r', url: 'x', path: '/etc' }),
-    ).rejects.toThrow();
-    await expect(
-      invoke(IpcChannels.researchSearch, { requestId: 'r', query: 'q' }, 'https://evil.example'),
-    ).rejects.toThrow(/untrusted sender/);
   });
 });
