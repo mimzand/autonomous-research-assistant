@@ -162,11 +162,9 @@ describe('security guards', () => {
   it('opens external links only from the checked call sites', () => {
     expect(
       offenders(/openExternal\s*\(|openPath\s*\(|showItemInFolder\s*\(/, [
-        'apps/desktop/src/main/index.ts',
+        'apps/desktop/src/main/host-ports.ts',
         'apps/desktop/src/main/window.ts',
         'packages/agent-host/src/research-tools.ts',
-        // Type-only HostPorts declaration; the Electron adapter is in main/index.ts.
-        'packages/agent-host/src/ports.ts',
       ]),
     ).toEqual([]);
   });

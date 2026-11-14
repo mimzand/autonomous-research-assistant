@@ -6,6 +6,14 @@ export type {
   HostUiPort,
 } from './ports.js';
 export {
+  createAgentHost,
+  forwardResearchProgress,
+  type AgentHost,
+  type AgentHostDeps,
+  type AgentHostPorts,
+  type AgentHostSettings,
+} from './agent-host.js';
+export {
   ChatController,
   toChatError,
   type ChatControllerDeps,

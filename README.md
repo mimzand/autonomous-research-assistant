@@ -60,7 +60,7 @@ Run a single package's checks with a filter, e.g. `pnpm --filter @rka/tools test
 ```text
 apps/
   desktop/                Electron app (@rka/desktop)
-    src/main/             Main process: window, IPC handlers, runtime wiring
+    src/main/             Main process: window, IPC handlers, Electron HostPorts, settings
     src/preload/          Preload bridge: exposes window.api (sandboxed, CommonJS)
     src/renderer/         Vue 3 UI (browser code only)
 packages/
@@ -70,7 +70,7 @@ packages/
   storage/                @rka/storage        SQLite (better-sqlite3 + Drizzle): migrations, repositories, recovery
   agent-runtime/          @rka/agent-runtime  Legacy research workflow, ToolGateway, chat with tools
   adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
-  agent-host/             @rka/agent-host     Agent host composition (in-process); HostPorts contract
+  agent-host/             @rka/agent-host     createAgentHost composition (in-process); HostPorts contract
 ```
 
 ### Package boundaries

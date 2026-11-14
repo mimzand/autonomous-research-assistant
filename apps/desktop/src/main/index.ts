@@ -1,18 +1,9 @@
 import { join } from 'node:path';
-import { existsSync, statSync } from 'node:fs';
-import {
-  ChatController,
-  createAppChatEngines,
-  createChatWebSearch,
-  createDashboardService,
-  createResearchToolsService,
-  researchTaskModelsFor,
-} from '@rka/agent-host';
-import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
+import { createAgentHost } from '@rka/agent-host';
 import { createOllamaProvider, ollamaTransportOptionsFromEnv } from '@rka/model-provider';
-import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
-import { createReconfigurableWebServices, createToolRegistry, createWebTools } from '@rka/tools';
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
+import { SettingsChangedEventSchema } from '@rka/shared';
+import { createReconfigurableWebServices } from '@rka/tools';
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session } from 'electron';
 import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
@@ -25,11 +16,11 @@ import {
   webApplier,
 } from './config/services.js';
 import { createSettingsService } from './config/settings-service.js';
-import { backupDialogOptions } from './backup-dialog.js';
 import { loadDevEnvFile, loadSettingsFile } from './env.js';
+import { createElectronHostPorts } from './host-ports.js';
 import { registerIpcHandlers } from './ipc.js';
 import { installConsoleRedaction } from './log.js';
-import { isAllowedSetting, isAppUrl, isSafeExternalUrl, type AppUrlOptions } from './security.js';
+import { isAllowedSetting, isAppUrl, type AppUrlOptions } from './security.js';
 import { checkStartup } from './startup.js';
 import { createMainWindow, rendererIndexPath } from './window.js';
 
@@ -51,15 +42,6 @@ const settingsPath = join(app.getPath('userData'), 'settings.env');
 const settings = loadSettingsFile(settingsPath, process.env, isAllowedSetting);
 if (settings?.ignored.length) {
   console.warn(`Ignored unsupported keys in ${settingsPath}: ${settings.ignored.join(', ')}`);
-}
-
-/** The saved backup folder when it still exists, otherwise Documents. */
-function backupDirectory(saved: string | null, documents: string): string {
-  try {
-    return saved && existsSync(saved) && statSync(saved).isDirectory() ? saved : documents;
-  } catch {
-    return documents;
-  }
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -112,80 +94,30 @@ function bootstrap(): void {
   });
   config.register(ollamaApplier(modelProvider));
 
-  // Web research tools. fetch_source can only reach public addresses; web_search
+  // Web research services. fetch_source can only reach public addresses; web_search
   // needs a SearXNG URL (Settings → Research & Web Search).
   const webServices = createReconfigurableWebServices(toWebConfig(config.getSettings()));
   config.register(webApplier(webServices));
-  const sourceStore = createSourceStore(storage);
-  const tools = createToolRegistry(createWebTools({ ...webServices, store: sourceStore }));
   if (!webServices.isSearchConfigured()) {
     console.info('Web search is off: set the SearXNG URL in Settings to enable it.');
   }
 
-  const runtime = createAgentRuntime({
+  // OS capabilities (windows, dialogs, browser, key store) for the host and Settings.
+  const ports = createElectronHostPorts(config);
+
+  // The agent: tools, runtime, Chat/Research engines, Chat, Dashboard and Research Tools.
+  const host = createAgentHost({
+    storage,
     modelProvider,
-    tools,
-    storage,
-    // Read when each task starts, so Settings changes apply to new tasks.
-    researchDefaults: () => toResearchDefaults(config.getSettings()),
-    // A running task keeps the model configuration it started with, including its
-    // Research engine (Settings → Agent Engines; default from RESEARCH_ENGINE, else
-    // "legacy"), across restarts. The setting is read only when a task is created.
-    taskModels: researchTaskModelsFor(modelProvider, {
-      readFlag: () => config.getSettings()['engine.research'],
-    }),
-    searchConfigured: () => webServices.isSearchConfigured(),
-    // Research progress is pushed to every window (validated against the shared contract).
-    onResearchEvent: (event) => {
-      const parsed = ResearchProgressEventSchema.safeParse(event);
-      if (!parsed.success) return;
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) win.webContents.send(IpcEvents.researchProgress, parsed.data);
-      }
+    webServices,
+    settings: {
+      researchDefaults: () => toResearchDefaults(config.getSettings()),
+      chatEngine: () => config.getSettings()['engine.chat'],
+      researchEngine: () => config.getSettings()['engine.research'],
+      chatWebSearch: () => config.getSettings()['chat.webSearch'],
     },
-  });
-
-  const dashboard = createDashboardService({
-    storage,
-    runtime,
-    chooseBackupPath: async () => {
-      const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      const options = backupDialogOptions(
-        backupDirectory(config.getSetting('backup.defaultDirectory'), app.getPath('documents')),
-        new Date(),
-      );
-      const result = parent
-        ? await dialog.showSaveDialog(parent, options)
-        : await dialog.showSaveDialog(options);
-      return result.canceled || !result.filePath ? null : result.filePath;
-    },
-  });
-
-  const focusedWindow = () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  const researchTools = createResearchToolsService({
-    config: () => webServices.config(),
-    services: webServices,
-    tools,
-    storage,
-    sourceStore,
-    chooseFile: async () => {
-      // The only way a local file reaches the tools: the user picks it here.
-      const options: Electron.OpenDialogOptions = {
-        title: 'Choose a PDF or Word document',
-        properties: ['openFile'],
-        filters: [{ name: 'PDF or Word documents', extensions: ['pdf', 'docx'] }],
-      };
-      const parent = focusedWindow();
-      const result = parent
-        ? await dialog.showOpenDialog(parent, options)
-        : await dialog.showOpenDialog(options);
-      return result.canceled ? null : (result.filePaths[0] ?? null);
-    },
-    // Defence in depth: the service already allows only public http(s) URLs it has seen.
-    openExternal: async (url) => {
-      if (!isSafeExternalUrl(url)) throw new Error('Refused to open a non-http(s) link.');
-      await shell.openExternal(url);
-    },
+    ports,
+    onChatUsage: chatUsageRecorder(storage),
   });
 
   const ollamaSettings = createOllamaSettingsService({
@@ -203,53 +135,20 @@ function bootstrap(): void {
   const settingsService = createSettingsService({
     config,
     ollama: ollamaSettings,
-    chooseFolder: async (current) => {
-      const options: Electron.OpenDialogOptions = {
-        title: 'Choose the default backup folder',
-        properties: ['openDirectory', 'createDirectory'],
-        defaultPath: backupDirectory(current, app.getPath('documents')),
-      };
-      const parent = focusedWindow();
-      const result = parent
-        ? await dialog.showOpenDialog(parent, options)
-        : await dialog.showOpenDialog(options);
-      return result.canceled ? null : (result.filePaths[0] ?? null);
-    },
+    chooseFolder: ports.chooseFolder,
   });
   // Typed change events: every window gets the new state (validated against the contract).
   config.onChange(({ changed }) => {
     const event = SettingsChangedEventSchema.parse({ changed, view: config.view() });
     console.info(`Settings changed: ${changed.join(', ')}`);
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(IpcEvents.settingsChanged, event);
-    }
+    ports.emitSettingsChanged(event);
   });
 
   registerIpcHandlers(ipcMain, {
-    runtime,
-    chat: new ChatController({
-      runtime,
-      onUsage: chatUsageRecorder(storage),
-      // Settings → Agent Engines (default from AGENT_ENGINE, else "legacy"); read when
-      // each Chat request starts, so a running reply keeps its engine.
-      selectEngine: createAppChatEngines({
-        runtime,
-        provider: modelProvider,
-        readFlag: () => config.getSettings()['engine.chat'],
-        // Settings → Agent Engines → Web search in Chat (default off). Legacy Chat only:
-        // every model-produced tool call goes through the ToolGateway (web_search only).
-        webSearch: createChatWebSearch({
-          registry: tools,
-          provider: modelProvider,
-          settingEnabled: () => config.getSettings()['chat.webSearch'],
-          searchConfigured: () => webServices.isSearchConfigured(),
-          // Diagnostics only: tool, status, reason, sizes and a short hash; never the query.
-          audit: (entry) => console.info(`Chat tool call: ${JSON.stringify(entry)}`),
-        }),
-      }),
-    }),
-    dashboard,
-    researchTools,
+    runtime: host.runtime,
+    chat: host.chat,
+    dashboard: host.dashboard,
+    researchTools: host.researchTools,
     settings: settingsService,
     isTrustedSender: (url) => isAppUrl(url, urlPolicy),
     getAppInfo: () => ({
@@ -289,7 +188,7 @@ function bootstrap(): void {
 
   // Startup check: Ollama reachable and the model installed. Never downloads a model;
   // the window shows the exact command to run when something is missing.
-  void checkStartup(() => runtime.getModelHealth(), webServices.isSearchConfigured()).then(
+  void checkStartup(() => host.runtime.getModelHealth(), webServices.isSearchConfigured()).then(
     (result) => console.info(`Startup check: ${result.summary}`),
   );
 
