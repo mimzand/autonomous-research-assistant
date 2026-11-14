@@ -140,6 +140,7 @@ export default defineConfig(
             nodePrefixPattern,
             banPackages('The renderer may only import @rka/shared.', [
               '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
               '@rka/adk-runtime',
               '@rka/model-provider',
@@ -168,6 +169,7 @@ export default defineConfig(
             nodePrefixPattern,
             banPackages('Preload may only import electron and @rka/shared.', [
               '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
               '@rka/adk-runtime',
               '@rka/model-provider',
@@ -257,6 +259,34 @@ export default defineConfig(
     },
   },
 
+  // @rka/agent-protocol: transport-agnostic contract. No Node, only @rka/shared.
+  {
+    files: ['packages/agent-protocol/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...nodeBuiltinPaths,
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+          ],
+          patterns: [
+            nodePrefixPattern,
+            banPackages('@rka/agent-protocol may depend only on @rka/shared.', [
+              '@rka/agent-host',
+              '@rka/agent-runtime',
+              '@rka/adk-runtime',
+              '@rka/model-provider',
+              '@rka/tools',
+              '@rka/storage',
+            ]),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  },
+
   // Leaf packages may depend only on @rka/shared.
   {
     files: [
@@ -279,6 +309,7 @@ export default defineConfig(
           patterns: [
             banPackages('Leaf packages may depend only on @rka/shared.', [
               '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
               '@rka/adk-runtime',
               '@rka/model-provider',

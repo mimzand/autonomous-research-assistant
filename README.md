@@ -71,6 +71,7 @@ packages/
   agent-runtime/          @rka/agent-runtime  Legacy research workflow, ToolGateway, chat with tools
   adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
   agent-host/             @rka/agent-host     createAgentHost composition (in-process); HostPorts contract
+  agent-protocol/         @rka/agent-protocol Agent ↔ shell protocol contract (Zod); not used at runtime yet
 ```
 
 ### Package boundaries
@@ -107,6 +108,12 @@ packages/
   web services, the Electron `HostPorts` (`host-ports.ts`), IPC, window and session. It
   does not import `@rka/adk-runtime`, except for the startup ADK self-check
   (`adk-probe.ts`) and tests (enforced by ESLint).
+- `@rka/agent-protocol` sits directly above `@rka/shared` (its only workspace
+  dependency, no Node.js APIs): handshake, envelopes, error codes and the method
+  registry for the planned standalone agent service, reusing the `@rka/shared` schemas.
+  Nothing imports it yet; renderer and preload may never import it. See
+  [docs/agent-process-separation-plan.md](docs/agent-process-separation-plan.md) and
+  [docs/agent-process-security.md](docs/agent-process-security.md).
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under
