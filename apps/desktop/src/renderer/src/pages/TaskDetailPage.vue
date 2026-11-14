@@ -46,6 +46,8 @@ const actionError = ref<string | null>(null);
 
 const task = computed(() => details.data.value?.task ?? null);
 const recovery = computed(() => details.data.value?.recovery ?? null);
+// From the task's stored configuration (main process), never from current Settings.
+const researchInfo = computed(() => details.data.value?.research ?? null);
 const steps = computed(() => details.data.value?.steps ?? []);
 const interruption = computed(() => describeInterruption(recovery.value?.interruption ?? null));
 const waitingDetail = computed(() => interruptionDetail(recovery.value?.interruption ?? null));
@@ -217,6 +219,18 @@ async function act(action: 'resume' | 'cancel' | 'pause' | 'retry'): Promise<voi
         {{ recovery.failedSteps === 1 ? 'it' : 'them' }}; see the timeline and the execution log.
       </p>
 
+      <p v-if="researchInfo" class="engine-line" data-testid="research-engine">
+        <span class="pill" :data-engine="researchInfo.engine"
+          >Research engine: {{ researchInfo.engineLabel }}</span
+        >
+        <span class="muted">
+          <template v-if="researchInfo.model"
+            ><code>{{ researchInfo.model }}</code> ·
+          </template>
+          {{ researchInfo.location }}
+        </span>
+      </p>
+
       <ResearchView
         v-if="isResearch && details.data.value"
         :details="details.data.value"
@@ -237,6 +251,12 @@ async function act(action: 'resume' | 'cancel' | 'pause' | 'retry'): Promise<voi
             <dd>{{ formatDateTime(task.finishedAt) }}</dd>
             <dt>Duration</dt>
             <dd>{{ formatDuration(task.startedAt, task.finishedAt) }}</dd>
+            <template v-if="researchInfo">
+              <dt>Research engine</dt>
+              <dd data-testid="detail-engine">{{ researchInfo.engineLabel }}</dd>
+              <dt>Model</dt>
+              <dd>{{ researchInfo.model ?? 'Not recorded' }} · {{ researchInfo.location }}</dd>
+            </template>
             <dt>Steps</dt>
             <dd>{{ recovery.completedSteps }} / {{ recovery.totalSteps }} completed</dd>
             <dt>Sources</dt>
@@ -515,5 +535,20 @@ dd {
   .step-io {
     grid-template-columns: 1fr;
   }
+}
+.engine-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.engine-line .pill {
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>

@@ -34,6 +34,7 @@ import {
   type TaskStatusCounts,
 } from '@rka/shared';
 import { type Storage } from '@rka/storage';
+import { researchTaskInfo } from './research-engine.js';
 
 export interface DashboardDeps {
   readonly storage: Storage;
@@ -76,6 +77,8 @@ export function createDashboardService({ storage, runtime, chooseBackupPath }: D
         ...details,
         recovery: runtime.tasks.recoveryInfo(details.task, details.steps),
         progress: runtime.tasks.progress(details.task, details.steps),
+        // From the task's stored configuration, never from the current Settings.
+        research: researchTaskInfo(details.task.input),
       });
     },
 

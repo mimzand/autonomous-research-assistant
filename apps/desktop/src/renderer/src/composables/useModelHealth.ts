@@ -15,15 +15,27 @@ let subscribers = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
 let stopSettings: (() => void) | undefined;
 
+let recheck = false;
+
 async function refresh(): Promise<void> {
-  if (checking.value) return;
+  if (checking.value) {
+    // A check is running, possibly against the previous server: run one more
+    // afterwards so a Settings change made meanwhile is never missed.
+    recheck = true;
+    return;
+  }
   checking.value = true;
   try {
-    // Goes through the preload bridge to the main process. The renderer never calls Ollama.
-    health.value = await window.api.getModelHealth();
-    bridgeError.value = null;
-  } catch (error) {
-    bridgeError.value = error instanceof Error ? error.message : String(error);
+    do {
+      recheck = false;
+      try {
+        // Goes through the preload bridge to the main process. The renderer never calls Ollama.
+        health.value = await window.api.getModelHealth();
+        bridgeError.value = null;
+      } catch (error) {
+        bridgeError.value = error instanceof Error ? error.message : String(error);
+      }
+    } while (recheck);
   } finally {
     checking.value = false;
   }

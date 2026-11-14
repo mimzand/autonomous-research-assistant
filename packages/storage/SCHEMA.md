@@ -30,9 +30,11 @@ erDiagram
   task_steps ||--o{ approvals : "requested by"
   tasks |o--o{ model_usage : "billed to"
   task_steps |o--o{ model_usage : "billed to"
+  adk_sessions ||--o{ adk_events : "has (ordered by seq)"
 ```
 
-`settings` is standalone.
+`settings`, `adk_app_state` and `adk_user_state` are standalone. The ADK tables are not
+related to the research tables.
 
 ## Tables
 
@@ -189,6 +191,61 @@ research workflow; never updated.
 `storage.logs.append()` assigns `seq` inside the write; `listByTask(taskId, { afterSeq,
 limit, levels })` returns entries in order. Event names are listed in
 [docs/failure-recovery.md](../../docs/failure-recovery.md#execution-log).
+
+### Google ADK sessions (migration `0002_adk_sessions`)
+
+Durable storage for Google ADK (TypeScript 2.4.0) sessions, used by
+`SqliteSessionService` in `@rka/adk-runtime` through `storage.adkSessions`. Infrastructure
+only: no production feature writes these tables yet, and nothing here is exposed over IPC.
+Rows are keyed exactly as ADK keys them; a session id alone never finds a row.
+
+`adk_sessions`
+
+| Column           | Type    | Notes                                                               |
+| ---------------- | ------- | ------------------------------------------------------------------- |
+| `app_name`       | text    | PK part                                                             |
+| `user_id`        | text    | PK part                                                             |
+| `id`             | text    | PK part (the ADK session id)                                        |
+| `state`          | JSON    | Session-scoped state only (no `app:`, `user:` or `temp:` keys)      |
+| `update_time_ms` | integer | ADK `lastUpdateTime`; strictly increases with every stored change   |
+| `event_count`    | integer | Events stored (≥ 0, CHECK); next event gets `seq = event_count + 1` |
+| `created_at`     | text    |                                                                     |
+| `updated_at`     | text    |                                                                     |
+
+Index: `(app_name, user_id, update_time_ms)`.
+
+`adk_events`
+
+| Column          | Type    | Notes                                                                 |
+| --------------- | ------- | --------------------------------------------------------------------- |
+| `app_name`      | text    | PK part; FK → `adk_sessions` with `user_id`, `session_id` (cascade)   |
+| `user_id`       | text    | PK part                                                               |
+| `session_id`    | text    | PK part                                                               |
+| `id`            | text    | PK part (the ADK event id); re-appending the same id never duplicates |
+| `seq`           | integer | 1, 2, 3… per session (≥ 1, CHECK; unique per session): append order   |
+| `invocation_id` | text    | Index with the session key                                            |
+| `author`        | text    | Nullable                                                              |
+| `timestamp_ms`  | integer | ADK event timestamp (used by `afterTimestamp`)                        |
+| `event`         | JSON    | The ADK event as JSON (no `temp:` state keys); at most 1 MiB          |
+| `byte_length`   | integer | Size of `event`                                                       |
+| `created_at`    | text    |                                                                       |
+| `updated_at`    | text    |                                                                       |
+
+`adk_app_state` (`app_name` PK, `state` JSON) and `adk_user_state` (`app_name` + `user_id`
+PK, `state` JSON) hold the shared `app:` and `user:` state without their prefixes. Deleting
+a session keeps them.
+
+Rules enforced by `storage.adkSessions`:
+
+- `appendEvent` is one transaction: stale check, event insert (or in-place replacement of
+  the same id, keeping its `seq`), app/user/session state deltas and the session update.
+  Any failure rolls all of it back.
+- A writer whose copy is older than `update_time_ms` gets `conflict` (surfaced to ADK as
+  `StaleSessionError`); there is no last-write-wins.
+- Ids: 1–128 characters of `A–Z a–z 0–9 . _ : @ -`, starting with a letter or digit.
+- Limits (`ADK_STORAGE_LIMITS`): 1 MiB per event, 1 MiB per state scope, 10,000 events per
+  session (also the maximum history read), 500 sessions per list call.
+- These tables are not in the inspector's fixed table list (`TABLE_NAMES`).
 
 ### `__migrations` (internal)
 

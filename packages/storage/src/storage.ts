@@ -13,6 +13,7 @@ import { StorageError } from './errors.js';
 import { createInspector } from './inspect.js';
 import { runMigrations } from './migrate.js';
 import { createRecovery } from './recovery.js';
+import { createAdkSessionRepository } from './repositories/adk-sessions.js';
 import { createApprovalRepository } from './repositories/approvals.js';
 import { createModelUsageRepository } from './repositories/model-usage.js';
 import { createReportRepository } from './repositories/reports.js';
@@ -45,6 +46,11 @@ export interface Repositories {
   /** Append-only execution log per task. */
   readonly logs: ReturnType<typeof createTaskLogRepository>;
   /**
+   * Google ADK session storage (sessions, events, app/user state). Used only
+   * by the main process through `@rka/adk-runtime`; never exposed over IPC.
+   */
+  readonly adkSessions: ReturnType<typeof createAdkSessionRepository>;
+  /**
    * Runs `fn` atomically: all writes commit together or none do. Nested
    * calls become savepoints. `fn` must be synchronous (better-sqlite3).
    */
@@ -76,6 +82,7 @@ function bindRepositories(
     settings: createSettingsRepository(db, ctx, cipher),
     approvals: createApprovalRepository(db, ctx),
     logs: createTaskLogRepository(db, ctx),
+    adkSessions: createAdkSessionRepository(db, ctx),
     transaction: (fn) => runInTransaction(db, (tx) => fn(bindRepositories(tx, ctx, cipher))),
   };
   return repos;

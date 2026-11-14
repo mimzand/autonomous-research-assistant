@@ -69,3 +69,38 @@ describe('ChatEventSchema', () => {
     ).toBe(false);
   });
 });
+
+describe('ChatEventSchema: tool events (Phase 8.2)', () => {
+  const base = {
+    type: 'tool',
+    streamId: '11111111-1111-4111-8111-111111111111',
+    callId: 'call_1',
+    name: 'web_search',
+    query: 'lighthouse',
+    status: 'completed',
+    reason: null,
+    resultCount: 5,
+  };
+
+  it('accepts a valid tool event', () => {
+    expect(ChatEventSchema.parse(base)).toEqual(base);
+  });
+
+  it('rejects unknown fields, unsafe names, long queries, unknown statuses and raw error text', () => {
+    for (const patch of [
+      { message: 'ECONNREFUSED C:\\Users\\alice' }, // no free-text error field
+      { name: 'web search; rm -rf' },
+      { name: '' },
+      { query: 'x'.repeat(401) },
+      { status: 'approved' },
+      { reason: 'ECONNREFUSED' },
+      { resultCount: 11 },
+      { resultCount: -1 },
+      { callId: '' },
+    ]) {
+      expect(ChatEventSchema.safeParse({ ...base, ...patch }).success, JSON.stringify(patch)).toBe(
+        false,
+      );
+    }
+  });
+});

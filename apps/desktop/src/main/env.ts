@@ -35,7 +35,7 @@ export function loadDevEnvFile(
 
 /**
  * Packaged app: applies `settings.env` from the user data folder, if present.
- * Only allowed keys (OLLAMA_*, SEARXNG_*, WEB_*, RESEARCH_*) are applied, real
+ * Only allowed keys (OLLAMA_*, SEARXNG_*, WEB_*, RESEARCH_*, AGENT_ENGINE) are applied, real
  * environment variables still win, and a file larger than 64 KB is ignored.
  * Returns the applied keys and the keys that were ignored.
  */

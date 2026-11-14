@@ -58,32 +58,67 @@ Windows **zip** can also be built there with
 `electron-builder --win zip -c.win.signAndEditExecutable=false`. The **installer** and the
 exe metadata step need Windows, or Wine.
 
-Check the fuses of the built exe:
+Verify the built exe and installer (read-only; nothing is run, changed or installed):
 
 ```powershell
-# npx fetches the @electron/fuses CLI (already a dependency of electron-builder) if needed.
-cd apps/desktop
-npx @electron/fuses read --app "release/win-unpacked/Autonomous Research Assistant.exe"
+pnpm verify:win-build                  # defaults to apps/desktop/release
 ```
 
-Expected:
+`@electron/fuses` is only a transitive dependency of electron-builder, so pnpm links no
+`electron-fuses` command and `npx @electron/fuses read …` does not work in this
+repository. `scripts/verify-windows-build.mjs` reads the fuse wire from the exe itself
+and cross-checks it with `getCurrentFuseWire()` of the copy electron-builder already
+uses (no download, no new dependency). It also checks:
 
-- `RunAsNode`, `EnableNodeOptionsEnvironmentVariable` and `EnableNodeCliInspectArguments`
-  are **Disabled**.
-- `EnableEmbeddedAsarIntegrityValidation`, `OnlyLoadAppFromAsar` and
-  `EnableCookieEncryption` are **Enabled**.
+- the exe is x64 and its version info names the product;
+- the embedded ASAR integrity resource (`INTEGRITY/ELECTRONASAR`) exists and its SHA-256
+  equals the hash of the `resources\app.asar` header;
+- the setup exe and portable zip exist and are non-empty, and prints their SHA-256;
+- the installer embeds one 7z payload. **If 7-Zip is installed**, every file in that
+  payload is compared (size and CRC32) with `win-unpacked`, without extracting anything;
+  otherwise this check is reported as SKIP.
+
+Expected fuses (from `electronFuses` in `apps/desktop/electron-builder.yml`):
+
+| Fuse                                    | Expected | Why                                                  |
+| --------------------------------------- | -------- | ---------------------------------------------------- |
+| `RunAsNode`                             | Disabled | `ELECTRON_RUN_AS_NODE` cannot turn the exe into Node |
+| `EnableNodeOptionsEnvironmentVariable`  | Disabled | `NODE_OPTIONS` is ignored                            |
+| `EnableNodeCliInspectArguments`         | Disabled | `--inspect` is ignored                               |
+| `EnableEmbeddedAsarIntegrityValidation` | Enabled  | a modified `app.asar` is refused                     |
+| `OnlyLoadAppFromAsar`                   | Enabled  | no `resources/app` folder is loaded                  |
+| `EnableCookieEncryption`                | Enabled  | cookies encrypted at rest (DPAPI)                    |
+| `LoadBrowserProcessSpecificV8Snapshot`  | Disabled | not used                                             |
+| `GrantFileProtocolExtraPrivileges`      | Enabled  | accepted risk: the renderer is loaded from `file://` |
+| `WasmTrapHandlers`                      | Enabled  | not configured; Electron default                     |
+
+Do not infer fuse values from the electron-builder log, and never disable a fuse or edit
+the installer to make this check pass.
 
 ## 4. Test the packaged app
 
-Automated, in CI or the cloud sandbox: the packaged Linux build of the same configuration
-is driven over the DevTools protocol, because the fuses disable `--inspect`.
+Automated: `pnpm smoke:packaged` starts the **packaged executable** (not the dev server)
+with a temporary user-data folder (`--user-data-dir`) and a fake Ollama and SearXNG on
+127.0.0.1. It drives the real preload API over the Chromium DevTools protocol; the fuses
+disable Node's `--inspect`, not `--remote-debugging-port`. It never touches the real
+profile, contacts no real Ollama or website, and runs no model.
 
-| Suite                                                                                                                                        | Checks |
-| -------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `e2e-packaged`: release checks (startup checks, CSP, isolation, navigation lock, settings.env allow-list, fuses, data location, asar layout) | 17     |
-| `e2e-agent` on the packaged app: full research run, pause/resume, cancel, restart                                                            | 27     |
-| `e2e-reliability` on the packaged app: Ollama stops mid-run, malformed report then Retry, start refused                                      | 14     |
-| `e2e-chat` on the packaged app                                                                                                               | 26     |
+```powershell
+pnpm package:win                       # or pnpm package:dir (unpacked app only)
+pnpm smoke:packaged                    # defaults to apps/desktop/release/win-unpacked
+```
+
+| Checks (56)                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Package: asar layout; no sources, maps, tests, `.env` or bench; one runtime dependency; only `better-sqlite3` unpacked, with this OS's binary only; ADK bundled; production CSP; no credentials, keys or tunnel endpoints (17)                                                                                                                                                                         |
+| Security at run time: `ELECTRON_RUN_AS_NODE` and `--inspect` ignored (fuses); `settings.env` ignores `NODE_OPTIONS`; no `require`/`process` in the page; frozen `window.api`; CSP blocks `fetch` and inline scripts; `window.open` denied; navigation blocked                                                                                                                                          |
+| Behaviour: renderer from `file://…/app.asar`; SQLite in the user-data folder; Settings IPC, environment overrides, defaults; Legacy and ADK Chat; Research task with the ADK engine pinned; forced kill → recovered as interrupted; integrity check; cancel; quit and reopen; **no network request by Chromium itself** (net log of every run; e.g. no spell-check dictionary download)                |
+| Web search in Chat (fake Ollama tool calls + fake SearXNG): off by default and the Chat request unchanged; when on, Legacy Chat runs `web_search` through the ToolGateway (only tool declared, fenced untrusted result, refused `fetch_source`, streamed answer, timeline events, Stop during a search); ADK Chat uses the same gateway; Research never declares tools; the setting survives a restart |
+
+A Windows package cross-built on Linux can only be checked statically:
+`node apps/desktop/scripts/smoke-packaged.mjs apps/desktop/release/win-unpacked --target=win32-x64 --static-only`.
+Research, recovery and the Legacy/ADK engines are tested in depth by the in-process and
+real-process suites (`pnpm test`, including `src/main/lifecycle/process-crash.test.ts`).
 
 **Manual, on Windows**, using the Windows checklist below. It must be done on a real
 Windows 10 or 11 machine, ideally a fresh Windows user account.
@@ -96,6 +131,8 @@ Windows 10 or 11 machine, ideally a fresh Windows user account.
    ```powershell
    Get-FileHash "release\*.exe","release\*.zip" -Algorithm SHA256
    ```
+
+   `pnpm verify:win-build` prints the same SHA-256 values.
 
 3. Attach the setup exe, the portable zip and the checksums to the release.
 4. In the release notes, link [installation.md](installation.md#7-update) for the update
@@ -135,13 +172,12 @@ Copy this list into the release issue and tick each item.
 - [ ] No new runtime dependency besides `better-sqlite3` (`dependencies` in `apps/desktop/package.json`)
 - [ ] New migrations have an upgrade test and only add data structures
 - [ ] `pnpm package:win` produces `…-setup.exe` and `…-portable.zip`
-- [ ] Fuses read as expected (section 3)
+- [ ] `pnpm verify:win-build` passes: fuses, ASAR integrity, x64 identity, installer payload (section 3)
 - [ ] `resources/app.asar.unpacked` contains only `better-sqlite3` with `win32-x64.node`; there is no `resources/app` folder
 
 ### Automated tests of the packaged app
 
-- [ ] `e2e-packaged`: 17/17
-- [ ] `e2e-agent`, `e2e-reliability` and `e2e-chat` against the packaged build all pass
+- [ ] `pnpm smoke:packaged` on Windows (`release/win-unpacked`): all checks pass
 
 ### Windows: install
 

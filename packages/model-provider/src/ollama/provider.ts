@@ -12,9 +12,17 @@ import {
   type GenerateResult,
   type ModelAvailability,
   type ModelInfo,
+  type ToolCall,
 } from '../schemas.js';
 import { parseNdjson, truncate } from './ndjson.js';
 import { RequestScope } from './scope.js';
+import {
+  TOOL_CALLING_MIN_VERSION,
+  ToolCallCollector,
+  toWireMessage,
+  toWireTools,
+  usesToolCalling,
+} from './tool-calls.js';
 import {
   OllamaChatChunkSchema,
   OllamaErrorBodySchema,
@@ -40,6 +48,36 @@ export interface OllamaProviderOptions {
   readonly getAuthToken?: () => string | undefined;
   /** False while the user has disconnected from Ollama in Settings. */
   readonly isConnected?: () => boolean;
+  /**
+   * Allows requests that declare tools or carry tool-call history. Off by
+   * default: the app's Chat and Research never let the model call tools, so
+   * their provider rejects such requests. Only the tool-calling test harness
+   * (and, after approval, a later migration phase) turns it on.
+   */
+  readonly allowToolCalls?: boolean;
+  /** Generates ids for tool calls the server sent without one. Injected for tests. */
+  readonly newToolCallId?: () => string;
+  /**
+   * Exact host names of trusted ngrok tunnels (OLLAMA_NGROK_BYPASS_HOSTS,
+   * main process only). Requests to one of these hosts over HTTPS carry
+   * `ngrok-skip-browser-warning: true`; every other request does not.
+   * Redirects are never followed, so the header cannot reach another host.
+   */
+  readonly ngrokBypassHosts?: readonly string[];
+}
+
+/** What is known about a model's tool calling, without running it. */
+export interface OllamaToolSupport {
+  readonly model: string;
+  readonly serverVersion: string;
+  /** The server version accepts `tools` in /api/chat (0.3.0+). */
+  readonly serverSupportsTools: boolean;
+  /**
+   * What /api/show advertises: "yes"/"no" from the model's `capabilities`, or
+   * "unknown" when the server reports no capabilities (older servers).
+   * Advertised support is not proof: only a successful tool call verifies it.
+   */
+  readonly advertised: 'yes' | 'no' | 'unknown';
 }
 
 /** One installed model as listed by /api/tags. */
@@ -96,6 +134,7 @@ export class OllamaProvider implements ModelProvider {
   private config: OllamaConfig;
   private readonly fetchImpl: FetchLike;
   private readonly now: () => Date;
+  private readonly newToolCallId: () => string;
 
   constructor(
     config: OllamaConfig,
@@ -104,6 +143,7 @@ export class OllamaProvider implements ModelProvider {
     this.config = freeze(config);
     this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
     this.now = options.now ?? (() => new Date());
+    this.newToolCallId = options.newToolCallId ?? (() => `call_${crypto.randomUUID()}`);
   }
 
   get defaultModel(): string {
@@ -123,6 +163,16 @@ export class OllamaProvider implements ModelProvider {
   /** An independent provider fixed to the current configuration. */
   snapshot(config: OllamaConfig = this.config): OllamaProvider {
     return new OllamaProvider(config, this.options);
+  }
+
+  /**
+   * An independent provider fixed to the current configuration that accepts
+   * tool-calling requests (Phase 8.2). Only the Legacy Chat web-search path
+   * may use it; this provider and its other snapshots keep tool calling off.
+   * Same server, model, credentials, transport options and timeouts.
+   */
+  withToolCalling(): OllamaProvider {
+    return new OllamaProvider(this.config, { ...this.options, allowToolCalls: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -261,6 +311,30 @@ export class OllamaProvider implements ModelProvider {
     }
   }
 
+  /**
+   * Tool-calling support of a model (default: the configured one) from
+   * /api/version and /api/show. Reports what is advertised; it does not run
+   * the model.
+   */
+  async checkToolSupport(
+    model = this.defaultModel,
+    options: CallOptions = {},
+  ): Promise<OllamaToolSupport> {
+    const serverVersion = await this.getVersion(this.config, options);
+    const details = await this.showModel(model, options);
+    return {
+      model,
+      serverVersion,
+      serverSupportsTools: supportsToolCalling(serverVersion),
+      advertised:
+        details.capabilities.length === 0
+          ? 'unknown'
+          : details.capabilities.includes('tools')
+            ? 'yes'
+            : 'no',
+    };
+  }
+
   /** The `options` object sent to Ollama for a request without its own options. */
   effectiveOptions(config: OllamaConfig = this.config): OllamaChatBody['options'] {
     return toWireOptions(config, {});
@@ -277,6 +351,7 @@ export class OllamaProvider implements ModelProvider {
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? config.generateTimeoutMs,
     });
+    const collector = new ToolCallCollector();
     try {
       const response = await this.send(config, '/api/chat', body, scope);
       const json = await readJson(response, scope);
@@ -287,7 +362,12 @@ export class OllamaProvider implements ModelProvider {
           'Model server returned an incomplete response.',
         );
       }
-      return toResult(chunk, chunk.message.content, chunk.message.thinking ?? '', body.think);
+      collector.add(chunk.message.tool_calls);
+      return this.withToolCalls(
+        toResult(chunk, chunk.message.content, chunk.message.thinking ?? '', body.think),
+        collector,
+        body,
+      );
     } catch (error) {
       throw scope.toError(error);
     } finally {
@@ -310,6 +390,7 @@ export class OllamaProvider implements ModelProvider {
 
     let content = '';
     let thinking = '';
+    const collector = new ToolCallCollector();
     try {
       const response = await this.send(config, '/api/chat', body, scope);
       if (!response.body) {
@@ -317,6 +398,9 @@ export class OllamaProvider implements ModelProvider {
       }
       for await (const line of parseNdjson(response.body, () => scope.touch())) {
         const chunk = parseChunk(line);
+        // Held back until the stream completes: a call is only returned once
+        // the whole response has arrived and every call has been parsed.
+        collector.add(chunk.message.tool_calls);
         content += chunk.message.content;
         thinking += chunk.message.thinking ?? '';
 
@@ -326,7 +410,14 @@ export class OllamaProvider implements ModelProvider {
             : { type: 'delta', content: chunk.message.content };
         }
         if (chunk.done) {
-          yield { type: 'done', result: toResult(chunk, content, thinking, body.think) };
+          yield {
+            type: 'done',
+            result: this.withToolCalls(
+              toResult(chunk, content, thinking, body.think),
+              collector,
+              body,
+            ),
+          };
           return;
         }
       }
@@ -343,6 +434,22 @@ export class OllamaProvider implements ModelProvider {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /** Adds validated tool calls (and rejected ones) to a finished result. */
+  private withToolCalls(
+    result: GenerateResult,
+    collector: ToolCallCollector,
+    body: OllamaChatBody,
+  ): GenerateResult {
+    if (collector.size === 0) return result;
+    const declared = new Set((body.tools ?? []).map((t) => t.function.name));
+    const { toolCalls, invalidToolCalls } = collector.finish(declared, this.newToolCallId);
+    return {
+      ...result,
+      ...(toolCalls.length > 0 && { toolCalls: toolCalls as readonly ToolCall[] }),
+      ...(invalidToolCalls.length > 0 && { invalidToolCalls }),
+    };
+  }
 
   private connected(): boolean {
     return this.options.isConnected?.() ?? true;
@@ -364,10 +471,17 @@ export class OllamaProvider implements ModelProvider {
       );
     }
     const req = parsed.data;
+    const toolCalling = usesToolCalling(req.messages, req.tools);
+    if (toolCalling && !this.options.allowToolCalls) {
+      throw new ModelProviderError(
+        'unsupported',
+        'Tool calling is not enabled for this model provider.',
+      );
+    }
 
     const body: OllamaChatBody = {
       model: req.model ?? config.model,
-      messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: req.messages.map(toWireMessage),
       stream,
       // Always explicit: qwen3 thinks by default, and `false` is accepted by every model.
       think: req.think ?? false,
@@ -375,9 +489,24 @@ export class OllamaProvider implements ModelProvider {
     };
 
     const format = req.responseFormat;
+    // One /api/version call, only when a feature depends on the server version.
+    const version =
+      format?.type === 'json_schema' || req.tools
+        ? await this.getVersion(config, { signal: options.signal })
+        : undefined;
+
+    if (req.tools) {
+      if (version !== undefined && !supportsToolCalling(version)) {
+        throw new ModelProviderError(
+          'unsupported',
+          `Tool calling needs Ollama ${TOOL_CALLING_MIN_VERSION.join('.')} or newer (found ${version}).`,
+        );
+      }
+      body.tools = toWireTools(req.tools);
+    }
+
     if (format?.type === 'json') body.format = 'json';
-    if (format?.type === 'json_schema') {
-      const version = await this.getVersion(config, { signal: options.signal });
+    if (format?.type === 'json_schema' && version !== undefined) {
       if (!supportsStructuredOutput(version)) {
         throw new ModelProviderError(
           'unsupported',
@@ -473,6 +602,9 @@ export class OllamaProvider implements ModelProvider {
     const token = this.options.getAuthToken?.();
     // The token never travels over plain HTTP to another machine.
     if (token && canSendToken(config.baseUrl)) headers['authorization'] = `Bearer ${token}`;
+    if (sendsNgrokBypass(config.baseUrl, this.options.ngrokBypassHosts)) {
+      headers['ngrok-skip-browser-warning'] = 'true';
+    }
 
     let response: Response;
     try {
@@ -531,6 +663,17 @@ function toWireOptions(
   };
 }
 
+/** The ngrok header goes only to a listed host, only over HTTPS. */
+export function sendsNgrokBypass(baseUrl: string, hosts: readonly string[] | undefined): boolean {
+  if (!hosts || hosts.length === 0) return false;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === 'https:' && hosts.includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /** Same rule as the Settings page: HTTPS, or a loopback address. */
 function canSendToken(baseUrl: string): boolean {
   try {
@@ -566,13 +709,22 @@ export function matchesModel(installedName: string, wanted: string): boolean {
 }
 
 export function supportsStructuredOutput(version: string): boolean {
+  return versionAtLeast(version, STRUCTURED_OUTPUT_MIN_VERSION);
+}
+
+/** Whether the server's /api/chat accepts `tools` (Ollama 0.3.0+). */
+export function supportsToolCalling(version: string): boolean {
+  return versionAtLeast(version, TOOL_CALLING_MIN_VERSION);
+}
+
+function versionAtLeast(version: string, min: readonly [number, number, number]): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
   if (!match) return true; // Unknown/dev build: assume a current server.
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
   if (parts.every((p) => p === 0)) return true; // Dev builds report 0.0.0.
   for (let i = 0; i < 3; i++) {
     const have = parts[i] ?? 0;
-    const need = STRUCTURED_OUTPUT_MIN_VERSION[i] ?? 0;
+    const need = min[i] ?? 0;
     if (have !== need) return have > need;
   }
   return true;

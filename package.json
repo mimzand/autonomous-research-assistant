@@ -15,6 +15,9 @@
     "preview": "pnpm --filter @rka/desktop preview",
     "package:win": "pnpm --filter @rka/desktop package:win",
     "package:dir": "pnpm --filter @rka/desktop package:dir",
+    "smoke:packaged": "pnpm --filter @rka/desktop smoke:packaged",
+    "verify:win-build": "pnpm --filter @rka/desktop verify:win-build",
+    "fake:services": "pnpm --filter @rka/desktop fake:services",
     "typecheck": "tsc -p tsconfig.json && pnpm -r --workspace-concurrency=1 typecheck",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
@@ -23,6 +26,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ollama": "pnpm --filter @rka/model-provider test:live",
+    "test:adk:ollama": "pnpm --filter @rka/adk-runtime test:live",
+    "test:chat:ollama": "pnpm --filter @rka/desktop test:live chat-engine",
+    "test:research:ollama": "pnpm --filter @rka/desktop test:live research-engine",
+    "bench:research:ollama": "pnpm --filter @rka/desktop test:live research-benchmark",
+    "acceptance:db": "node packages/storage/scripts/acceptance-db.mjs",
+    "diag:adk-load": "node packages/adk-runtime/scripts/diag-adk-load.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import {
   type ChatMessage,
   type ModelProvider,
 } from '@rka/model-provider';
+import { ollamaConnectionLabel } from '@rka/shared';
 import { type JsonValue, type Storage, type TaskRecord, type TaskStepRecord } from '@rka/storage';
 import {
   canonicalizeUrl,
@@ -19,6 +20,8 @@ import {
   groundClaims,
   indexEvidence,
   renderReport,
+  sameReportIgnoringTime,
+  sanitizeProse,
   type DraftParagraph,
   type EvidenceItem,
   type GroundedClaim,
@@ -41,14 +44,26 @@ import {
   type FailureKind,
 } from './failures.js';
 import {
+  applyCorrections,
+  correctionCandidates,
+  correctionParagraphs,
+  resolveGoalCheck,
+  type RequirementResult,
+} from './goal.js';
+import {
   analysisPrompt,
   evidencePrompt,
+  goalCheckPrompt,
+  goalCorrectionPrompt,
   planPrompt,
   reportPrompt,
   reviewPrompt,
 } from './prompts.js';
 import {
   AnalysisSchema,
+  GoalCheckSchema,
+  GoalCorrectionSchema,
+  RequirementStatus,
   RESEARCH_TASK_KIND,
   ReportDraftSchema,
   ResearchLimitsSchema,
@@ -68,6 +83,8 @@ import {
 
 export { PAUSED_MESSAGE } from './failures.js';
 const CANCELLED_MESSAGE = 'Cancelled by the user.';
+/** maxTokens of the claim review of goal-correction paragraphs (at most 3 short paragraphs). */
+const GOAL_REVIEW_MAX_TOKENS = 400;
 /** Evidence items given to the model in the compare/report steps (context window). */
 const MAX_EVIDENCE_ITEMS = 40;
 const REVIEW_BATCH = 8;
@@ -219,6 +236,18 @@ const ReviewOutput = z.object({
       note: z.string(),
     }),
   ),
+  /** Goal requirements and their status (Phase 7.5; absent on older tasks). */
+  requirements: z
+    .array(
+      z.object({
+        id: z.string(),
+        requirement: z.string(),
+        status: RequirementStatus,
+        note: z.string(),
+        corrected: z.boolean(),
+      }),
+    )
+    .optional(),
 });
 
 type StepInput = { key: string } & Record<string, JsonValue>;
@@ -363,6 +392,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         ...(data !== undefined && { data }),
       });
     } catch (error) {
+      // The database is closed when the app quits: nothing to report (see launch()).
+      if (!storage.sqlite.open) return;
       console.error('Could not write the execution log:', error);
     }
   }
@@ -413,6 +444,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
     schema: S,
     maxTokens: number,
     signal: AbortSignal,
+    /** Usage purpose; default `research:<step kind>`. */
+    purpose = `research:${step.kind}`,
   ): Promise<z.output<S>> {
     const limits = taskInput(task).limits;
     const modelProvider = providerFor(task);
@@ -431,7 +464,7 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           stepId: step.id,
           provider: modelProvider.id,
           model: result.model,
-          purpose: `research:${step.kind}`,
+          purpose,
           ...result.usage,
         });
         log(task.id, 'debug', 'model.call', `Model answered (${step.kind}).`, {
@@ -456,11 +489,11 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           ? `no answer within ${Math.round(limits.modelTimeoutMs / 1000)} s`
           : message(error);
         if (!RETRYABLE_MODEL.has(code) || attempt >= limits.modelRetries) {
-          log(task.id, 'error', 'model.failed', `Local model failed (${code}): ${text}`, {
+          log(task.id, 'error', 'model.failed', `Model failed (${code}): ${text}`, {
             stepId: step.id,
             data: { code, attempts: attempt + 1 },
           });
-          throw classifyModelError(code, `Local model failed (${code}): ${text}`);
+          throw classifyModelError(code, `Model failed (${code}): ${text}`);
         }
         const delayMs = backoffDelay(limits.retryBackoffMs, attempt);
         log(task.id, 'warn', 'model.retry', `Model call failed (${code}): ${text}. Retrying.`, {
@@ -877,9 +910,24 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
             );
           }
         }
-        return {
-          paragraphs: paragraphs.map((p) => ({ ...p, evidence: [...p.evidence] })),
+        // Phase 7.5: goal completeness, bounded (at most 3 extra calls, no loop).
+        const goal = await checkGoal(task, step, signal, {
+          goal: input.goal,
+          requirements: analyzed.analysis.requirements ?? [],
+          paragraphs,
           verdicts,
+          evidenceById,
+        });
+        return {
+          paragraphs: [...paragraphs, ...goal.added].map((p) => ({
+            id: p.id,
+            section: p.section,
+            text: p.text,
+            evidence: [...p.evidence],
+            certainty: p.certainty,
+          })),
+          verdicts: [...verdicts, ...goal.addedVerdicts],
+          ...(goal.results.length && { requirements: goal.results.map((r) => ({ ...r })) }),
         };
       }
 
@@ -899,6 +947,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         });
         const lastModel =
           storage.modelUsage.listByTask(task.id).at(-1)?.model ?? providerFor(task).defaultModel;
+        // The endpoint captured when the task started, never the current Settings.
+        const modelLocation = input.model ? ollamaConnectionLabel(input.model.url) : 'Ollama';
         const selected = outputOf(steps, 'select', SelectOutput);
         const unusable = steps.flatMap((s) => {
           if (s.status !== 'failed' && !(s.kind === 'evidence' && s.status === 'skipped'))
@@ -933,11 +983,14 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           questions,
           generatedAt: now().toISOString(),
           model: lastModel,
+          modelLocation,
+          ...(reviewed.requirements && { requirements: reviewed.requirements }),
         });
-        // A crash after saving must not create a second identical version on resume.
+        // A crash after saving must not create a second identical version on resume
+        // (the repeated save happens later, so only the generation time may differ).
         const latest = storage.reports.latest(task.id);
         const report =
-          latest && latest.content === rendered.markdown
+          latest && sameReportIgnoringTime(latest.content, rendered.markdown)
             ? latest
             : storage.reports.create(task.id, {
                 title: rendered.title,
@@ -953,6 +1006,123 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         };
       }
     }
+  }
+
+  /**
+   * Goal completeness inside the review step (see goal.ts). Every model call
+   * here uses the step's signal (cancellation) and the usual retries; the
+   * results only become durable with the review step's output, so a crash or
+   * Retry repeats the review step exactly as before.
+   */
+  async function checkGoal(
+    task: TaskRecord,
+    step: TaskStepRecord,
+    signal: AbortSignal,
+    ctx: {
+      goal: string;
+      requirements: Analysis['requirements'];
+      paragraphs: readonly DraftParagraph[];
+      verdicts: readonly { id: string; verdict: Verdict; note: string }[];
+      evidenceById: ReadonlyMap<string, EvidenceItem>;
+    },
+  ): Promise<{
+    results: RequirementResult[];
+    added: DraftParagraph[];
+    addedVerdicts: { id: string; verdict: Verdict; note: string }[];
+  }> {
+    const none = { results: [], added: [], addedVerdicts: [] };
+    if (!ctx.requirements.length) return none;
+    const verdictOf = new Map(ctx.verdicts.map((v) => [v.id, v.verdict]));
+    const kept = ctx.paragraphs.filter(
+      (p) => p.evidence.length && verdictOf.get(p.id) !== 'unsupported',
+    );
+    const requirementList = ctx.requirements.map((r, i) => ({
+      id: `R${i + 1}`,
+      requirement: r.requirement,
+    }));
+    const check = kept.length
+      ? await callModel(
+          task,
+          step,
+          goalCheckPrompt(
+            ctx.goal,
+            requirementList,
+            kept.map((p) => ({ id: p.id, text: p.text })),
+          ),
+          GoalCheckSchema,
+          600,
+          signal,
+          'research:review:goal-check',
+        )
+      : null;
+    let results = resolveGoalCheck(ctx.requirements, check, new Set(kept.map((p) => p.id)));
+
+    const candidates = correctionCandidates(ctx.requirements, results);
+    if (!candidates.length) return { results, added: [], addedVerdicts: [] };
+    const correction = await callModel(
+      task,
+      step,
+      goalCorrectionPrompt(
+        ctx.goal,
+        candidates.map((c) => ({
+          id: c.id,
+          requirement: c.requirement,
+          evidence: c.evidence.flatMap((id) => {
+            const e = ctx.evidenceById.get(id);
+            return e ? [e] : [];
+          }),
+        })),
+      ),
+      GoalCorrectionSchema,
+      800,
+      signal,
+      'research:review:goal-correction',
+    );
+    const added = correctionParagraphs(
+      candidates,
+      correction,
+      ctx.paragraphs.length + 1,
+      sanitizeProse,
+    );
+    if (!added.length) return { results, added: [], addedVerdicts: [] };
+    // The same claim review as every other paragraph: nothing unsupported is kept.
+    const review = await callModel(
+      task,
+      step,
+      reviewPrompt(
+        added.map((p) => ({
+          id: p.id,
+          text: p.text,
+          quotes: p.evidence.flatMap((id) => {
+            const e = ctx.evidenceById.get(id);
+            return e ? [e.quote.slice(0, 300)] : [];
+          }),
+        })),
+      ),
+      ReviewSchema,
+      GOAL_REVIEW_MAX_TOKENS,
+      signal,
+      'research:review:goal-correction',
+    );
+    const addedVerdicts = added.map((p) => {
+      const v = review.verdicts.find((x) => x.id.trim().toUpperCase() === p.id);
+      return v
+        ? { id: p.id, verdict: v.verdict as Verdict, note: v.note.slice(0, 300) }
+        : { id: p.id, verdict: 'unsupported' as Verdict, note: 'The review returned no verdict.' };
+    });
+    results = applyCorrections(
+      results,
+      added.map((p, i) => ({
+        requirement: p.requirement,
+        verdict: addedVerdicts[i]?.verdict ?? '',
+      })),
+    );
+    // Rejected paragraphs stay listed as removed (transparent), accepted ones are rendered.
+    return {
+      results,
+      added: added.map(({ requirement: _r, ...p }) => p),
+      addedVerdicts,
+    };
   }
 
   // --- run loop -----------------------------------------------------------------------------
@@ -1126,6 +1296,14 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
     networkFailures.delete(taskId);
     const done = run(taskId, controller)
       .catch((error: unknown) => {
+        if (!storage.sqlite.open) {
+          // Not a crash: the app is quitting and closed the database (will-quit).
+          // The task stays "running" in the file; startup recovery marks it interrupted.
+          console.info(
+            `Research task ${taskId} stopped: the database was closed (app shutting down). It can be resumed after the next start.`,
+          );
+          return;
+        }
         // Last resort: never leave a task "running" after an unexpected error.
         console.error('Research task crashed:', error);
         try {
@@ -1235,7 +1413,7 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
         task.id,
         'info',
         'task.started',
-        `Research started with the local model ${health.model} at ${health.baseUrl}.`,
+        `Research started with the model ${health.model} (${ollamaConnectionLabel(health.baseUrl)}) at ${health.baseUrl}.`,
         {
           data: {
             goal: short(goal, 300),

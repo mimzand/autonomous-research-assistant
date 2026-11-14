@@ -47,12 +47,33 @@ export const OllamaErrorBodySchema = z.object({ error: z.string() });
 
 const nonNegativeInt = z.number().int().nonnegative();
 
+/**
+ * One tool call as Ollama reports it in `message.tool_calls`. Only the shape
+ * is checked here; names and arguments are validated by the provider, so one
+ * bad call is reported as invalid instead of failing the whole response.
+ * - `id`: sent by newer servers only.
+ * - `function.index`: position of the call; newer servers only.
+ * - `function.arguments`: a JSON object in the native API. A JSON string is
+ *   tolerated (some model templates produce one).
+ */
+export const OllamaToolCallSchema = z.object({
+  id: z.string().optional(),
+  type: z.string().optional(),
+  function: z.object({
+    index: z.number().int().nonnegative().optional(),
+    name: z.string(),
+    arguments: z.unknown(),
+  }),
+});
+export type OllamaToolCall = z.infer<typeof OllamaToolCallSchema>;
+
 export const OllamaChatChunkSchema = z.object({
   model: z.string(),
   message: z.object({
     role: z.literal('assistant'),
     content: z.string(),
     thinking: z.string().optional(),
+    tool_calls: z.array(OllamaToolCallSchema).nullable().optional(),
   }),
   done: z.boolean(),
   done_reason: z.string().optional(),
@@ -64,9 +85,29 @@ export const OllamaChatChunkSchema = z.object({
 export type OllamaChatChunk = z.infer<typeof OllamaChatChunkSchema>;
 
 /** Body for POST /api/chat. */
+/** A tool call replayed in an assistant message of the conversation history. */
+export interface OllamaWireToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: Record<string, unknown> };
+}
+
+export type OllamaWireMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string; tool_calls?: OllamaWireToolCall[] }
+  /** `tool_name` is matched by every tool-capable server; `tool_call_id` by newer ones. */
+  | { role: 'tool'; content: string; tool_name: string; tool_call_id: string };
+
+/** Ollama tool definition (`tools` in POST /api/chat). */
+export interface OllamaWireTool {
+  type: 'function';
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
 export interface OllamaChatBody {
   model: string;
-  messages: { role: string; content: string }[];
+  messages: OllamaWireMessage[];
+  tools?: OllamaWireTool[];
   stream: boolean;
   think: boolean;
   format?: 'json' | Record<string, unknown>;

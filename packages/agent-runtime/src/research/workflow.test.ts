@@ -302,7 +302,7 @@ describe('research workflow: validation and limits', () => {
     const id = await h.start(undefined, { modelTimeoutMs: 1000, modelRetries: 0 });
     await h.runtime.tasks.whenIdle();
     expect(h.storage.tasks.require(id).error).toMatch(
-      /Local model failed \(timeout\): no answer within 1 s/,
+      /Model failed \(timeout\): no answer within 1 s/,
     );
   });
 });

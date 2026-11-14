@@ -13,6 +13,20 @@ export interface HtmlExtraction {
   readonly canonicalUrl: string | null;
   /** True when the text came from `<main>`/`<article>` rather than the whole body. */
   readonly usedMainContent: boolean;
+  /**
+   * Characters of text that were deliberately not read, by reason. Used only to
+   * explain an empty result (the skipped text itself is never returned).
+   */
+  readonly skipped: { readonly noscript: number; readonly form: number; readonly hidden: number };
+}
+
+export interface ExtractHtmlOptions {
+  /**
+   * Read text inside `<form>` elements (default false). Used only as a fallback
+   * when a page wraps its whole content in a form (e.g. ASP.NET WebForms); form
+   * controls (inputs, buttons, selects, text areas) stay skipped.
+   */
+  readonly includeForms?: boolean;
 }
 
 /** Elements whose content is never text for the reader (or is executable). */
@@ -129,7 +143,11 @@ function safeHttpUrl(value: string | undefined, base: string | undefined): strin
  * Extracts readable text and metadata from an HTML document. The page is only
  * parsed: no scripts run, no styles or subresources load, nothing is fetched.
  */
-export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
+export function extractHtml(
+  html: string,
+  pageUrl?: string,
+  options: ExtractHtmlOptions = {},
+): HtmlExtraction {
   const meta = new Map<string, string>();
   let title = '';
   let inTitle = false;
@@ -141,6 +159,8 @@ export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
 
   const stack: string[] = [];
   let skipAt = -1; // Stack depth at which a skipped subtree started.
+  let skipReason: 'noscript' | 'form' | 'hidden' | null = null;
+  const skipped = { noscript: 0, form: 0, hidden: 0 };
   let mainAt = -1; // Stack depth of the outermost <main>/<article>.
   let preDepth = 0;
   const all: string[] = [];
@@ -170,8 +190,17 @@ export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
           if (rel.includes('canonical')) canonical = safeHttpUrl(attrs['href'], pageUrl);
         }
         if (skipAt >= 0) return;
-        if (SKIP.has(name) || isHidden(attrs)) {
+        if (name === 'form' && options.includeForms) {
+          // Fallback mode: read the form's text (its controls stay skipped).
+        } else if (SKIP.has(name) || isHidden(attrs)) {
           skipAt = depth;
+          skipReason = isHidden(attrs)
+            ? 'hidden'
+            : name === 'noscript'
+              ? 'noscript'
+              : name === 'form'
+                ? 'form'
+                : null;
           return;
         }
         if ((name === 'main' || name === 'article') && mainAt < 0) mainAt = depth;
@@ -190,7 +219,10 @@ export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
           title += text;
           return;
         }
-        if (skipAt >= 0) return;
+        if (skipAt >= 0) {
+          if (skipReason) skipped[skipReason] += text.replace(/\s+/g, '').length;
+          return;
+        }
         if (h1Depth >= 0) firstH1 += text;
         if (preDepth > 0) {
           // Keep line breaks inside <pre>; normalizeWhitespace only trims lines.
@@ -211,7 +243,10 @@ export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
           if (name === 'pre' && preDepth > 0) preDepth--;
           if (depth === h1Depth) h1Depth = -1;
         }
-        if (depth === skipAt) skipAt = -1;
+        if (depth === skipAt) {
+          skipAt = -1;
+          skipReason = null;
+        }
         if (depth === mainAt) mainAt = -1;
         stack.pop();
       },
@@ -255,5 +290,59 @@ export function extractHtml(html: string, pageUrl?: string): HtmlExtraction {
     siteName: pick('og:site_name', 'application-name'),
     canonicalUrl: canonical,
     usedMainContent,
+    skipped,
   };
+}
+
+/*
+ * Access checks (bot protection / CAPTCHA interstitials). Such a page is not
+ * the requested document and must never become research evidence. Detection
+ * is deliberately conservative: a known interstitial title or marker AND very
+ * little visible text, so an ordinary article that mentions these words (or a
+ * normal page carrying a bot-detection script) is not affected. Nothing here
+ * tries to pass the check.
+ */
+const CHALLENGE_TITLES = [
+  /^just a moment\.*$/i,
+  /^attention required!?\s*\|\s*cloudflare$/i,
+  /^please wait\.*\s*\|\s*cloudflare$/i,
+  /^access denied$/i,
+  /^ddos-guard$/i,
+  /^are you a robot\??$/i,
+  /^(human|security) verification$/i,
+  /^verify(ing)? you are (a )?human\.*$/i,
+  /^captcha$/i,
+];
+const CHALLENGE_MARKERS = [
+  'cf_chl_opt', // Cloudflare challenge configuration (interstitial only)
+  'id="challenge-form"',
+  "id='challenge-form'",
+  'cf-browser-verification',
+  'id="px-captcha"', // PerimeterX
+  'captcha-delivery.com', // DataDome
+];
+/** Interstitials are short; real articles are not. */
+const CHALLENGE_MAX_TEXT = 1500;
+
+export function looksLikeAccessChallenge(
+  rawHtml: string,
+  extraction: Pick<HtmlExtraction, 'title' | 'text'>,
+): boolean {
+  if (extraction.text.length > CHALLENGE_MAX_TEXT) return false;
+  const title = extraction.title?.replace(/\s+/g, ' ').trim() ?? '';
+  if (CHALLENGE_TITLES.some((re) => re.test(title))) return true;
+  const head = rawHtml.slice(0, 200_000).toLowerCase();
+  return CHALLENGE_MARKERS.some((m) => head.includes(m));
+}
+
+/** Why an HTML page produced no readable text (for the error message). */
+export function explainEmptyHtml(byteLength: number, extraction: HtmlExtraction): string {
+  if (byteLength === 0) return 'the server returned an empty response (0 bytes)';
+  const { noscript, form, hidden } = extraction.skipped;
+  if (noscript > 0)
+    return 'the page only shows text when JavaScript runs (scripts are never run here)';
+  if (hidden > 0)
+    return 'all text on the page is hidden (hidden, aria-hidden or display:none) and is not read';
+  if (form > 0) return 'the only text is inside forms';
+  return 'the page contains no visible text (it may be built by JavaScript, which is never run here)';
 }

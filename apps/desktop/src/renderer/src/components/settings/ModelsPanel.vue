@@ -61,6 +61,8 @@ onMounted(async () => {
 });
 
 const active = computed(() => view.value?.values['model.name'] ?? '');
+// OLLAMA_MODEL overrides the active model: choosing another one here is disabled.
+const modelLocked = computed(() => view.value?.entries['model.name']?.overridden === true);
 const names = computed(() =>
   list.value?.status === 'ok' ? list.value.models.map((m) => m.name) : [],
 );
@@ -170,7 +172,12 @@ const isActive = (name: string) => matchesModelName(name, active.value);
                 <button
                   type="button"
                   class="primary"
-                  :disabled="isActive(m.name)"
+                  :disabled="isActive(m.name) || modelLocked"
+                  :title="
+                    modelLocked
+                      ? 'Set by OLLAMA_MODEL; remove it and restart to choose here.'
+                      : undefined
+                  "
                   :data-testid="`use-${m.name}`"
                   @click="select(m.name)"
                 >

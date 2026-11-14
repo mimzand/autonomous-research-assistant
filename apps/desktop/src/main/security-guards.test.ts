@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 const repo = join(import.meta.dirname, '..', '..', '..', '..');
 const roots = [
   'apps/desktop/src',
+  'packages/adk-runtime/src',
   'packages/agent-runtime/src',
   'packages/model-provider/src',
   'packages/storage/src',
@@ -65,11 +66,92 @@ describe('security guards', () => {
     expect(
       offenders(/\b(rmSync|unlinkSync|rmdirSync|unlink|rmdir)\s*\(|fs\.rm\(|\.rm\(/, [
         'packages/storage/src/inspect.ts',
+        'apps/desktop/src/bench/runner.ts',
       ]),
     ).toEqual([]);
+    // The benchmark (dev tooling, not part of the app) removes only the temporary
+    // directories it created with mkdtempSync in the OS temp folder.
+    const bench = readFileSync(join(repo, 'apps/desktop/src/bench/runner.ts'), 'utf8');
+    expect(bench.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(root', 'rmSync(dir']);
+    expect(bench).toMatch(/const root = mkdtempSync\(join\(tmpdir\(\), 'rka-bench-'\)\)/);
+    expect(bench).toMatch(/const dir = mkdtempSync\(join\(root, 'task-'\)\)/);
     // inspect.ts removes only its own `<target>.partial-*` file after a failed backup.
     const inspect = readFileSync(join(repo, 'packages/storage/src/inspect.ts'), 'utf8');
     expect(inspect.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(temp']);
+  });
+
+  it('never ships the benchmark: no app code imports src/bench', () => {
+    const app = files.filter((f) => !rel(f).startsWith('apps/desktop/src/bench/'));
+    expect(
+      app.filter((f) => /from '[^']*\/bench\//.test(readFileSync(f, 'utf8'))).map(rel),
+    ).toEqual([]);
+  });
+
+  it('keeps model tool calling off except for the one gated Legacy Chat web-search path', () => {
+    // Phase 8.2: the only provider that accepts tool calls is created by
+    // OllamaProvider.withToolCalling() (the only place that sets allowToolCalls),
+    // and only the Legacy Chat engine wiring asks for one. The shared provider,
+    // Research and ADK never get tool calling, and the test harness that
+    // executes tools is never imported by shipped code.
+    expect(
+      offenders(/\ballowToolCalls\s*:/, ['packages/model-provider/src/ollama/provider.ts']),
+    ).toEqual([]);
+    const provider = readFileSync(
+      join(repo, 'packages/model-provider/src/ollama/provider.ts'),
+      'utf8',
+    );
+    expect(provider.match(/\ballowToolCalls\s*:/g)).toHaveLength(1);
+    expect(provider).toMatch(
+      /withToolCalling\(\): OllamaProvider \{\s*return new OllamaProvider\(this\.config, \{ \.\.\.this\.options, allowToolCalls: true \}\);/,
+    );
+    expect(offenders(/\.withToolCalling\(\)/, ['apps/desktop/src/main/chat-engine.ts'])).toEqual(
+      [],
+    );
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).not.toMatch(/allowToolCalls|withToolCalling/);
+    expect(offenders(/testing\/tool-harness/)).toEqual([]);
+    const entry = readFileSync(join(repo, 'packages/model-provider/src/index.ts'), 'utf8');
+    expect(entry).not.toMatch(/from '\.\/testing\//);
+  });
+
+  it('routes every model-driven tool call through the ToolGateway (Phase 8.2)', () => {
+    // The tool loop is used only by the Legacy Chat engine; it never executes a
+    // tool itself, it only asks the gateway.
+    expect(
+      offenders(/\bstreamChatWithTools\b/, [
+        'packages/agent-runtime/src/chat/tool-chat.ts',
+        'packages/agent-runtime/src/index.ts',
+        'apps/desktop/src/main/chat-engine.ts',
+      ]),
+    ).toEqual([]);
+    const loop = readFileSync(join(repo, 'packages/agent-runtime/src/chat/tool-chat.ts'), 'utf8');
+    expect(loop).not.toMatch(/\.execute\(|ToolRegistry|registry/);
+    // Registry execution only from: the gateway (model-driven), the code-controlled
+    // Research workflow, the user-driven Research Tools page, and the (unused) ADK bridge.
+    expect(
+      offenders(/\b(?:tools|registry)\.execute\(/, [
+        'packages/agent-runtime/src/tools/gateway.ts',
+        'packages/agent-runtime/src/research/workflow.ts',
+        'apps/desktop/src/main/research-tools.ts',
+        'packages/adk-runtime/src/tools/registry-tool.ts',
+      ]),
+    ).toEqual([]);
+    // Research (Legacy and ADK) never uses the gateway or the tool loop.
+    const research = files.filter((f) =>
+      /packages\/(agent|adk)-runtime\/src\/research\//.test(rel(f)),
+    );
+    expect(research.length).toBeGreaterThan(0);
+    for (const file of research) {
+      expect(readFileSync(file, 'utf8'), rel(file)).not.toMatch(
+        /tools\/gateway|chat\/tool-chat|createToolGateway|streamChatWithTools|withToolCalling/,
+      );
+    }
+    // The gateway can offer web_search only, and never passes an approval or task id.
+    const gateway = readFileSync(join(repo, 'packages/agent-runtime/src/tools/gateway.ts'), 'utf8');
+    expect(gateway).toMatch(
+      /MODEL_EXPOSABLE_TOOLS: readonly string\[\] = Object\.freeze\(\['web_search'\]\)/,
+    );
+    expect(gateway).not.toMatch(/approvalId\s*:|taskId\s*:/);
   });
 
   it('never evaluates dynamic code', () => {
@@ -134,5 +216,88 @@ describe('security guards', () => {
     expect(config).toMatch(/requestedExecutionLevel: asInvoker/);
     expect(config).toMatch(/deleteAppDataOnUninstall: false/);
     expect(config).toMatch(/npmRebuild: false/);
+  });
+});
+
+describe('Windows packaging configuration (Phase 7.7)', () => {
+  const config = readFileSync(join(repo, 'apps/desktop/electron-builder.yml'), 'utf8');
+  const pkg = JSON.parse(readFileSync(join(repo, 'apps/desktop/package.json'), 'utf8')) as {
+    productName: string;
+    dependencies: Record<string, string>;
+  };
+
+  /** The items of every `files:` list (top level and per platform). */
+  function fileLists(): string[][] {
+    const lines = config.split(/\r?\n/);
+    const lists: string[][] = [];
+    lines.forEach((line, i) => {
+      const m = /^(\s*)files:\s*$/.exec(line);
+      if (!m) return;
+      const items: string[] = [];
+      for (const next of lines.slice(i + 1)) {
+        const item = /^\s*-\s*'?([^']*)'?\s*$/.exec(next);
+        if (item?.[1] !== undefined) items.push(item[1]);
+        else if (next.trim() && !next.trim().startsWith('#')) break;
+      }
+      lists.push(items);
+    });
+    return lists;
+  }
+
+  it('every files list includes the build explicitly (an only-"!" list would ship the whole app folder)', () => {
+    const lists = fileLists();
+    expect(lists.length).toBeGreaterThanOrEqual(3); // top level, win, linux
+    for (const items of lists) {
+      expect(items, JSON.stringify(items)).toContain('out/**/*');
+      expect(items).toContain('package.json');
+      expect(
+        items.every((i) => i.startsWith('!') || ['out/**/*', 'package.json'].includes(i)),
+      ).toBe(true);
+    }
+  });
+
+  it('keeps the identity that decides the data folder and the upgrade path', () => {
+    expect(config).toMatch(/^appId: com\.rka\.autonomous-research-assistant$/m);
+    expect(config).toMatch(/^productName: Autonomous Research Assistant$/m);
+    expect(pkg.productName).toBe('Autonomous Research Assistant');
+    expect(config).toMatch(/^ {2}executableName: Autonomous Research Assistant$/m);
+  });
+
+  it('per-user NSIS installer, x64, no elevation, keeps user data, no auto-update, no signing secrets', () => {
+    for (const line of [
+      'perMachine: false',
+      'allowElevation: false',
+      'deleteAppDataOnUninstall: false',
+      'target: nsis',
+      'arch: [x64]',
+      'publish: null',
+    ]) {
+      expect(config).toContain(line);
+    }
+    expect(config).not.toMatch(/CSC_LINK\s*:|certificatePassword|certificateFile/);
+  });
+
+  it('ships one runtime dependency, unpacked from the asar, without build-only files', () => {
+    expect(Object.keys(pkg.dependencies)).toEqual(['better-sqlite3']);
+    expect(config).toContain("- '**/node_modules/better-sqlite3/**/*.node'");
+    expect(config).toContain("- '!**/node_modules/node-addon-api/**'");
+    expect(config).toMatch(/^asar: true$/m);
+  });
+
+  it('Chromium downloads no spell-check dictionaries (no runtime request to Google)', () => {
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).toContain('session.defaultSession.setSpellCheckerEnabled(false);');
+    expect(main).toContain('session.defaultSession.setSpellCheckerLanguages([]);');
+    const window = readFileSync(join(repo, 'apps/desktop/src/main/window.ts'), 'utf8');
+    expect(window).toContain('spellcheck: false');
+  });
+
+  it('loads the renderer from the package in production (dev server URL only when not packaged)', () => {
+    const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(main).toMatch(
+      /const devServerUrl = app\.isPackaged \? undefined : process\.env\['ELECTRON_RENDERER_URL'\];/,
+    );
+    const window = readFileSync(join(repo, 'apps/desktop/src/main/window.ts'), 'utf8');
+    expect(window).toMatch(/loadFile\(rendererIndexPath\(\)\)/);
   });
 });

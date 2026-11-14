@@ -1,12 +1,18 @@
 <script setup lang="ts">
+import { ollamaConnectionLabel } from '@rka/shared';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { isSubmitKey } from '../chat/keyboard';
 import { createChatSession } from '../chat/session';
+import { toolStepLabel, toolStepStatusText } from '../chat/tool-steps';
 import { useModelHealth } from '../composables/useModelHealth';
 
 const { health, refresh: refreshHealth } = useModelHealth();
 const modelName = computed(() => health.value?.model ?? 'qwen3:8b');
 const modelReady = computed(() => health.value?.status === 'ready');
+// From the effective server URL reported by the main process (updates after Settings → Save).
+const connectionLabel = computed(() =>
+  health.value ? ollamaConnectionLabel(health.value.baseUrl) : 'Ollama',
+);
 
 const chat = createChatSession(window.api.chat, {
   model: () => modelName.value,
@@ -81,7 +87,7 @@ onBeforeUnmount(() => chat.dispose());
         <p class="model" data-testid="chat-model">
           <span class="dot" :data-ready="modelReady" aria-hidden="true"></span>
           <code>{{ modelName }}</code>
-          <span class="muted">· local via Ollama</span>
+          <span class="muted" data-testid="chat-connection">· {{ connectionLabel }}</span>
         </p>
       </div>
       <button
@@ -104,8 +110,14 @@ onBeforeUnmount(() => chat.dispose());
       data-testid="chat-log"
       @scroll="onScroll"
     >
-      <p v-if="messages.length === 0" class="empty">
-        Send a message to test the local model. Everything stays on this computer.
+      <p v-if="messages.length === 0" class="empty" data-testid="chat-empty">
+        <template v-if="connectionLabel === 'Remote Ollama'">
+          Send a message to test the model. Messages are sent to the Ollama server configured in
+          Settings.
+        </template>
+        <template v-else>
+          Send a message to test the local model. Everything stays on this computer.
+        </template>
       </p>
 
       <article
@@ -116,6 +128,29 @@ onBeforeUnmount(() => chat.dispose());
         :data-status="message.status"
         data-testid="chat-message"
       >
+        <!-- Web searches the model made for this reply (Legacy Chat with web search). -->
+        <ul v-if="message.tools.length" class="tools" data-testid="chat-tools">
+          <li
+            v-for="step in message.tools"
+            :key="step.callId"
+            class="tool"
+            :data-status="step.status"
+            data-testid="chat-tool"
+          >
+            <span class="tool-label">{{ toolStepLabel(step) }}</span>
+            <span v-if="step.query" class="tool-query">“{{ step.query }}”</span>
+            <span class="tool-status" data-testid="chat-tool-status">{{
+              toolStepStatusText(step)
+            }}</span>
+          </li>
+          <li
+            v-if="message.tools.some((t) => t.status === 'completed')"
+            class="tool-note muted"
+            data-testid="chat-tool-note"
+          >
+            Search results are unverified web content; check important facts at the source.
+          </li>
+        </ul>
         <div class="bubble">
           <span class="sr-only">{{ message.role === 'user' ? 'You:' : 'Assistant:' }}</span>
           <!-- Plain text only (no HTML rendering of model output). -->
@@ -231,6 +266,39 @@ h2 {
   flex-direction: column;
   max-width: 85%;
   gap: 4px;
+}
+.tools {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+  border-left: 3px solid var(--border, #ccc);
+}
+.tool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.tool-label {
+  font-weight: 600;
+}
+.tool-query {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.tool-status {
+  color: var(--muted);
+}
+.tool[data-status='failed'] .tool-status,
+.tool[data-status='skipped'] .tool-status {
+  color: var(--danger, var(--muted));
+}
+.tool-note {
+  font-size: 0.8rem;
 }
 .message[data-role='user'] {
   align-self: flex-end;

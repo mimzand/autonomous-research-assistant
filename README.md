@@ -3,9 +3,10 @@
 Windows desktop research assistant that runs entirely on a **local LLM through Ollama**.
 No cloud model providers are used — prompts and documents never leave the machine.
 
-> Status: project skeleton. The desktop shell, package boundaries and a live Ollama
-> health check are in place. Agent functionality (planning, tool calling, research)
-> is not implemented yet.
+> Status: **complete** (educational project). Chat (Legacy and Google ADK engines) with
+> opt-in web search, autonomous Research with cited reports, Knowledge Base, Reports and
+> Settings. **Start here: [User guide](docs/user-guide.md)** (install, configure Ollama and
+> SearXNG, use the app, known limitations).
 
 ## Requirements
 
@@ -122,9 +123,19 @@ await generateObject(ollama, { messages }, zodSchema); // JSON-schema constraine
 - Only the Electron main process uses the provider. The renderer sees health data via
   IPC; a test enforces that renderer code has no network calls and CSP is `connect-src 'self'`.
 
+- Tool calling (`tools` in a request; native Ollama `/api/chat` format) is supported by the
+  provider but **off by default**: the shared provider refuses tool-calling requests. The
+  only exception is the opt-in **Web search in Chat** setting (off by default, Legacy and ADK
+  Chat): it uses a dedicated snapshot from `withToolCalling()`, and every tool call goes
+  through the app's ToolGateway (ADK via RegistryTool in gateway mode) (only `web_search`, fixed limits). Research never lets the
+  model call tools. Tool calls are only returned after the whole response has arrived and
+  been parsed; the provider never executes a tool. `checkToolSupport()` reports what the
+  model advertises in `/api/show`.
+
 Tests: unit tests (mocked fetch), integration tests (real HTTP against a local fake
 Ollama server: streaming, cancellation, timeouts, connection refused), and live tests
-against your Ollama with `pnpm test:ollama`.
+against your Ollama with `pnpm test:ollama` (including a calculator tool-call round trip,
+skipped when the model does not advertise tool support).
 
 ## Chat playground
 
@@ -368,29 +379,32 @@ generation options, web search and limits while the app runs; values are saved i
 and no restart is needed. Details, defaults, validation rules and remote-server security:
 [docs/settings.md](docs/settings.md).
 
-Environment variables only provide the **defaults** (saved Settings values win). The installed app also reads
+Environment variables mostly provide **defaults** (saved Settings values win). Exception: `OLLAMA_HOST`, `OLLAMA_MODEL`, `AGENT_ENGINE` and `RESEARCH_ENGINE` **override** Settings while set (the field is then read-only; remove the variable and restart to edit it). See [docs/settings.md](docs/settings.md). The installed app also reads
 `%APPDATA%\Autonomous Research Assistant\settings.env`. Only `OLLAMA_*`, `SEARXNG_*`,
-`WEB_*` and `RESEARCH_*` keys are applied from that file. In development the app also reads `.env`
+`WEB_*` and `RESEARCH_*` keys and `AGENT_ENGINE` are applied from that file. In development the app also reads `.env`
 (from `apps/desktop/` or the repository root); real environment variables take
 precedence. See `.env.example`:
 
-| Variable                    | Default           | Notes                                       |
-| --------------------------- | ----------------- | ------------------------------------------- |
-| `OLLAMA_HOST`               | `127.0.0.1:11434` | Same variable the Ollama CLI uses           |
-| `OLLAMA_MODEL`              | `qwen3:8b`        | Must support tool calling                   |
-| `OLLAMA_NUM_CTX`            | `4096`            | Larger values use more VRAM                 |
-| `OLLAMA_REQUEST_TIMEOUT_MS` | `5000`            | Health check timeout                        |
-| `SEARXNG_URL`               | (empty)           | SearXNG base URL; empty disables web search |
-| `SEARXNG_SAFESEARCH`        | `1`               | 0 off, 1 moderate, 2 strict                 |
-| `WEB_FETCH_TIMEOUT_MS`      | `20000`           | Deadline per page download                  |
-| `WEB_SEARCH_TIMEOUT_MS`     | `15000`           | Deadline per search                         |
-| `WEB_MAX_DOWNLOAD_BYTES`    | `15728640`        | Larger downloads are refused                |
-| `RESEARCH_MODEL_RETRIES`    | `1`               | Extra attempts per model call (0–3)         |
-| `RESEARCH_TOOL_RETRIES`     | `1`               | Extra attempts per transient tool error     |
-| `RESEARCH_RETRY_BACKOFF_MS` | `1000`            | First retry delay; doubles, max 30 s        |
-| `RESEARCH_MODEL_TIMEOUT_MS` | `300000`          | Deadline for one research model call        |
-| `RESEARCH_MAX_QUESTIONS`    | `3`               | Default sub-questions per task (1–6)        |
-| `RESEARCH_MAX_SOURCES`      | `6`               | Default sources per task (1–12)             |
+| Variable                    | Default           | Notes                                          |
+| --------------------------- | ----------------- | ---------------------------------------------- |
+| `OLLAMA_HOST`               | `127.0.0.1:11434` | Same variable the Ollama CLI uses              |
+| `OLLAMA_MODEL`              | `qwen3:8b`        | Must support tool calling                      |
+| `OLLAMA_NUM_CTX`            | `4096`            | Larger values use more VRAM                    |
+| `OLLAMA_REQUEST_TIMEOUT_MS` | `5000`            | Health check timeout                           |
+| `OLLAMA_NGROK_BYPASS_HOSTS` | (empty)           | Trusted HTTPS ngrok hosts (startup only)       |
+| `SEARXNG_URL`               | (empty)           | SearXNG base URL; empty disables web search    |
+| `SEARXNG_SAFESEARCH`        | `1`               | 0 off, 1 moderate, 2 strict                    |
+| `WEB_FETCH_TIMEOUT_MS`      | `20000`           | Deadline per page download                     |
+| `WEB_SEARCH_TIMEOUT_MS`     | `15000`           | Deadline per search                            |
+| `WEB_MAX_DOWNLOAD_BYTES`    | `15728640`        | Larger downloads are refused                   |
+| `RESEARCH_MODEL_RETRIES`    | `1`               | Extra attempts per model call (0–3)            |
+| `RESEARCH_TOOL_RETRIES`     | `1`               | Extra attempts per transient tool error        |
+| `RESEARCH_RETRY_BACKOFF_MS` | `1000`            | First retry delay; doubles, max 30 s           |
+| `RESEARCH_MODEL_TIMEOUT_MS` | `300000`          | Deadline for one research model call           |
+| `RESEARCH_MAX_QUESTIONS`    | `3`               | Default sub-questions per task (1–6)           |
+| `RESEARCH_MAX_SOURCES`      | `6`               | Default sources per task (1–12)                |
+| `AGENT_ENGINE`              | `legacy`          | Default Chat engine (Settings → Agent Engines) |
+| `RESEARCH_ENGINE`           | `legacy`          | Default Research engine for new tasks          |
 
 No API keys are required or supported. An invalid `RESEARCH_*` value stops the app at
 startup with a message naming the variable.

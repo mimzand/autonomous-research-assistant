@@ -13,13 +13,18 @@
     "preview": "install-electron && electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json && vue-tsc -p tsconfig.web.json",
     "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "package:win": "electron-vite build && electron-builder --win --config electron-builder.yml",
-    "package:dir": "electron-vite build && electron-builder --dir --config electron-builder.yml"
+    "package:dir": "electron-vite build && electron-builder --dir --config electron-builder.yml",
+    "smoke:packaged": "node scripts/smoke-packaged.mjs",
+    "verify:win-build": "node scripts/verify-windows-build.mjs",
+    "fake:services": "node scripts/fake-services.mjs"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3"
   },
   "devDependencies": {
+    "@rka/adk-runtime": "workspace:*",
     "@rka/agent-runtime": "workspace:*",
     "@rka/model-provider": "workspace:*",
     "@rka/shared": "workspace:*",

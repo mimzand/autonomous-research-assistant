@@ -136,8 +136,32 @@ export const AnalysisSchema = z.object({
       }),
     )
     .max(10),
+  /*
+   * Explicit, checkable requirements of the goal (Phase 7.5), e.g. "list two
+   * advantages". A default keeps analyses stored before Phase 7.5 valid; the
+   * JSON schema sent to the model still lists the field as required.
+   */
+  requirements: z
+    .array(
+      z.object({
+        requirement: z
+          .string()
+          .trim()
+          .min(3)
+          .max(300)
+          .describe('One explicit requirement of the goal, e.g. "List two advantages of SQLite".'),
+        evidence: z.array(z.string()).max(8).describe('Evidence ids that satisfy it.'),
+        coverage: z
+          .enum(['full', 'partial', 'none'])
+          .describe('How much of the requirement the evidence covers.'),
+      }),
+    )
+    .max(5)
+    .default([]),
 });
-export type Analysis = z.infer<typeof AnalysisSchema>;
+export type Analysis = z.output<typeof AnalysisSchema>;
+/** An analysis as stored or returned (requirements may be absent before Phase 7.5). */
+export type AnalysisInput = z.input<typeof AnalysisSchema>;
 
 const ParagraphSchema = z.object({
   text: z.string().trim().min(10).max(1500),
@@ -158,6 +182,47 @@ export const ReportDraftSchema = z.object({
     .max(6),
 });
 export type ReportDraft = z.infer<typeof ReportDraftSchema>;
+
+/** Final status of one goal requirement (Phase 7.5). */
+export const RequirementStatus = z.enum([
+  'satisfied',
+  'partial',
+  'not-satisfied',
+  'insufficient-evidence',
+]);
+export type RequirementStatus = z.infer<typeof RequirementStatus>;
+
+/** Model check: does the reviewed report satisfy each requirement? */
+export const GoalCheckSchema = z.object({
+  requirements: z
+    .array(
+      z.object({
+        id: z.string().describe('Requirement id, e.g. R1.'),
+        status: z.enum(['satisfied', 'partial', 'not-satisfied']),
+        paragraphs: z
+          .array(z.string())
+          .max(8)
+          .describe('Ids of the paragraphs that satisfy it, e.g. P2.'),
+        note: z.string().max(300),
+      }),
+    )
+    .max(5),
+});
+export type GoalCheck = z.infer<typeof GoalCheckSchema>;
+
+/** Model correction: one paragraph per unmet requirement, from its evidence only. */
+export const GoalCorrectionSchema = z.object({
+  paragraphs: z
+    .array(
+      z.object({
+        requirement: z.string().describe('Requirement id, e.g. R1.'),
+        text: z.string().trim().min(10).max(1500),
+        evidence: z.array(z.string()).max(8).describe('Evidence ids that support this paragraph.'),
+      }),
+    )
+    .max(5),
+});
+export type GoalCorrection = z.infer<typeof GoalCorrectionSchema>;
 
 export const ReviewSchema = z.object({
   verdicts: z

@@ -61,7 +61,19 @@ export {
   type TaskLogRepository,
 } from './repositories/task-logs.js';
 export {
+  ADK_STORAGE_LIMITS,
+  AdkKeyPartSchema,
+  type AdkAppendResult,
+  type AdkLoadedSession,
+  type AdkSessionKey,
+  type AdkSessionRepository,
+  type AdkStateDeltas,
+  type AdkStoredSession,
+} from './repositories/adk-sessions.js';
+export {
   LOG_LEVELS,
+  type AdkEventRecord,
+  type AdkSessionRecord,
   type ApprovalRecord,
   type JsonValue,
   type LogLevel,

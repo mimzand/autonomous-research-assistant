@@ -5,8 +5,16 @@ export {
   GenerateRequestSchema,
   GenerationOptionsSchema,
   ResponseFormatSchema,
+  ToolCallSchema,
+  ToolDefinitionSchema,
+  ToolNameSchema,
   type CallOptions,
   type ChatMessage,
+  type InvalidToolCall,
+  type InvalidToolCallReason,
+  type ToolCall,
+  type ToolDefinition,
+  type ToolResultMessage,
   type FinishReason,
   type GenerateChunk,
   type GenerateRequest,
@@ -30,6 +38,15 @@ export {
   toModelJsonSchema,
   type StructuredResult,
 } from './structured.js';
+export {
+  assistantToolCallMessage,
+  defineTool,
+  toolErrorMessage,
+  toolResultMessage,
+  validateToolArguments,
+  type ToolArgumentsResult,
+  type TypedTool,
+} from './tools.js';
 
 // Ollama (the only implementation)
 export {
@@ -43,6 +60,9 @@ export {
   OllamaConfigSchema,
   OllamaGenerationDefaultsSchema,
   loadOllamaConfig,
+  OLLAMA_NGROK_BYPASS_HOSTS_ENV,
+  ollamaTransportOptionsFromEnv,
+  parseNgrokBypassHosts,
   resolveOllamaBaseUrl,
   type OllamaConfig,
   type OllamaEnv,
@@ -52,10 +72,13 @@ export {
   OllamaProvider,
   createOllamaProvider,
   matchesModel,
+  sendsNgrokBypass,
   supportsStructuredOutput,
+  supportsToolCalling,
   type FetchLike,
   type OllamaConnectionInfo,
   type OllamaModelDetails,
   type OllamaModelSummary,
   type OllamaProviderOptions,
+  type OllamaToolSupport,
 } from './ollama/provider.js';

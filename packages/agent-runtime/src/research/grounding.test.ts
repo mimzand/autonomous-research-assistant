@@ -145,6 +145,7 @@ describe('safe Markdown', () => {
       ],
       generatedAt: '2026-11-05T10:00:00.000Z',
       model: 'qwen3:8b',
+      modelLocation: 'Local Ollama',
     });
     expect(report.citedSourceIds).toEqual(['s1']);
     expect(report.markdown).toContain('Supported. [1]');

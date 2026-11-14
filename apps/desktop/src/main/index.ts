@@ -1,17 +1,19 @@
 import { join } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
-import { createOllamaProvider } from '@rka/model-provider';
+import { createOllamaProvider, ollamaTransportOptionsFromEnv } from '@rka/model-provider';
 import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
 import { createReconfigurableWebServices, createToolRegistry, createWebTools } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } from 'electron';
+import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
+import { createAppChatEngines, createChatWebSearch } from './chat-engine.js';
+import { researchTaskModelsFor } from './research-engine.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
   createOllamaSettingsService,
   ollamaApplier,
-  taskModelsFor,
   toOllamaConfig,
   toResearchDefaults,
   toWebConfig,
@@ -87,9 +89,23 @@ function bootstrap(): void {
   // Ollama: one live provider that follows the settings. The access token is
   // read per request in the main process only; Disconnect is session-only.
   let ollamaConnected = true;
+  // Trusted ngrok tunnels (OLLAMA_NGROK_BYPASS_HOSTS, main process only): only these
+  // hosts, over HTTPS, get ngrok's browser-warning bypass header.
+  const transport = ollamaTransportOptionsFromEnv(process.env);
+  if (transport.invalid.length > 0) {
+    console.warn(
+      `Ignored ${String(transport.invalid.length)} invalid OLLAMA_NGROK_BYPASS_HOSTS entr(y/ies): use exact host names, comma-separated.`,
+    );
+  }
+  if (transport.ngrokBypassHosts.length > 0) {
+    console.info(
+      `ngrok browser-warning bypass enabled for ${String(transport.ngrokBypassHosts.length)} trusted host(s).`,
+    );
+  }
   const modelProvider = createOllamaProvider(toOllamaConfig(config.getSettings()), {
     getAuthToken: () => config.getSecret('ollama.authToken'),
     isConnected: () => ollamaConnected,
+    ngrokBypassHosts: transport.ngrokBypassHosts,
   });
   config.register(ollamaApplier(modelProvider));
 
@@ -109,8 +125,12 @@ function bootstrap(): void {
     storage,
     // Read when each task starts, so Settings changes apply to new tasks.
     researchDefaults: () => toResearchDefaults(config.getSettings()),
-    // A running task keeps the model configuration it started with.
-    taskModels: taskModelsFor(modelProvider),
+    // A running task keeps the model configuration it started with, including its
+    // Research engine (Settings → Agent Engines; default from RESEARCH_ENGINE, else
+    // "legacy"), across restarts. The setting is read only when a task is created.
+    taskModels: researchTaskModelsFor(modelProvider, {
+      readFlag: () => config.getSettings()['engine.research'],
+    }),
     searchConfigured: () => webServices.isSearchConfigured(),
     // Research progress is pushed to every window (validated against the shared contract).
     onResearchEvent: (event) => {
@@ -204,7 +224,27 @@ function bootstrap(): void {
 
   registerIpcHandlers(ipcMain, {
     runtime,
-    chat: new ChatController({ runtime, onUsage: chatUsageRecorder(storage) }),
+    chat: new ChatController({
+      runtime,
+      onUsage: chatUsageRecorder(storage),
+      // Settings → Agent Engines (default from AGENT_ENGINE, else "legacy"); read when
+      // each Chat request starts, so a running reply keeps its engine.
+      selectEngine: createAppChatEngines({
+        runtime,
+        provider: modelProvider,
+        readFlag: () => config.getSettings()['engine.chat'],
+        // Settings → Agent Engines → Web search in Chat (default off). Legacy Chat only:
+        // every model-produced tool call goes through the ToolGateway (web_search only).
+        webSearch: createChatWebSearch({
+          registry: tools,
+          provider: modelProvider,
+          settingEnabled: () => config.getSettings()['chat.webSearch'],
+          searchConfigured: () => webServices.isSearchConfigured(),
+          // Diagnostics only: tool, status, reason, sizes and a short hash; never the query.
+          audit: (entry) => console.info(`Chat tool call: ${JSON.stringify(entry)}`),
+        }),
+      }),
+    }),
     dashboard,
     researchTools,
     settings: settingsService,
@@ -232,6 +272,12 @@ function bootstrap(): void {
   );
   // No device access either (USB, HID, serial, Bluetooth).
   session.defaultSession.setDevicePermissionHandler(() => false);
+  // No network access by Chromium itself: the session spellchecker would otherwise
+  // download Hunspell dictionaries from Google's CDN at startup (redirector.gvt1.com),
+  // even though the windows set spellcheck: false. Disabling it is not enough; with no
+  // languages nothing is downloaded (checked with --log-net-log in smoke:packaged).
+  session.defaultSession.setSpellCheckerEnabled(false);
+  session.defaultSession.setSpellCheckerLanguages([]);
 
   // Packaged builds have no menu: no reload, no DevTools shortcuts.
   if (app.isPackaged) Menu.setApplicationMenu(null);
@@ -242,6 +288,12 @@ function bootstrap(): void {
   // the window shows the exact command to run when something is missing.
   void checkStartup(() => runtime.getModelHealth(), webServices.isSearchConfigured()).then(
     (result) => console.info(`Startup check: ${result.summary}`),
+  );
+
+  // ADK migration (phase 1): load ADK after the window is up and run its offline
+  // self-check. Chat and Research use it only when their engine is set to Google ADK.
+  void probeAdkRuntime().then(({ ok, summary }) =>
+    ok ? console.info(`ADK runtime: ${summary}`) : console.warn(`ADK runtime: ${summary}`),
   );
 }
 

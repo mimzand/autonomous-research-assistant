@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { SETTINGS_CATEGORIES, SETTINGS_CATEGORY_LABELS, type SettingsCategory } from '@rka/shared';
 import { ref } from 'vue';
+import EnginesPanel from '../components/settings/EnginesPanel.vue';
 import ModelsPanel from '../components/settings/ModelsPanel.vue';
 import OllamaPanel from '../components/settings/OllamaPanel.vue';
 import ResearchPanel from '../components/settings/ResearchPanel.vue';
@@ -23,6 +24,7 @@ const DESCRIPTIONS: Record<SettingsCategory, string> = {
   research: 'SearXNG, fetching limits and research defaults.',
   storage: 'Database information and backups.',
   security: 'Remote connection policy and secrets.',
+  engines: 'Legacy or Google ADK for Chat and Research.',
   advanced: 'Timeouts and retries.',
 };
 const keysFor = (c: SettingsCategory) => definitionsFor(c).map((d) => d.key);
@@ -94,6 +96,7 @@ async function resetAll(): Promise<void> {
         <ResearchPanel v-else-if="category === 'research'" />
         <StoragePanel v-else-if="category === 'storage'" />
         <SecurityPanel v-else-if="category === 'security'" />
+        <EnginesPanel v-else-if="category === 'engines'" />
         <SettingsForm v-else :key="category" :keys="keysFor(category)" :testid="`${category}-form`">
           <template v-if="category === 'general'" #intro>
             <p class="muted">

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { type SettingDefinition, type SettingsView } from '@rka/shared';
 import { computed } from 'vue';
-import { APPLIES_TEXT, describeValue, origin } from '../../lib/settings';
+import { APPLIES_TEXT, describeValue, origin, overrideState } from '../../lib/settings';
 
 /** One setting: label, input, where the value comes from, and its error. */
 const props = defineProps<{
@@ -21,6 +21,8 @@ const emit = defineEmits<{
 
 const id = computed(() => `setting-${props.def.key.replace(/\W/g, '-')}`);
 const badge = computed(() => origin(props.view, props.def.key));
+const override = computed(() => overrideState(props.view, props.def.key));
+const locked = computed(() => props.disabled || override.value.locked);
 const defaultText = computed(() =>
   describeValue(props.def, props.view.entries[props.def.key]?.defaultValue),
 );
@@ -57,7 +59,7 @@ const onInput = (event: Event) =>
           :id="id"
           type="checkbox"
           :checked="Boolean(modelValue)"
-          :disabled="disabled"
+          :disabled="locked"
           @change="emit('update:modelValue', ($event.target as HTMLInputElement).checked)"
         />
         <span>{{ modelValue ? 'On' : 'Off' }}</span>
@@ -66,7 +68,7 @@ const onInput = (event: Event) =>
         v-else-if="def.kind === 'select'"
         :id="id"
         :value="String(modelValue)"
-        :disabled="disabled"
+        :disabled="locked"
         @change="onInput"
       >
         <option v-for="o in def.options" :key="String(o.value)" :value="String(o.value)">
@@ -77,7 +79,7 @@ const onInput = (event: Event) =>
         v-else-if="def.kind === 'model' && modelOptions.length"
         :id="id"
         :value="String(modelValue)"
-        :disabled="disabled"
+        :disabled="locked"
         @change="onInput"
       >
         <option v-for="name in modelOptions" :key="name" :value="name">
@@ -96,7 +98,7 @@ const onInput = (event: Event) =>
         :step="def.step ?? (def.kind === 'number' ? 'any' : undefined)"
         :placeholder="def.nullable ? def.nullLabel : undefined"
         :value="String(modelValue)"
-        :disabled="disabled || def.dedicatedAction"
+        :disabled="locked || def.dedicatedAction"
         :aria-invalid="error ? 'true' : undefined"
         :aria-describedby="`${id}-desc`"
         spellcheck="false"
@@ -109,7 +111,7 @@ const onInput = (event: Event) =>
         class="link"
         :title="`Reset to ${defaultText}`"
         :data-testid="`reset-${def.key}`"
-        :disabled="disabled"
+        :disabled="locked"
         @click="emit('reset')"
       >
         Reset
@@ -121,6 +123,16 @@ const onInput = (event: Event) =>
         Default: {{ defaultText }}<template v-if="hint"> · Range {{ hint }}</template> ·
         {{ APPLIES_TEXT[def.applies] }}
       </span>
+    </p>
+    <p v-if="override.note" class="override" data-testid="override-note">
+      {{ override.note }}
+      <template v-if="override.savedFallback">
+        Saved value (inactive while overridden): <strong>{{ override.savedFallback }}</strong
+        >.
+      </template>
+    </p>
+    <p v-if="override.envError" class="error" role="alert" data-testid="env-error">
+      {{ override.envError }}
     </p>
     <p v-if="error" class="error" role="alert" data-testid="field-error">{{ error }}</p>
   </div>
@@ -156,6 +168,11 @@ const onInput = (event: Event) =>
   border-radius: 999px;
   color: var(--tone-fg, var(--muted));
   background: var(--tone-bg, var(--bubble));
+}
+.override {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 .badge[data-tone='accent'] {
   color: var(--accent);

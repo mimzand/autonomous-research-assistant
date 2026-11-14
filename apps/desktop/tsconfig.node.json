@@ -8,8 +8,10 @@
   },
   "include": [
     "src/main/**/*.ts",
+    "src/bench/**/*.ts",
     "src/preload/**/*.ts",
     "electron.vite.config.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "vitest.live.config.ts"
   ]
 }

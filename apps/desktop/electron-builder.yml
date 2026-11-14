@@ -22,6 +22,8 @@ files:
   - '!**/*.map'
   - '!**/*.d.ts'
   - '!**/node_modules/better-sqlite3/{deps,src,binding.gyp,docs}/**'
+  # C++ headers for compiling better-sqlite3; the prebuilt binary does not use them.
+  - '!**/node_modules/node-addon-api/**'
 asar: true
 # Only English UI strings from Chromium (saves ~40 MB).
 electronLanguages: [en-US]
@@ -57,7 +59,12 @@ electronFuses:
 win:
   executableName: Autonomous Research Assistant
   # Ship only the Windows native binaries of better-sqlite3.
+  # A platform `files` list with only "!" patterns makes electron-builder add its
+  # default "**/*" (the whole app folder: sources, tests, configs). So the
+  # includes are repeated here. Checked by scripts/smoke-packaged.mjs.
   files:
+    - out/**/*
+    - package.json
     - '!**/node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*.node'
   target:
     - target: nsis
@@ -89,6 +96,8 @@ nsis:
 linux:
   target: dir
   files:
+    - out/**/*
+    - package.json
     - '!**/node_modules/better-sqlite3/prebuilds/{darwin,win32,linuxmusl}-*.node'
   category: Utility
 

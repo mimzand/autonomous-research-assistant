@@ -7,6 +7,7 @@ import {
 } from '@rka/shared';
 import { computed, ref } from 'vue';
 import { describeChatError, type ChatErrorView } from './errors';
+import { applyToolEvent, settleRunningSteps, type UiToolStep } from './tool-steps';
 
 export type MessageStatus = 'streaming' | 'complete' | 'cancelled' | 'error';
 
@@ -17,6 +18,8 @@ export interface UiMessage {
   status: MessageStatus;
   error: ChatErrorView | null;
   stats: { tokens: number | null; durationMs: number | null } | null;
+  /** Web searches the model made for this reply (Legacy Chat with web search). */
+  tools: UiToolStep[];
 }
 
 /** idle → starting → generating → (stopping) → idle */
@@ -65,6 +68,7 @@ export function createChatSession(api: ChatApi, options: ChatSessionOptions) {
 
   function fail(code: ChatErrorCode, detail: string): void {
     if (current) {
+      settleRunningSteps(current.tools, 'failed');
       current.status = 'error';
       current.error = describeChatError(code, detail, options.model());
     }
@@ -84,8 +88,12 @@ export function createChatSession(api: ChatApi, options: ChatSessionOptions) {
         finish();
         break;
       case 'cancelled':
+        settleRunningSteps(current.tools, 'cancelled');
         current.status = 'cancelled';
         finish();
+        break;
+      case 'tool':
+        applyToolEvent(current.tools, event);
         break;
       case 'error':
         fail(event.code, event.message);
@@ -113,13 +121,14 @@ export function createChatSession(api: ChatApi, options: ChatSessionOptions) {
     const text = draft.value.trim();
     const turns = [...history(), { role: 'user' as const, content: text }];
 
-    push({ role: 'user', content: text, status: 'complete', error: null, stats: null });
+    push({ role: 'user', content: text, status: 'complete', error: null, stats: null, tools: [] });
     current = push({
       role: 'assistant',
       content: '',
       status: 'streaming',
       error: null,
       stats: null,
+      tools: [],
     });
     draft.value = '';
     phase.value = 'starting';

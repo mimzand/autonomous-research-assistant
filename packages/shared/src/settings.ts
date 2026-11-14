@@ -9,6 +9,12 @@ import { z } from 'zod';
  * settings.env, process environment) → value saved in the Settings page
  * (SQLite). Resetting a setting removes the saved value, so it falls back to
  * the environment value or the built-in default.
+ *
+ * Exception — ENV_OVERRIDE_KEYS (server URL, model, Chat/Research engine): an
+ * explicitly set, valid environment variable OVERRIDES the saved value while it
+ * is set (environment → saved → built-in). The saved value is kept untouched
+ * and becomes active again when the variable is removed and the app restarts.
+ * An empty variable is "not set"; an invalid one is not applied and reported.
  */
 
 export const SETTINGS_CATEGORIES = [
@@ -18,6 +24,7 @@ export const SETTINGS_CATEGORIES = [
   'research',
   'storage',
   'security',
+  'engines',
   'advanced',
 ] as const;
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
@@ -29,6 +36,7 @@ export const SETTINGS_CATEGORY_LABELS: Readonly<Record<SettingsCategory, string>
   research: 'Research & Web Search',
   storage: 'Storage',
   security: 'Security',
+  engines: 'Agent Engines',
   advanced: 'Advanced',
 };
 
@@ -70,6 +78,14 @@ const httpUrl = (what: string) =>
 
 const ms = (min: number, max: number) => z.int().min(min).max(max);
 
+/**
+ * Execution engines (ADK migration): "legacy" is the existing runtime, "adk"
+ * the Google ADK runtime over the same OllamaProvider. Strictly one of these.
+ */
+export const ENGINE_CHOICES = ['legacy', 'adk'] as const;
+export const EngineChoiceSchema = z.enum(ENGINE_CHOICES);
+export type EngineChoice = z.infer<typeof EngineChoiceSchema>;
+
 /** Value schemas, keyed by setting. `null` means "not set: use the model's own default". */
 export const SettingsValuesSchema = z.strictObject({
   // General
@@ -105,6 +121,10 @@ export const SettingsValuesSchema = z.strictObject({
   'backup.defaultDirectory': z.string().max(1024).nullable(),
   // Security
   'security.requireHttpsForRemote': z.boolean(),
+  // Agent engines
+  'engine.chat': EngineChoiceSchema,
+  'engine.research': EngineChoiceSchema,
+  'chat.webSearch': z.boolean(),
   // Advanced
   'ollama.streamIdleTimeoutMs': ms(1000, 3_600_000),
   'research.modelRetries': z.int().min(0).max(3),
@@ -118,6 +138,21 @@ export const SETTING_KEYS = Object.keys(SettingsValuesSchema.shape) as SettingKe
 
 /** Secrets: write-only from the renderer, stored encrypted, never sent back. */
 export const SECRET_SETTING_KEYS = ['ollama.authToken'] as const;
+
+/**
+ * Settings that an explicitly set environment variable overrides (see the
+ * precedence note above). Security settings, secrets and the ngrok trust list
+ * are deliberately not in this list.
+ */
+export const ENV_OVERRIDE_KEYS = [
+  'ollama.baseUrl',
+  'model.name',
+  'engine.chat',
+  'engine.research',
+] as const satisfies readonly (keyof SettingsValues)[];
+export type EnvOverrideKey = (typeof ENV_OVERRIDE_KEYS)[number];
+export const isEnvOverrideKey = (key: string): key is EnvOverrideKey =>
+  (ENV_OVERRIDE_KEYS as readonly string[]).includes(key);
 export type SecretSettingKey = (typeof SECRET_SETTING_KEYS)[number];
 
 export type SettingKind =
@@ -139,7 +174,12 @@ export interface SettingDefinition {
   readonly max?: number;
   readonly step?: number;
   /** For `select`. */
-  readonly options?: readonly { readonly value: string | number; readonly label: string }[];
+  readonly options?: readonly {
+    readonly value: string | number;
+    readonly label: string;
+    /** Optional one-line explanation of the option. */
+    readonly description?: string;
+  }[];
   /** `null` is allowed and means "use the model's default" (not sent to Ollama). */
   readonly nullable?: boolean;
   /** Placeholder shown when the value is null. */
@@ -475,6 +515,47 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     applies: 'immediately',
     builtin: false,
   },
+  // --- Agent engines ---------------------------------------------------------
+  {
+    key: 'engine.chat',
+    category: 'engines',
+    label: 'Chat engine',
+    description:
+      'Runtime used for Chat. New messages use the selected engine; a reply already being written keeps its engine.',
+    kind: 'select',
+    applies: 'immediately',
+    builtin: 'legacy',
+    env: 'AGENT_ENGINE',
+    options: [
+      { value: 'legacy', label: 'Legacy', description: 'Existing chat runtime.' },
+      { value: 'adk', label: 'Google ADK', description: 'ADK-based chat runtime.' },
+    ],
+  },
+  {
+    key: 'engine.research',
+    category: 'engines',
+    label: 'Research engine',
+    description:
+      'Runtime used for the model calls of new research tasks. Every task keeps the engine it was created with, also when resumed, retried or recovered.',
+    kind: 'select',
+    applies: 'new-tasks',
+    builtin: 'legacy',
+    env: 'RESEARCH_ENGINE',
+    options: [
+      { value: 'legacy', label: 'Legacy', description: 'Existing research pipeline.' },
+      { value: 'adk', label: 'Google ADK', description: 'ADK-backed research pipeline.' },
+    ],
+  },
+  {
+    key: 'chat.webSearch',
+    category: 'engines',
+    label: 'Web search in Chat',
+    description:
+      'Lets the model search the web while answering in Chat (Legacy and Google ADK Chat engines). Needs a SearXNG URL (Research & Web Search). Search queries chosen by the model are sent to your SearXNG service and possibly to the search engines it uses. At most 3 searches and 60 s per message. Results are unverified web content.',
+    kind: 'boolean',
+    applies: 'immediately',
+    builtin: false,
+  },
   // --- Advanced --------------------------------------------------------------
   {
     key: 'ollama.streamIdleTimeoutMs',
@@ -657,6 +738,23 @@ export function connectionAdvice(value: string): ConnectionAdvice {
   return { location, encrypted, warnings };
 }
 
+/**
+ * Where the configured Ollama runs, for labels: "Local Ollama" for a loopback
+ * address, otherwise "Remote Ollama" (HTTPS or plain HTTP, LAN or internet).
+ * Derived from the effective base URL only, never from the model name.
+ */
+export function ollamaConnectionLabel(
+  baseUrl: string,
+): 'Local Ollama' | 'Remote Ollama' | 'Ollama' {
+  try {
+    return classifyHost(new URL(baseUrl).hostname) === 'loopback'
+      ? 'Local Ollama'
+      : 'Remote Ollama';
+  } catch {
+    return 'Ollama';
+  }
+}
+
 /** Whether `requireHttpsForRemote` refuses this URL. */
 export function violatesHttpsPolicy(value: string, requireHttps: boolean): boolean {
   if (!requireHttps) return false;
@@ -694,8 +792,18 @@ export const SettingsViewSchema = z.object({
       source: SettingSourceSchema,
       /** Value used when the saved value is reset (environment or built-in). */
       defaultValue: Json,
-      /** Environment variable that set the default, if any. */
+      /** Environment variable that set the value (default or override), if any. */
       envVar: z.string().nullable(),
+      /**
+       * An environment variable overrides this setting (ENV_OVERRIDE_KEYS): the
+       * value is read-only in Settings until the variable is removed and the app
+       * restarts.
+       */
+      overridden: z.boolean(),
+      /** The saved value, if any (for an overridden setting: the inactive fallback). */
+      savedValue: Json.optional(),
+      /** The environment variable is set but invalid; it was not applied. */
+      envError: z.string().nullable(),
     }),
   ),
   secrets: z.record(z.string(), z.object({ set: z.boolean() })),

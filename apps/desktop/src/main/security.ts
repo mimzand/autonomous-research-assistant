@@ -73,5 +73,10 @@ export function isSafeExternalUrl(url: string): boolean {
 /** Settings a user may put in settings.env. Nothing else (e.g. NODE_OPTIONS) is applied. */
 export const ALLOWED_SETTING_PREFIXES = ['OLLAMA_', 'SEARXNG_', 'WEB_', 'RESEARCH_'] as const;
 
+/** Individual keys allowed in settings.env besides the prefixes (phase 6: the Chat engine flag). */
+export const ALLOWED_SETTING_KEYS = ['AGENT_ENGINE'] as const;
+
 export const isAllowedSetting = (key: string): boolean =>
-  ALLOWED_SETTING_PREFIXES.some((prefix) => key.startsWith(prefix)) && /^[A-Z0-9_]+$/.test(key);
+  ((ALLOWED_SETTING_KEYS as readonly string[]).includes(key) ||
+    ALLOWED_SETTING_PREFIXES.some((prefix) => key.startsWith(prefix))) &&
+  /^[A-Z0-9_]+$/.test(key);

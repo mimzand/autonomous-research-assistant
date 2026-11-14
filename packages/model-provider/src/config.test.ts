@@ -13,7 +13,18 @@ describe('resolveOllamaBaseUrl', () => {
     ['0.0.0.0:8080', 'http://127.0.0.1:8080'],
     ['http://gpu-box:9000', 'http://gpu-box:9000'],
     ['http://gpu-box:80', 'http://gpu-box:80'],
-    ['https://ollama.internal', 'https://ollama.internal:11434'],
+    // Phase 7.3: https:// without a port is a reverse proxy or tunnel on 443 (as the Ollama CLI treats it).
+    ['https://ollama.internal', 'https://ollama.internal'],
+    ['https://ollama.internal/', 'https://ollama.internal'],
+    ['https://ollama.internal:443', 'https://ollama.internal:443'],
+    ['https://ollama.internal:11434', 'https://ollama.internal:11434'],
+    ['https://example-tunnel.ngrok-free.dev', 'https://example-tunnel.ngrok-free.dev'],
+    // A path prefix behind a reverse proxy is kept.
+    ['https://proxy.example.com/ollama/', 'https://proxy.example.com/ollama'],
+    ['http://gpu-box:9000/ollama', 'http://gpu-box:9000/ollama'],
+    // Unchanged: plain host or http:// without a port means Ollama's 11434.
+    ['gpu-box', 'http://gpu-box:11434'],
+    ['http://gpu-box', 'http://gpu-box:11434'],
     ['ftp://bad', OLLAMA_DEFAULT_BASE_URL],
   ])('resolves %j to %s', (input, expected) => {
     expect(resolveOllamaBaseUrl(input)).toBe(expected);
