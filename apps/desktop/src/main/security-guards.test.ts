@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 const repo = join(import.meta.dirname, '..', '..', '..', '..');
 const roots = [
+  'apps/agent/src',
   'apps/desktop/src',
   'packages/adk-runtime/src',
   'packages/agent-host/src',
@@ -69,8 +70,16 @@ describe('security guards', () => {
       offenders(/\b(rmSync|unlinkSync|rmdirSync|unlink|rmdir)\s*\(|fs\.rm\(|\.rm\(/, [
         'packages/storage/src/inspect.ts',
         'apps/desktop/src/bench/runner.ts',
+        'apps/agent/src/state-file.ts',
       ]),
     ).toEqual([]);
+    // The agent removes only its own connection state file, and only while it still
+    // holds this run's token.
+    const agentState = readFileSync(join(repo, 'apps/agent/src/state-file.ts'), 'utf8');
+    expect(agentState.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(path']);
+    expect(agentState).toMatch(
+      /if \(current\.status !== 'ok' \|\| !tokensEqual\(current\.state\.token, token\)\) return false;\s*rmSync\(path, \{ force: true \}\);/,
+    );
     // The benchmark (dev tooling, not part of the app) removes only the temporary
     // directories it created with mkdtempSync in the OS temp folder.
     const bench = readFileSync(join(repo, 'apps/desktop/src/bench/runner.ts'), 'utf8');

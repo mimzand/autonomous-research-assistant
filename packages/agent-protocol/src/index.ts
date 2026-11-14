@@ -29,6 +29,7 @@ export {
   type RequestEnvelope,
   type ResponseEnvelope,
 } from './envelope.js';
+export { encodeFrame, FrameDecoder } from './framing.js';
 export {
   AGENT_LOOPBACK_HOST,
   AgentStateFileSchema,

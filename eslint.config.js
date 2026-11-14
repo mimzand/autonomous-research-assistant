@@ -114,6 +114,8 @@ export default defineConfig(
       'apps/desktop/*.{js,ts}',
       'apps/desktop/src/main/**/*.ts',
       'apps/desktop/src/preload/**/*.ts',
+      'apps/agent/*.{js,ts}',
+      'apps/agent/src/**/*.ts',
       'packages/*/*.{js,ts}',
       'packages/*/src/**/*.ts',
     ],
@@ -209,6 +211,26 @@ export default defineConfig(
               'Electron main uses ADK only through @rka/agent-host (createAgentHost); the startup self-check lives in adk-probe.ts.',
               ['@rka/adk-runtime'],
             ),
+          ],
+        },
+      ],
+    },
+  },
+
+  // Standalone agent service: plain Node, never Electron.
+  {
+    files: ['apps/agent/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'The agent service runs without Electron.' }],
+          patterns: [
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+            banPackages('The agent service never imports the desktop app.', [
+              '**/desktop/**',
+              '@rka/desktop',
+            ]),
           ],
         },
       ],

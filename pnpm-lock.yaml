@@ -200,6 +200,19 @@ importers:
         specifier: 10.4.1
         version: 10.4.1(eslint@10.14.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)
 
+  apps/agent:
+    dependencies:
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+
   apps/desktop:
     dependencies:
       better-sqlite3:

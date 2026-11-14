@@ -52,6 +52,8 @@ Run from the repository root:
 | `pnpm check`        | typecheck → lint → format:check → test → build                        |
 | `pnpm package:win`  | Build and package the Windows installer + portable zip (on Windows)   |
 | `pnpm package:dir`  | Build and package an unpacked app folder for the current OS (testing) |
+| `pnpm agent:dev`    | Start the standalone agent service on `127.0.0.1` (no Electron)       |
+| `pnpm agent:ping`   | Handshake + `system.ping` against the running agent (dev check)       |
 
 Run a single package's checks with a filter, e.g. `pnpm --filter @rka/tools test`.
 
@@ -63,6 +65,7 @@ apps/
     src/main/             Main process: window, IPC handlers, Electron HostPorts, settings
     src/preload/          Preload bridge: exposes window.api (sandboxed, CommonJS)
     src/renderer/         Vue 3 UI (browser code only)
+  agent/                  Standalone agent service (@rka/agent): loopback protocol server (handshake + ping so far)
 packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
@@ -71,7 +74,7 @@ packages/
   agent-runtime/          @rka/agent-runtime  Legacy research workflow, ToolGateway, chat with tools
   adk-runtime/            @rka/adk-runtime    Google ADK boundary (Ollama only, lazy-loaded)
   agent-host/             @rka/agent-host     createAgentHost composition (in-process); HostPorts contract
-  agent-protocol/         @rka/agent-protocol Agent ↔ shell protocol contract (Zod); not used at runtime yet
+  agent-protocol/         @rka/agent-protocol Agent ↔ shell protocol contract (Zod) + frame codec
 ```
 
 ### Package boundaries
@@ -110,10 +113,14 @@ packages/
   (`adk-probe.ts`) and tests (enforced by ESLint).
 - `@rka/agent-protocol` sits directly above `@rka/shared` (its only workspace
   dependency, no Node.js APIs): handshake, envelopes, error codes and the method
-  registry for the planned standalone agent service, reusing the `@rka/shared` schemas.
-  Nothing imports it yet; renderer and preload may never import it. See
+  registry, plus the byte frame codec, reusing the `@rka/shared` schemas. Used by
+  `apps/agent`; renderer and preload may never import it. See
   [docs/agent-process-separation-plan.md](docs/agent-process-separation-plan.md) and
   [docs/agent-process-security.md](docs/agent-process-security.md).
+- `apps/agent` (`@rka/agent → @rka/agent-protocol`) is the standalone agent service:
+  plain Node, never Electron (ESLint). It listens on `127.0.0.1` only and writes a
+  connection state file (`apps/agent/.agent-data/agent-state.json` in dev, gitignored).
+  It does not open SQLite or run agents yet; the desktop app does not use it yet.
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is
   no separate package build step. The desktop app lists everything under
