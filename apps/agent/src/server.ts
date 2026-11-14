@@ -17,10 +17,10 @@ import {
   type ParsedRequest,
   type ProtocolError,
   type RequestMethodName,
-  type RequestResult,
 } from '@rka/agent-protocol';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Socket } from 'node:net';
+import { type RequestHandlers } from './handlers.js';
 import { tokensEqual } from './token.js';
 
 /** Frame limit before the handshake; a hello is a few hundred bytes. */
@@ -36,6 +36,8 @@ export interface AgentServerOptions {
   readonly port?: number;
   readonly agentVersion: string;
   readonly handshakeTimeoutMs?: number;
+  /** Methods served after the handshake besides `system.*`. */
+  readonly handlers?: RequestHandlers;
   /** Must never receive the token. */
   readonly log?: (message: string) => void;
 }
@@ -68,6 +70,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
     serveConnection(socket, {
       token: options.token,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
+      handlers: options.handlers ?? {},
       ack,
       log,
     });
@@ -102,6 +105,7 @@ export async function startAgentServer(options: AgentServerOptions): Promise<Age
 interface ConnectionContext {
   readonly token: string;
   readonly handshakeTimeoutMs: number;
+  readonly handlers: RequestHandlers;
   readonly ack: () => HelloAck;
   readonly log: (message: string) => void;
 }
@@ -150,7 +154,7 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
     ctx.log(`Client authenticated (${hello.value.hello.client.kind}).`);
   };
 
-  function reply<M extends RequestMethodName>(id: string, method: M, result: RequestResult<M>) {
+  function reply(id: string, method: RequestMethodName, result: unknown) {
     const checked = parseResult(method, result);
     if (!checked.ok) {
       ctx.log(`Refusing to send an invalid ${method} result.`);
@@ -172,13 +176,36 @@ function serveConnection(socket: Socket, ctx: ConnectionContext): void {
           request.method,
           protocolError('bad_request', 'Already authenticated.'),
         );
-      default:
-        return sendError(
-          request.id,
-          request.method,
-          protocolError('not_implemented', `${request.method} is not served yet.`),
-        );
+      default: {
+        const handler = ctx.handlers[request.method] as ((params: unknown) => unknown) | undefined;
+        if (!handler) {
+          return sendError(
+            request.id,
+            request.method,
+            protocolError('not_implemented', `${request.method} is not served yet.`),
+          );
+        }
+        return void serve(request, handler);
+      }
     }
+  };
+
+  /** Runs a handler; a failure is logged here and answered without its details. */
+  const serve = async (request: ParsedRequest, handler: (params: unknown) => unknown) => {
+    let result: unknown;
+    try {
+      result = await handler(request.params);
+    } catch (error) {
+      ctx.log(
+        `${request.method} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return sendError(
+        request.id,
+        request.method,
+        protocolError('internal', `${request.method} failed in the agent.`),
+      );
+    }
+    reply(request.id, request.method, result);
   };
 
   const handle = (envelope: Envelope) => {

@@ -12,7 +12,12 @@
   },
   "dependencies": {
     "@rka/agent-client": "workspace:*",
+    "@rka/agent-host": "workspace:*",
     "@rka/agent-protocol": "workspace:*",
+    "@rka/agent-runtime": "workspace:*",
+    "@rka/model-provider": "workspace:*",
+    "@rka/storage": "workspace:*",
+    "@rka/tools": "workspace:*",
     "zod": "4.6.7"
   },
   "devDependencies": {

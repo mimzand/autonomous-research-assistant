@@ -82,6 +82,57 @@ describe('runAgent', () => {
       state: { pid: process.pid, port: agent.server.port },
     });
   });
+
+  it('serves the opened services and closes them on stop', async () => {
+    const stateFile = statePath();
+    let closed = 0;
+    const agent = await runAgent({
+      port: 0,
+      stateFile,
+      agentVersion: '1',
+      openServices: () => ({
+        handlers: { 'reports.list': () => ({ items: [], total: 0 }) },
+        close: () => void closed++,
+      }),
+    });
+    agents.push(agent);
+    const read = readStateFile(stateFile);
+    if (read.status !== 'ok') throw new Error(`state file ${read.status}`);
+    const client = await connectAgent({ port: read.state.port, token: read.state.token });
+    await expect(client.request('reports.list', {})).resolves.toEqual({ items: [], total: 0 });
+    client.close();
+
+    await agent.stop();
+    await agent.stop();
+    expect(closed).toBe(1);
+  });
+
+  it('does not open the services while another live agent owns the state file', async () => {
+    const stateFile = statePath();
+    writeStateFile(stateFile, {
+      protocol: 'rka-agent',
+      version: 1,
+      host: '127.0.0.1',
+      port: 1,
+      token: generateToken(),
+      pid: 4242,
+      startedAt: new Date().toISOString(),
+    });
+    let opened = false;
+    await expect(
+      runAgent({
+        port: 0,
+        stateFile,
+        agentVersion: '1',
+        isProcessAlive: () => true,
+        openServices: () => {
+          opened = true;
+          return { handlers: {}, close: () => undefined };
+        },
+      }),
+    ).rejects.toThrow(/pid 4242/);
+    expect(opened).toBe(false);
+  });
 });
 
 describe('parseCliArgs', () => {

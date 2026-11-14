@@ -46,11 +46,17 @@ export interface AgentClientOptions {
   readonly timeoutMs?: number;
 }
 
+export interface RequestOptions {
+  /** Overrides the client's `timeoutMs` for this request. */
+  readonly timeoutMs?: number;
+}
+
 export interface AgentClient {
   readonly ack: HelloAck;
   request<M extends RequestMethodName>(
     method: M,
     params: RequestParamsInput<M>,
+    options?: RequestOptions,
   ): Promise<RequestResult<M>>;
   /** Called once when the connection ends for any reason (including `close()`). */
   onClose(listener: (error: AgentClientError) => void): void;
@@ -142,6 +148,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
   const request = <M extends RequestMethodName>(
     method: M,
     params: RequestParamsInput<M>,
+    requestOptions: RequestOptions = {},
   ): Promise<RequestResult<M>> =>
     new Promise((resolve, reject) => {
       if (socket.destroyed) {
@@ -152,7 +159,7 @@ export async function connectAgent(options: AgentClientOptions): Promise<AgentCl
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new AgentClientError('timeout', `${method} timed out.`));
-      }, timeoutMs);
+      }, requestOptions.timeoutMs ?? timeoutMs);
       pending.set(id, {
         method,
         resolve: (value) => resolve(value as RequestResult<M>),

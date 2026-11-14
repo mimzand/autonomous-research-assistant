@@ -205,9 +205,24 @@ importers:
       '@rka/agent-client':
         specifier: workspace:*
         version: link:../../packages/agent-client
+      '@rka/agent-host':
+        specifier: workspace:*
+        version: link:../../packages/agent-host
       '@rka/agent-protocol':
         specifier: workspace:*
         version: link:../../packages/agent-protocol
+      '@rka/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
+      '@rka/model-provider':
+        specifier: workspace:*
+        version: link:../../packages/model-provider
+      '@rka/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@rka/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       zod:
         specifier: 4.6.7
         version: 4.6.7

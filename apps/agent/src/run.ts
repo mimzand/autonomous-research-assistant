@@ -1,13 +1,22 @@
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from '@rka/agent-protocol';
 import { startAgentServer, type AgentServer } from './server.js';
 import { isProcessAlive, readStateFile } from '@rka/agent-client';
+import { type RequestHandlers } from './handlers.js';
 import { removeStateFile, writeStateFile } from './state-file.js';
 import { generateToken } from './token.js';
+
+/** What the agent serves (e.g. the database-backed host); closed when the agent stops. */
+export interface AgentServiceSet {
+  readonly handlers: RequestHandlers;
+  close(): void;
+}
 
 export interface RunAgentOptions {
   readonly port: number;
   readonly stateFile: string;
   readonly agentVersion: string;
+  /** Called only once no other live agent owns the state file. */
+  readonly openServices?: () => AgentServiceSet;
   readonly log?: (message: string) => void;
   readonly isProcessAlive?: (pid: number) => boolean;
 }
@@ -15,13 +24,13 @@ export interface RunAgentOptions {
 export interface RunningAgent {
   readonly server: AgentServer;
   readonly stateFile: string;
-  /** Closes the server and removes the state file if it is still ours. Idempotent. */
+  /** Closes the server and services and removes the state file if it is still ours. Idempotent. */
   stop(): Promise<void>;
 }
 
 /**
- * Starts the agent: refuses if the state file belongs to a live process, generates a
- * fresh token, listens on 127.0.0.1 and writes the state file.
+ * Starts the agent: refuses if the state file belongs to a live process, opens the
+ * services, generates a fresh token, listens on 127.0.0.1 and writes the state file.
  */
 export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> {
   const existing = readStateFile(options.stateFile);
@@ -33,13 +42,21 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
     );
   }
 
+  const services = options.openServices?.();
   const token = generateToken();
-  const server = await startAgentServer({
-    token,
-    port: options.port,
-    agentVersion: options.agentVersion,
-    log: options.log,
-  });
+  let server: AgentServer;
+  try {
+    server = await startAgentServer({
+      token,
+      port: options.port,
+      agentVersion: options.agentVersion,
+      ...(services && { handlers: services.handlers }),
+      log: options.log,
+    });
+  } catch (error) {
+    services?.close();
+    throw error;
+  }
   try {
     writeStateFile(options.stateFile, {
       protocol: PROTOCOL_NAME,
@@ -52,6 +69,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
     });
   } catch (error) {
     await server.close();
+    services?.close();
     throw error;
   }
 
@@ -61,6 +79,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunningAgent> 
     stateFile: options.stateFile,
     stop: () =>
       (stopped ??= server.close().then(() => {
+        services?.close();
         removeStateFile(options.stateFile, token);
       })),
   };

@@ -107,6 +107,19 @@ describe('connectAgent', () => {
     });
   });
 
+  it('lets a request override the timeout', async () => {
+    const server = await fake((envelope, socket) =>
+      envelope.method === 'system.hello' ? pingHandler(envelope, socket) : 'ignore',
+    );
+    const client = await connectAgent({ port: server.port, token, timeoutMs: 5_000 });
+    const started = performance.now();
+    await expect(client.request('system.ping', {}, { timeoutMs: 50 })).rejects.toMatchObject({
+      code: 'timeout',
+    });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    client.close();
+  });
+
   it('fails on a malformed frame from the agent', async () => {
     const server = await fake(() => new Uint8Array([0, 0, 0, 2, 0x7b, 0x7d]));
     await expect(connectAgent({ port: server.port, token })).rejects.toMatchObject({

@@ -1,16 +1,23 @@
 import pkg from '../package.json' with { type: 'json' };
 import { readCliOptions } from './cli.js';
 import { runAgent } from './run.js';
+import { openAgentServices } from './services.js';
 
 async function main(): Promise<void> {
   const options = readCliOptions(process.argv.slice(2));
   if (!options) return;
 
+  const log = (message: string) => console.info(`[agent] ${message}`);
   const agent = await runAgent({
     port: options.port,
     stateFile: options.stateFile,
     agentVersion: pkg.version,
-    log: (message) => console.info(`[agent] ${message}`),
+    openServices: () => {
+      const services = openAgentServices({ dataDir: options.dataDir, env: process.env, log });
+      log(`Database: ${services.databasePath}`);
+      return services;
+    },
+    log,
   });
   console.info(
     `[agent] Listening on ${agent.server.host}:${agent.server.port} (pid ${process.pid}).`,

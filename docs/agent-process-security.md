@@ -5,12 +5,13 @@ app (or a CLI) talks to over a local protocol. Part of
 [agent-process-separation-plan.md](agent-process-separation-plan.md); the in-process app
 is covered by [security.md](security.md), whose controls all remain in force.
 
-**Status:** Phase 2 — the contract and frame codec live in `@rka/agent-protocol`; the
-standalone server (`apps/agent`) serves the handshake and `system.ping` on loopback.
-`@rka/agent-client` (Node) is the shared client; Electron main uses it only when
-`AGENT_TRANSPORT=service` to handshake + ping at startup. No database, agent work or
-process spawn has moved yet. The Status column names the phase that implements (or
-implemented) each rule.
+**Status:** Phase 3 — the contract and frame codec live in `@rka/agent-protocol`; the
+standalone server (`apps/agent`) serves the handshake, `system.ping` and the Dashboard
+methods on loopback, and owns SQLite. `@rka/agent-client` (Node) is the shared client.
+With `AGENT_TRANSPORT=service` Electron main opens no database and proxies the
+Dashboard channels to the agent. Chat, research actions, settings and process spawn
+have not moved yet. The Status column names the phase that implements (or implemented)
+each rule.
 
 ## Process model
 
@@ -67,14 +68,19 @@ Renderer ──(window.api, Zod IPC)──▶ Electron main (shell) ──(loopb
 
 ### 3. Single database writer
 
-| Rule                                                                                                                                                                 | Status  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| In service mode only the agent opens `better-sqlite3` (migrations, recovery, every read and write). Electron proxies dashboard/storage/task calls over the protocol. | Phase 3 |
-| Electron asserts it does not call `openAppStorage` / `openStorage` when `AGENT_TRANSPORT=service` (code assertion + test).                                           | Phase 3 |
-| No dual-write path ships: the in-process host is removed from the production bootstrap at cutover.                                                                   | Phase 8 |
-| The agent keeps SQLite journaling and the existing recovery on open, so an agent crash cannot leave a half-written database.                                         | Phase 3 |
+| Rule                                                                                                                                                                 | Status                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| In service mode only the agent opens `better-sqlite3` (migrations, recovery, every read and write). Electron proxies dashboard/storage/task calls over the protocol. | Done (Phase 3): `services.ts`, `service-ipc.ts`; `services.test.ts`, `service-shell.test.ts`                                                                                   |
+| Electron asserts it does not call `openAppStorage` / `openStorage` when `AGENT_TRANSPORT=service` (code assertion + test).                                           | Done (Phase 3): `openAppStorage` throws in service mode (`app-storage.test.ts`); the service path never calls `openStorage` (`service-shell.test.ts`, storage mocked to throw) |
+| No dual-write path ships: the in-process host is removed from the production bootstrap at cutover.                                                                   | Phase 8                                                                                                                                                                        |
+| The agent keeps SQLite journaling and the existing recovery on open, so an agent crash cannot leave a half-written database.                                         | Done (Phase 3): same `openStorage` (WAL) and `recoverInterruptedTasks` on open (`services.test.ts`)                                                                            |
 
-Until Phase 3, the in-process app is unchanged and remains the only writer.
+In-process mode (the default) is unchanged and its Electron process is the only writer.
+Nothing yet stops a developer from running the in-process app and an agent on the same
+data folder at once (the dev agent uses its own `apps/agent/.agent-data` by default).
+SQLite's locking prevents corruption, but whichever process opens second marks the
+other's running tasks as interrupted during recovery, so this setup is unsupported. A
+cross-process lock arrives with supervision (Phase 8).
 
 ### 4. Secrets
 

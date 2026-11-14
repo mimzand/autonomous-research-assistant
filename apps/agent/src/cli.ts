@@ -4,11 +4,13 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { STATE_FILE_NAME } from './state-file.js';
 
-/** Dev default (gitignored). Electron passes its userData folder from Phase 3 on. */
+/** Dev default (gitignored); holds its own database, separate from the desktop app's. */
 export const DEFAULT_DATA_DIR = fileURLToPath(new URL('../.agent-data', import.meta.url));
 
 export const USAGE = `Usage: agent [options]
-  --data-dir <dir>     Agent data folder (default: apps/agent/.agent-data)
+  --data-dir <dir>     Agent data folder, laid out like the app's userData: the
+                       database is <data-dir>/data/research.db
+                       (default: apps/agent/.agent-data)
   --state-file <path>  Connection state file (default: <data-dir>/${STATE_FILE_NAME})
   --port <n>           TCP port on 127.0.0.1; 0 = ephemeral (default: 0)
   --help               Show this help`;

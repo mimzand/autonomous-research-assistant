@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStorage } from '@rka/storage';
@@ -40,6 +40,21 @@ describe('openAppStorage', () => {
     expect(storage.tasks.require(task.id).status).toBe('interrupted');
     expect(storage.recovery.getResumePlan(task.id).nextStep?.name).toBe('Search');
     expect(storage.steps.require(done.id).status).toBe('completed');
+    storage.close();
+  });
+});
+
+describe('openAppStorage with AGENT_TRANSPORT=service', () => {
+  it('refuses to open the database: the agent service is the only writer', () => {
+    const dir = userData();
+    expect(() => openAppStorage({ userDataDir: dir, env: { AGENT_TRANSPORT: 'service' } })).toThrow(
+      'AGENT_TRANSPORT=service: the agent service owns the database',
+    );
+    expect(existsSync(databasePath(dir))).toBe(false);
+  });
+
+  it('opens it in the default in-process mode', () => {
+    const { storage } = openAppStorage({ userDataDir: userData(), env: {} });
     storage.close();
   });
 });

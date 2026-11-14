@@ -231,6 +231,54 @@ describe('agent server over 127.0.0.1 TCP', () => {
     });
   });
 
+  it('serves registered handlers with validated params and results', async () => {
+    const logs: string[] = [];
+    const counts = {
+      total: 2,
+      byStatus: {
+        pending: 0,
+        running: 0,
+        'awaiting-approval': 0,
+        interrupted: 0,
+        completed: 2,
+        failed: 0,
+        cancelled: 0,
+      },
+    };
+    const server = await startAgentServer({
+      token,
+      agentVersion: '1',
+      log: (m) => logs.push(m),
+      handlers: {
+        'tasks.counts': () => counts,
+        'tasks.get': async ({ id }) => {
+          await Promise.resolve();
+          if (id === 'boom') throw new Error('SQLITE_BUSY at C:\\secret\\path');
+          return null;
+        },
+        // Wrong shape: must never reach the client.
+        'reports.list': () => ({ nope: true }) as never,
+      },
+    });
+    servers.push(server);
+    const client = await connectAgent({ port: server.port, token });
+
+    await expect(client.request('tasks.counts', {})).resolves.toEqual(counts);
+    await expect(client.request('tasks.get', { id: 'x' })).resolves.toBeNull();
+    const failed = client.request('tasks.get', { id: 'boom' });
+    await expect(failed).rejects.toMatchObject({
+      code: 'internal',
+      message: 'tasks.get failed in the agent.',
+    });
+    expect(logs).toContain('tasks.get failed: SQLITE_BUSY at C:\\secret\\path');
+    await expect(client.request('reports.list', {})).rejects.toMatchObject({ code: 'internal' });
+    await expect(client.request('sources.list', {})).rejects.toMatchObject({
+      code: 'not_implemented',
+    });
+    await expect(client.request('system.ping', {})).resolves.toHaveProperty('agentTime');
+    client.close();
+  });
+
   it('disconnects clients on close', async () => {
     const server = await start();
     const client = await connectAgent({ port: server.port, token });

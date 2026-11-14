@@ -5,11 +5,7 @@ import { SettingsChangedEventSchema } from '@rka/shared';
 import { createReconfigurableWebServices } from '@rka/tools';
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session } from 'electron';
 import { probeAdkRuntime } from './adk-probe.js';
-import {
-  agentStateFilePath,
-  agentTransportFromEnv,
-  connectServiceAgent,
-} from './agent-transport.js';
+import { agentStateFilePath, agentTransportFromEnv } from './agent-transport.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
@@ -26,6 +22,7 @@ import { createElectronHostPorts } from './host-ports.js';
 import { registerIpcHandlers } from './ipc.js';
 import { installConsoleRedaction } from './log.js';
 import { isAllowedSetting, isAppUrl, type AppUrlOptions } from './security.js';
+import { startServiceShell } from './service-shell.js';
 import { checkStartup } from './startup.js';
 import { createMainWindow, rendererIndexPath } from './window.js';
 
@@ -53,37 +50,41 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+const isTrustedSender = (url: string) => isAppUrl(url, urlPolicy);
+const getAppInfo = () => ({
+  name: app.getName(),
+  version: app.getVersion(),
+  platform: process.platform,
+  versions: {
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+  },
+});
+
 /**
- * AGENT_TRANSPORT=service (development, Phase 2): connect to the standalone agent
- * before anything else and stop startup if it is unreachable. The agent is not used
- * for app features yet; the in-process host below still serves everything.
+ * AGENT_TRANSPORT=service (development): the standalone agent (`pnpm agent:dev`)
+ * owns SQLite and serves the Dashboard; this process opens no database. Startup
+ * stops if the agent is unreachable.
  */
-async function connectAgentService(): Promise<void> {
-  if (agentTransportFromEnv(process.env) !== 'service') return;
-  const stateFile = agentStateFilePath({
-    env: process.env,
-    isPackaged: app.isPackaged,
-    appPath: app.getAppPath(),
-    userDataDir: app.getPath('userData'),
-  });
-  const { client, summary } = await connectServiceAgent({
-    stateFile,
+function startServiceShellMode(): Promise<void> {
+  return startServiceShell({
+    ipc: ipcMain,
+    stateFile: agentStateFilePath({
+      env: process.env,
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      userDataDir: app.getPath('userData'),
+    }),
     appVersion: app.getVersion(),
-  });
-  console.info(`Agent service: ${summary}`);
-  let quitting = false;
-  client.onClose((error) => {
-    if (!quitting) console.warn(`Agent service disconnected: ${error.message}`);
-  });
-  app.on('will-quit', () => {
-    quitting = true;
-    client.close();
+    getAppInfo,
+    isTrustedSender,
+    onQuit: (listener) => app.on('will-quit', listener),
   });
 }
 
-async function bootstrap(): Promise<void> {
-  await connectAgentService();
-
+/** Default: the agent runs in this process on the local database. Returns the startup check. */
+function startInProcessAgent(): () => void {
   // Opens SQLite (runs migrations) and recovers tasks interrupted by the last shutdown.
   // Secrets are encrypted with the OS key store (DPAPI on Windows) via safeStorage.
   const { storage, recovery } = openAppStorage({
@@ -185,18 +186,22 @@ async function bootstrap(): Promise<void> {
     dashboard: host.dashboard,
     researchTools: host.researchTools,
     settings: settingsService,
-    isTrustedSender: (url) => isAppUrl(url, urlPolicy),
-    getAppInfo: () => ({
-      name: app.getName(),
-      version: app.getVersion(),
-      platform: process.platform,
-      versions: {
-        electron: process.versions.electron,
-        chrome: process.versions.chrome,
-        node: process.versions.node,
-      },
-    }),
+    isTrustedSender,
+    getAppInfo,
   });
+
+  // Startup check: Ollama reachable and the model installed. Never downloads a model;
+  // the window shows the exact command to run when something is missing.
+  return () =>
+    void checkStartup(() => host.runtime.getModelHealth(), webServices.isSearchConfigured()).then(
+      (result) => console.info(`Startup check: ${result.summary}`),
+    );
+}
+
+async function bootstrap(): Promise<void> {
+  let startupCheck: (() => void) | undefined;
+  if (agentTransportFromEnv(process.env) === 'service') await startServiceShellMode();
+  else startupCheck = startInProcessAgent();
 
   // The renderer needs no browser permissions (camera, notifications, geolocation, ...).
   // Only writing to the clipboard ("Copy" buttons) is allowed; reading it is not.
@@ -221,11 +226,7 @@ async function bootstrap(): Promise<void> {
 
   createMainWindow(windowOptions);
 
-  // Startup check: Ollama reachable and the model installed. Never downloads a model;
-  // the window shows the exact command to run when something is missing.
-  void checkStartup(() => host.runtime.getModelHealth(), webServices.isSearchConfigured()).then(
-    (result) => console.info(`Startup check: ${result.summary}`),
-  );
+  startupCheck?.();
 
   // ADK migration (phase 1): load ADK after the window is up and run its offline
   // self-check. Chat and Research use it only when their engine is set to Google ADK.
