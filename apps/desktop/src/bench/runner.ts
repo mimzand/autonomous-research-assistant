@@ -37,7 +37,7 @@ import {
   type WebFetcher,
   type WebSearchProvider,
 } from '@rka/tools';
-import { researchTaskModelsFor, type ResearchEngine } from '../main/research-engine.js';
+import { researchTaskModelsFor, type ResearchEngine } from '@rka/agent-host';
 import { BENCH_RESEARCH_LIMITS, computeWorkload, type BenchOptions } from './plan.js';
 import { type ProgressLog } from './progress.js';
 

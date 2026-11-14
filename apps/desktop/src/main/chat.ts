@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { type ChatEngine, legacyChatEngine } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { isModelProviderError } from '@rka/model-provider';
 import {
@@ -9,7 +10,6 @@ import {
   type ChatEvent,
   type ChatStartResult,
 } from '@rka/shared';
-import { type ChatEngine, legacyChatEngine } from './chat-engine.js';
 
 /** Where a stream's events go: one renderer (webContents). */
 export interface ChatEventSink {

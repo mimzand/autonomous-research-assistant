@@ -28,7 +28,7 @@ import { type Storage } from '@rka/storage';
 import { createToolRegistry, createWebTools } from '@rka/tools';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { databasePath, openAppStorage } from '../app-storage.js';
-import { researchTaskInfo, researchTaskModelsFor } from '../research-engine.js';
+import { researchTaskInfo, researchTaskModelsFor } from '@rka/agent-host';
 import {
   killMarker,
   ollamaReply,

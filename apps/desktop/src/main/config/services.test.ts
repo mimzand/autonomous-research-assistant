@@ -1,3 +1,4 @@
+import { taskModelsFor } from '@rka/agent-host';
 import { createAgentRuntime } from '@rka/agent-runtime';
 import { OllamaProvider, type FetchLike } from '@rka/model-provider';
 import { openStorage } from '@rka/storage';
@@ -9,7 +10,6 @@ import { createRuntimeConfig } from './runtime-config.js';
 import {
   createOllamaSettingsService,
   ollamaApplier,
-  taskModelsFor,
   testSearxng,
   toOllamaConfig,
   toWebConfig,

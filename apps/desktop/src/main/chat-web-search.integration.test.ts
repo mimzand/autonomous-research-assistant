@@ -34,8 +34,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { chatUsageRecorder } from './app-storage.js';
 import { ChatController, type ChatEventSink } from './chat.js';
-import { createAppChatEngines, createChatWebSearch, type AgentEngine } from './chat-engine.js';
-import { researchTaskModelsFor } from './research-engine.js';
+import {
+  createAppChatEngines,
+  createChatWebSearch,
+  researchTaskModelsFor,
+  type AgentEngine,
+} from '@rka/agent-host';
 
 const TUNNEL = 'example-tunnel.ngrok-free.dev';
 const MODEL = 'qwen3.5:9b-mlx';

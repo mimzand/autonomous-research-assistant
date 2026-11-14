@@ -98,7 +98,8 @@ packages/
 - `@rka/agent-host` is the only package that may depend on both runtimes. It runs in the
   Electron main process (no separate process) and receives OS capabilities (UI event
   fan-out, native dialogs, `openExternal`, secrets) through its `HostPorts` interface.
-  Chat/Research engine selection and agent wiring will move here from `src/main`
+  Chat/Research engine selection (Legacy | ADK, Research engine pinning) lives here;
+  the remaining agent wiring will move here from `src/main`
   (see [docs/agent-host-separation-plan.md](docs/agent-host-separation-plan.md)).
 - No workspace package may import `electron`; only `apps/desktop` touches Electron.
 - Packages are consumed as TypeScript source and bundled by electron-vite, so there is

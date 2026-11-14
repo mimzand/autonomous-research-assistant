@@ -1,4 +1,4 @@
-import { type ResearchLimits, type TaskModelConfig } from '@rka/agent-runtime';
+import { type ResearchLimits } from '@rka/agent-runtime';
 import {
   isModelProviderError,
   matchesModel,
@@ -115,26 +115,6 @@ export function webApplier(services: { update(config: WebConfig): void }): Confi
     name: 'web services',
     keys: WEB_KEYS,
     apply: (next) => services.update(toWebConfig(next)),
-  };
-}
-
-/** Task isolation: research tasks capture the Ollama configuration when they start. */
-export function taskModelsFor(provider: OllamaProvider) {
-  return {
-    capture: (): TaskModelConfig => {
-      const config = provider.currentConfig;
-      return {
-        provider: 'ollama',
-        name: config.model,
-        url: config.baseUrl,
-        config: JSON.parse(JSON.stringify(config)) as TaskModelConfig['config'],
-      };
-    },
-    providerFor: (captured: TaskModelConfig) => {
-      const parsed = OllamaConfigSchema.safeParse(captured.config);
-      // A stored configuration that is no longer valid falls back to the current one.
-      return provider.snapshot(parsed.success ? parsed.data : provider.currentConfig);
-    },
   };
 }
 

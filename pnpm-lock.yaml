@@ -297,6 +297,10 @@ importers:
       '@rka/tools':
         specifier: workspace:*
         version: link:../tools
+    devDependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
 
   packages/agent-runtime:
     dependencies:

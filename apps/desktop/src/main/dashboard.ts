@@ -34,7 +34,7 @@ import {
   type TaskStatusCounts,
 } from '@rka/shared';
 import { type Storage } from '@rka/storage';
-import { researchTaskInfo } from './research-engine.js';
+import { researchTaskInfo } from '@rka/agent-host';
 
 export interface DashboardDeps {
   readonly storage: Storage;

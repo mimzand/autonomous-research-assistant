@@ -23,8 +23,12 @@ import { createToolRegistry } from '@rka/tools';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { ChatController, type ChatEventSink } from './chat.js';
-import { AGENT_ENGINE_ENV, createAppChatEngines, type AgentEngine } from './chat-engine.js';
-import { researchTaskModelsFor } from './research-engine.js';
+import {
+  AGENT_ENGINE_ENV,
+  createAppChatEngines,
+  researchTaskModelsFor,
+  type AgentEngine,
+} from '@rka/agent-host';
 
 const TUNNEL = 'example-tunnel.ngrok-free.dev';
 const MODEL = 'qwen3.5:9b-mlx';

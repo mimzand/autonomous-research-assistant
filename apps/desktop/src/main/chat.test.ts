@@ -1,3 +1,4 @@
+import { type ChatEngine } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { ModelProviderError, type GenerateChunk } from '@rka/model-provider';
 import { type ChatEvent } from '@rka/shared';
@@ -239,6 +240,71 @@ describe('ChatController usage reporting', () => {
     controller.stop({ streamId: IDS[0] });
     await controller.whenIdle();
     expect(usages).toEqual([]);
+  });
+});
+
+describe('ChatController engine selection', () => {
+  const sink = (events: ChatEvent[]): ChatEventSink => ({
+    id: 1,
+    isDestroyed: () => false,
+    send: (e) => events.push(e),
+  });
+  const engine = (
+    name: ChatEngine['name'],
+    text = name,
+  ): ChatEngine & { calls: number; streamChat(): AsyncGenerator<GenerateChunk> } => {
+    const e = {
+      name,
+      calls: 0,
+      async *streamChat(): AsyncGenerator<GenerateChunk> {
+        e.calls++;
+        await Promise.resolve();
+        yield { type: 'delta', content: text };
+        yield { ...done, result: { ...done.result, content: text } };
+      },
+    };
+    return e;
+  };
+  const runtime = { model: 'm', streamChat: vi.fn() };
+
+  it('without a selector it uses the legacy runtime (unchanged behaviour)', async () => {
+    const legacy = engine('legacy');
+    const chat = new ChatController({ runtime: { model: 'm', streamChat: legacy.streamChat } });
+    const events: ChatEvent[] = [];
+    chat.start(sink(events), { messages: [{ role: 'user', content: 'Hi' }] });
+    await chat.whenIdle();
+    expect(events.map((e) => e.type)).toEqual(['delta', 'done']);
+    expect(legacy.calls).toBe(1);
+  });
+
+  it('captures the engine once, when the request starts', async () => {
+    const legacy = engine('legacy');
+    const adk = engine('adk');
+    let current: ChatEngine = adk;
+    const selectEngine = vi.fn(() => current);
+    const chat = new ChatController({ runtime, selectEngine });
+    const events: ChatEvent[] = [];
+    chat.start(sink(events), { messages: [{ role: 'user', content: 'Hi' }] });
+    current = legacy; // changed after start: does not affect the running request
+    await chat.whenIdle();
+    expect(selectEngine).toHaveBeenCalledTimes(1);
+    expect(events[0]).toMatchObject({ type: 'delta', content: 'adk' });
+
+    chat.start(sink(events), { messages: [{ role: 'user', content: 'Hi' }] });
+    await chat.whenIdle();
+    expect(events.at(-2)).toMatchObject({ type: 'delta', content: 'legacy' });
+  });
+
+  it('rejected requests (busy, invalid) never select an engine', async () => {
+    const selectEngine = vi.fn(() => engine('adk'));
+    const chat = new ChatController({ runtime, selectEngine });
+    expect(chat.start(sink([]), { messages: [] })).toMatchObject({ status: 'rejected' });
+    chat.start(sink([]), { messages: [{ role: 'user', content: 'Hi' }] });
+    expect(chat.start(sink([]), { messages: [{ role: 'user', content: 'Hi' }] })).toMatchObject({
+      code: 'busy',
+    });
+    await chat.whenIdle();
+    expect(selectEngine).toHaveBeenCalledTimes(1);
   });
 });
 

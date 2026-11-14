@@ -3,6 +3,7 @@
  * Research engine): explicit valid environment variable > saved > default.
  * Deterministic: SQLite temp files and a scripted fetch; no network.
  */
+import { taskModelsFor } from '@rka/agent-host';
 import { createOllamaProvider, type FetchLike } from '@rka/model-provider';
 import { openStorage, type Storage } from '@rka/storage';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,7 +12,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveEnvOverrides } from './env-overrides.js';
 import { createRuntimeConfig, SAVED_PREFIX } from './runtime-config.js';
-import { ollamaApplier, taskModelsFor, toOllamaConfig } from './services.js';
+import { ollamaApplier, toOllamaConfig } from './services.js';
 
 const TUNNEL = 'example-tunnel.ngrok-free.dev';
 const REMOTE_MODEL = 'qwen3.5:9b-mlx';

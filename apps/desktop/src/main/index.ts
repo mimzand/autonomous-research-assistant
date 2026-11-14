@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
+import { createAppChatEngines, createChatWebSearch, researchTaskModelsFor } from '@rka/agent-host';
 import { createAgentRuntime, createSourceStore } from '@rka/agent-runtime';
 import { createOllamaProvider, ollamaTransportOptionsFromEnv } from '@rka/model-provider';
 import { IpcEvents, ResearchProgressEventSchema, SettingsChangedEventSchema } from '@rka/shared';
@@ -8,8 +9,6 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell 
 import { probeAdkRuntime } from './adk-probe.js';
 import { chatUsageRecorder, openAppStorage } from './app-storage.js';
 import { ChatController } from './chat.js';
-import { createAppChatEngines, createChatWebSearch } from './chat-engine.js';
-import { researchTaskModelsFor } from './research-engine.js';
 import { createRuntimeConfig } from './config/runtime-config.js';
 import {
   createOllamaSettingsService,

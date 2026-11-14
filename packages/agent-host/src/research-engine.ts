@@ -11,7 +11,7 @@ import {
 } from '@rka/model-provider';
 import { ollamaConnectionLabel, type ResearchTaskInfo } from '@rka/shared';
 import { z } from 'zod';
-import { taskModelsFor } from './config/services.js';
+import { taskModelsFor } from './task-models.js';
 
 /*
  * Research engine selection (ADK migration, phase 7).
@@ -24,7 +24,8 @@ import { taskModelsFor } from './config/services.js';
  *
  * Source: the effective `engine.research` setting — `RESEARCH_ENGINE` when set
  * and valid (an override), else the value saved in Settings → Agent Engines,
- * else "legacy" (main/config/env-overrides.ts). Independent of the Chat engine.
+ * else "legacy" (apps/desktop/src/main/config/env-overrides.ts). Independent of
+ * the Chat engine.
  *
  * Pinning: the engine is read once, when a task starts, and stored with the
  * task's captured model configuration (`task.input.model.config`, already an
@@ -105,8 +106,8 @@ export interface ResearchTaskModelsOptions {
 }
 
 /**
- * Task isolation for Research (replaces `taskModelsFor` in main): the existing
- * Ollama configuration capture, plus the pinned engine.
+ * Task isolation for Research (wraps `taskModelsFor`): the existing Ollama
+ * configuration capture, plus the pinned engine.
  */
 export function researchTaskModelsFor(
   provider: OllamaProvider,

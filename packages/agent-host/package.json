@@ -22,5 +22,8 @@
     "@rka/shared": "workspace:*",
     "@rka/storage": "workspace:*",
     "@rka/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "4.6.7"
   }
 }

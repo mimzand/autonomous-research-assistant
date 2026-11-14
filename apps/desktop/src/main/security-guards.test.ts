@@ -16,6 +16,7 @@ const repo = join(import.meta.dirname, '..', '..', '..', '..');
 const roots = [
   'apps/desktop/src',
   'packages/adk-runtime/src',
+  'packages/agent-host/src',
   'packages/agent-runtime/src',
   'packages/model-provider/src',
   'packages/storage/src',
@@ -104,7 +105,7 @@ describe('security guards', () => {
     expect(provider).toMatch(
       /withToolCalling\(\): OllamaProvider \{\s*return new OllamaProvider\(this\.config, \{ \.\.\.this\.options, allowToolCalls: true \}\);/,
     );
-    expect(offenders(/\.withToolCalling\(\)/, ['apps/desktop/src/main/chat-engine.ts'])).toEqual(
+    expect(offenders(/\.withToolCalling\(\)/, ['packages/agent-host/src/chat-engine.ts'])).toEqual(
       [],
     );
     const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
@@ -121,7 +122,7 @@ describe('security guards', () => {
       offenders(/\bstreamChatWithTools\b/, [
         'packages/agent-runtime/src/chat/tool-chat.ts',
         'packages/agent-runtime/src/index.ts',
-        'apps/desktop/src/main/chat-engine.ts',
+        'packages/agent-host/src/chat-engine.ts',
       ]),
     ).toEqual([]);
     const loop = readFileSync(join(repo, 'packages/agent-runtime/src/chat/tool-chat.ts'), 'utf8');
@@ -164,6 +165,8 @@ describe('security guards', () => {
         'apps/desktop/src/main/index.ts',
         'apps/desktop/src/main/window.ts',
         'apps/desktop/src/main/research-tools.ts',
+        // Type-only HostPorts declaration; the Electron adapter is in main/index.ts.
+        'packages/agent-host/src/ports.ts',
       ]),
     ).toEqual([]);
   });

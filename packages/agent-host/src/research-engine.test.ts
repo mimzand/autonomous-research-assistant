@@ -1,6 +1,5 @@
 import { createOllamaProvider, loadOllamaConfig } from '@rka/model-provider';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { taskModelsFor } from './config/services.js';
 import {
   DEFAULT_RESEARCH_ENGINE,
   parseResearchEngine,
@@ -9,7 +8,7 @@ import {
   RESEARCH_ENGINE_ENV,
   researchTaskModelsFor,
 } from './research-engine.js';
-import { isAllowedSetting } from './security.js';
+import { taskModelsFor } from './task-models.js';
 
 const provider = () => createOllamaProvider(loadOllamaConfig({ OLLAMA_HOST: '127.0.0.1:9' }));
 const env = { ...process.env };
@@ -36,8 +35,7 @@ describe('research.engine flag', () => {
     }
   });
 
-  it('is allowed in settings.env and independent of AGENT_ENGINE', () => {
-    expect(isAllowedSetting(RESEARCH_ENGINE_ENV)).toBe(true);
+  it('is independent of AGENT_ENGINE', () => {
     process.env['AGENT_ENGINE'] = 'adk';
     process.env[RESEARCH_ENGINE_ENV] = '';
     const log = vi.fn();

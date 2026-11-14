@@ -27,7 +27,7 @@ import { z } from 'zod';
  *
  * Source: the effective `engine.chat` setting — `AGENT_ENGINE` when set and
  * valid (an override), else the value saved in Settings → Agent Engines, else
- * "legacy" (main/config/env-overrides.ts). It is read when each Chat request
+ * "legacy" (apps/desktop/src/main/config/env-overrides.ts). It is read when each Chat request
  * starts; a request keeps the engine it started with.
  *
  * Web search (Phase 8.2): when `chat.webSearch` is on and SearXNG is
