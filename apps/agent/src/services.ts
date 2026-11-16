@@ -23,6 +23,7 @@ import {
   type RequestHandlers,
 } from './handlers.js';
 import { createAgentSecretStore } from './secrets.js';
+import { createSnapshotStore } from './snapshots.js';
 import { type AgentServerLink } from './server.js';
 import { createShellPorts, type ShellSecrets } from './shell-ports.js';
 
@@ -180,7 +181,11 @@ export function openAgentServices(options: AgentServicesOptions): AgentServices 
           ...dashboardHandlers(host.dashboard),
           ...chatHandlers(host.chat, host.runtime),
           ...researchHandlers(host.dashboard),
-          ...researchToolsHandlers(host.researchTools, host.dashboard),
+          ...researchToolsHandlers(
+            host.researchTools,
+            host.dashboard,
+            createSnapshotStore({ serialize: () => storage.sqlite.serialize() }),
+          ),
           ...settingsHandlers(settings, config, secrets),
         },
         secrets,

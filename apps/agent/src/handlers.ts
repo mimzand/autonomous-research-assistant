@@ -18,6 +18,7 @@ import {
 } from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import { type AgentSecretStore } from './secrets.js';
+import { type SnapshotStore } from './snapshots.js';
 
 /** One authenticated client connection, as seen by a handler. */
 export interface AgentConnection {
@@ -97,6 +98,7 @@ export function researchHandlers(dashboard: DashboardService) {
 export function researchToolsHandlers(
   researchTools: ResearchToolsService,
   dashboard: Pick<DashboardService, 'backup'>,
+  snapshots: SnapshotStore,
 ) {
   return {
     'researchTools.status': () => researchTools.status(),
@@ -105,6 +107,11 @@ export function researchToolsHandlers(
     'researchTools.fetchUrl': (params) => researchTools.fetch(params),
     'researchTools.pickFile': () => researchTools.pickFile(),
     'researchTools.extractFile': (params) => researchTools.extractFile(params),
+    // Agent Web API: no shell dialogs. The file's bytes instead of a picked path, and
+    // the backup as a downloadable snapshot instead of a save dialog.
+    'researchTools.extractUpload': (params) => researchTools.extractUpload(params),
+    'storage.createSnapshot': () => snapshots.create(),
+    'storage.readSnapshot': (params) => snapshots.read(params),
     'researchTools.saveSource': (params) => researchTools.saveSource(params),
     'researchTools.openUrl': (params) => researchTools.openUrl(params),
     'researchTools.cancel': (params) => {

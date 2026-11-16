@@ -53,6 +53,7 @@ import {
   TaskLogsRequestSchema,
   TaskStatusCountsSchema,
   ToolExtractFileRequestSchema,
+  ToolExtractUploadRequestSchema,
   ToolFetchRequestSchema,
   ToolSearchRequestSchema,
   ToolSearchResultSchema,
@@ -115,6 +116,30 @@ export const StoreSecretRequestSchema = z.strictObject({
   key: z.enum(SECRET_SETTING_KEYS),
   ciphertext: SecretCiphertextSchema.nullable(),
 });
+/**
+ * Backup without a save dialog (agent Web API): a consistent in-memory copy of the
+ * database (SQLite serialize), held by the agent for a few minutes and read back in
+ * chunks. Nothing is written to disk.
+ */
+export const SNAPSHOT_CHUNK_BYTES = 4 * 1024 * 1024;
+export const SnapshotIdSchema = z.uuid();
+export const SnapshotInfoSchema = z.strictObject({
+  snapshotId: SnapshotIdSchema,
+  fileName: z.string().regex(/^research-[0-9TZ-]+\.db$/),
+  sizeBytes: z.int().nonnegative(),
+  createdAt: z.iso.datetime(),
+});
+export const ReadSnapshotRequestSchema = z.strictObject({
+  snapshotId: SnapshotIdSchema,
+  offset: z.int().nonnegative(),
+  length: z.int().min(1).max(SNAPSHOT_CHUNK_BYTES),
+});
+export const SnapshotChunkSchema = z.strictObject({
+  offset: z.int().nonnegative(),
+  dataBase64: z.string().max(Math.ceil(SNAPSHOT_CHUNK_BYTES / 3) * 4),
+  eof: z.boolean(),
+});
+
 /** `settings:choose-backup-folder`: the saved result, or `cancelled` when the dialog was closed. */
 export const ChooseBackupFolderResultSchema = z.union([
   SettingsUpdateResultSchema,
@@ -174,6 +199,15 @@ export const PROTOCOL_METHODS = {
   'storage.integrityCheck': request('toAgent', 3, NoParamsSchema, IntegrityCheckResultSchema),
   /** The agent asks the shell for the destination via `shell.chooseBackupPath`. */
   'storage.backup': request('toAgent', 6, NoParamsSchema, BackupResultSchema),
+  /** Agent Web API: backup as a download (no save dialog). Snapshot, then read it in chunks. */
+  'storage.createSnapshot': request('toAgent', 10, NoParamsSchema, SnapshotInfoSchema),
+  /** `null`: unknown or expired snapshot (create a new one). */
+  'storage.readSnapshot': request(
+    'toAgent',
+    10,
+    ReadSnapshotRequestSchema,
+    SnapshotChunkSchema.nullable(),
+  ),
 
   // --- research tools playground ------------------------------------------------------
   'researchTools.status': request('toAgent', 6, NoParamsSchema, ResearchToolsStatusSchema),
@@ -195,6 +229,13 @@ export const PROTOCOL_METHODS = {
     SaveTestSourceResultSchema,
   ),
   'researchTools.openUrl': request('toAgent', 6, OpenUrlRequestSchema, OpenUrlResultSchema),
+  /** Agent Web API: the file's bytes instead of a shell file dialog (no path, no token). */
+  'researchTools.extractUpload': request(
+    'toAgent',
+    10,
+    ToolExtractUploadRequestSchema,
+    ExtractionResultSchema,
+  ),
   'researchTools.cancel': request('toAgent', 6, CancelRequestSchema, VoidResultSchema),
 
   // --- settings -----------------------------------------------------------------------

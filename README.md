@@ -66,6 +66,7 @@ apps/
     src/preload/          Preload bridge: exposes window.api (sandboxed, CommonJS)
     src/renderer/         Vue 3 UI (browser code only)
   agent/                  Agent service (@rka/agent): owns SQLite and createAgentHost; loopback protocol server
+  api/                    Web API (@rka/api): HTTP + OpenAPI/Swagger in front of the agent service (no Electron, no DB)
 packages/
   shared/                 @rka/shared         Zod schemas, domain types, IPC contract, Result
   model-provider/         @rka/model-provider ModelProvider interface + Ollama implementation
@@ -494,6 +495,60 @@ To develop the agent on its own: run `pnpm agent:dev` in one terminal, then in a
 `$env:AGENT_TRANSPORT='external'; pnpm dev` (PowerShell). The Dashboard then shows
 the agent's database (`apps/agent/.agent-data/data/research.db`, separate from the
 app's). Never run the app in-process on a folder an agent is serving.
+
+## Web API (Swagger)
+
+`apps/api` is an HTTP API with OpenAPI/Swagger for the agent service, for use without
+Electron (scripts, Postman, a browser UI of your own):
+
+```text
+Browser / Postman ──HTTP──▶ apps/api (127.0.0.1:8787, API key) ──@rka/agent-client──▶ apps/agent (127.0.0.1, token)
+```
+
+The API talks to the agent over the same authenticated loopback protocol as the desktop
+app. The agent's port and token never leave the API, and the API opens no database (the
+agent stays the only SQLite writer).
+
+```powershell
+$env:API_KEY = 'choose-a-long-random-key-of-24+-chars'
+pnpm api:up          # starts pnpm agent:dev and pnpm api:dev together (Ctrl+C stops both)
+# Swagger UI: http://127.0.0.1:8787/docs  ("Authorize" → paste the key)
+# OpenAPI:    http://127.0.0.1:8787/openapi.json
+```
+
+Without `API_KEY` (loopback only) the API generates a key for that run and prints it.
+Requests send it as `X-API-Key: <key>` (or `Authorization: Bearer <key>`); only
+`/health`, `/docs` and `/openapi.json` are public.
+
+| Variable                    | Default                                   | Notes                                                                                       |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `API_KEY`                   | generated per run (loopback only)         | At least 24 characters; required when `API_HOST` is not a loopback address                  |
+| `API_HOST` / `API_PORT`     | `127.0.0.1` / `8787`                      | Where the API listens                                                                       |
+| `AGENT_STATE_FILE`          | `apps/agent/.agent-data/agent-state.json` | The agent's state file; must match the agent's `--data-dir` / `--state-file`                |
+| `API_CORS_ORIGINS`          | none                                      | Comma-separated exact origins (e.g. `http://127.0.0.1:5173`) allowed to call from a browser |
+| `API_RATE_LIMIT_PER_MINUTE` | `300`                                     | Per client address                                                                          |
+
+Data folder alignment: `pnpm api:up` uses the dev agent's own database
+(`apps/agent/.agent-data`). To run the agent on another folder, start the two yourself
+and point the API at the agent's state file:
+`pnpm agent:dev --data-dir D:\rka` and `$env:AGENT_STATE_FILE='D:\rka\agent-state.json'; pnpm api:dev`.
+Never point an agent at the desktop app's folder while the app is running.
+
+Endpoints (see `/docs` for schemas):
+
+- System: `GET /health`, `GET /agent/ping`, `GET /model/health`
+- Tasks and research: `GET /tasks`, `/tasks/counts`, `/tasks/{id}`, `/tasks/{id}/logs`;
+  `POST /tasks/research`, `/tasks/{id}/pause|resume|cancel|retry`;
+  `GET /events/research` (server-sent progress events)
+- Knowledge base: `GET /sources`, `/sources/{id}`, `/reports`, `/reports/{id}`
+- Chat: `POST /chat` (the reply as server-sent events), `POST /chat/{streamId}/stop`
+- Files: `POST /research-tools/extract` (multipart upload of a PDF/DOCX, up to 11 MB),
+  `POST /storage/backup` (downloads a copy of the database), `GET /storage/status`,
+  `POST /storage/integrity-check`
+
+Not available through the API: Settings, the Ollama access token (stored with the
+desktop app's OS key store), web fetch/search tools, and anything else that needs a
+native dialog or `safeStorage`. Details: [docs/agent-web-api-report.md](docs/agent-web-api-report.md).
 
 ## Troubleshooting
 

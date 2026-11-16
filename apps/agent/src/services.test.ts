@@ -83,7 +83,7 @@ describe('openAgentServices', () => {
     expect(logs).toContain('Marked 1 task(s) as interrupted after an unexpected shutdown.');
   });
 
-  it('serves every shell → agent method except system.* (Phases 3–7)', () => {
+  it('serves every shell → agent method except system.* (Phases 3–7, Web API)', () => {
     const served = Object.keys(open(dataDir()).handlers).sort();
     const toAgent = Object.entries(PROTOCOL_METHODS)
       .filter(([, def]) => def.type === 'request' && def.direction === 'toAgent')
@@ -108,6 +108,7 @@ describe('openAgentServices', () => {
       'researchTools.cancel',
       'researchTools.checkSearch',
       'researchTools.extractFile',
+      'researchTools.extractUpload',
       'researchTools.fetchUrl',
       'researchTools.openUrl',
       'researchTools.pickFile',
@@ -124,7 +125,9 @@ describe('openAgentServices', () => {
       'sources.get',
       'sources.list',
       'storage.backup',
+      'storage.createSnapshot',
       'storage.integrityCheck',
+      'storage.readSnapshot',
       'storage.status',
       'tasks.cancel',
       'tasks.counts',

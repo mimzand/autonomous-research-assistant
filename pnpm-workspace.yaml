@@ -20,6 +20,9 @@ allowBuilds:
   # postinstall only prints a version-scheme warning. Neither is needed.
   '@google/genai': false
   protobufjs: false
+  # Pulled in by swagger-ui-dist (apps/api, Swagger UI assets). Its install script
+  # only sends usage analytics to scarf.sh; never run it.
+  '@scarf/scarf': false
 
 # @google/adk lists dockerode as an optional dependency for its container code
 # executor. Code execution is prohibited in this app (see packages/adk-runtime),

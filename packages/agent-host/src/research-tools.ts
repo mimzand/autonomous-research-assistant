@@ -12,6 +12,7 @@ import {
   SaveTestSourceResultSchema,
   SearchHealthSchema,
   ToolExtractFileRequestSchema,
+  ToolExtractUploadRequestSchema,
   ToolFetchRequestSchema,
   ToolSearchRequestSchema,
   ToolSearchResultSchema,
@@ -414,6 +415,39 @@ export function createResearchToolsService(deps: ResearchToolsDeps) {
               extractMs: Math.max(0, elapsed() - readMs),
               totalMs: elapsed(),
             },
+          });
+        });
+        return ExtractionResultSchema.parse({ status: 'ok', source });
+      } catch (error) {
+        return ExtractionResultSchema.parse({
+          status: 'error',
+          durationMs: elapsed(),
+          error: toResearchError(error),
+        });
+      }
+    },
+
+    /**
+     * Extracts an uploaded file (agent Web API): the same checks and extraction as a
+     * picked file (type from the name and content, `web.maxDownloadBytes`), from bytes
+     * the client sent instead of a path. Nothing is written to disk.
+     */
+    async extractUpload(payload: unknown): Promise<ExtractionResult> {
+      const request = parse(ToolExtractUploadRequestSchema, payload);
+      const started = now();
+      const elapsed = () => Math.max(0, Math.round(now() - started));
+      const { maxDownloadBytes: maxFileBytes, maxTextChars } = cfg();
+      try {
+        const source = await track(request.requestId, async (signal) => {
+          const bytes = Buffer.from(request.contentBase64, 'base64');
+          const doc = await extractLocalDocument(request.name, bytes, {
+            maxBytes: maxFileBytes,
+            maxTextChars,
+            signal,
+          });
+          return view('file', request.name, doc, {
+            web: null,
+            timings: { downloadMs: null, extractMs: elapsed(), totalMs: elapsed() },
           });
         });
         return ExtractionResultSchema.parse({ status: 'ok', source });

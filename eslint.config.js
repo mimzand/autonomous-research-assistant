@@ -116,6 +116,8 @@ export default defineConfig(
       'apps/desktop/src/preload/**/*.ts',
       'apps/agent/*.{js,ts}',
       'apps/agent/src/**/*.ts',
+      'apps/api/*.{js,ts}',
+      'apps/api/src/**/*.ts',
       'packages/*/*.{js,ts}',
       'packages/*/src/**/*.ts',
     ],
@@ -220,6 +222,40 @@ export default defineConfig(
   },
 
   // Standalone agent service: plain Node, never Electron.
+  // Web API (apps/api): HTTP in front of the agent service. Never Electron, never the
+  // database or the agent host (the agent is the only SQLite writer); talks to the agent
+  // only through @rka/agent-client. Tests may start a real agent from apps/agent.
+  {
+    files: ['apps/api/src/**/*.ts'],
+    ignores: ['apps/api/src/**/*.test.ts', 'apps/api/src/test-fixtures.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'The Web API runs without Electron.' }],
+          patterns: [
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+            banPackages(
+              'The Web API opens no database and builds no agent: use @rka/agent-client.',
+              [
+                '@rka/storage',
+                '@rka/agent-host',
+                '@rka/agent-runtime',
+                '@rka/adk-runtime',
+                '@rka/model-provider',
+                '@rka/tools',
+                'better-sqlite3',
+                '**/agent/src/**',
+                '**/desktop/**',
+                '@rka/desktop',
+              ],
+            ),
+          ],
+        },
+      ],
+    },
+  },
+
   {
     files: ['apps/agent/src/**/*.ts'],
     rules: {

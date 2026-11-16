@@ -160,6 +160,26 @@ the allow-list below may `fork` (`security-guards.test.ts`):
 - Web content and model output inside payloads stay untrusted data, exactly as today;
   the protocol carries no instructions.
 
+## Web API client (`apps/api`)
+
+The Web API is another client of the same protocol, not a new way into the agent:
+
+- It reads the state file and authenticates like any client, as kind `cli`. The agent
+  never sends it reverse calls (dialogs, secrets: those go to a `shell` only), and a
+  `cli` client cannot stop the agent (`system.shutdown` is `shell`-only).
+- The agent token stays in the API process. HTTP clients authenticate to the API with
+  its own key (`API_KEY`, compared in constant time). The API listens on `127.0.0.1` by
+  default and refuses a non-loopback `API_HOST` without a chosen key.
+- It opens no database and imports neither `electron` nor `@rka/storage` /
+  `@rka/agent-host` (ESLint). The agent stays the only SQLite writer.
+- Electron substitutes are agent methods that need no dialog: `researchTools.extractUpload`
+  (the file's bytes, same type and size checks as a picked file) and
+  `storage.createSnapshot` / `storage.readSnapshot` (an in-memory, consistent copy of the
+  database read in chunks; nothing is written to or deleted from disk).
+- Secrets: the Ollama access token is safeStorage ciphertext that only the desktop shell
+  can decrypt; with only the API connected, the agent sends no token. The API's own key
+  comes from the environment.
+
 ## Out of scope
 
 - Multi-user machines with hostile local users who can read the user's own files: they

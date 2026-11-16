@@ -201,3 +201,70 @@ describe('Research Tools and backup in service mode (Phase 6)', () => {
     expect(shown).toEqual([]);
   });
 });
+
+describe('Electron substitutes for clients without a shell (agent Web API)', () => {
+  it('extracts an uploaded file from its bytes, for a client without dialogs', async () => {
+    const { connect } = await setup();
+    const cli = await connect({}, 'cli');
+    const docx = buildDocx(paragraph('Uploaded text.'), { title: 'Up' });
+    await expect(
+      cli.request('researchTools.extractUpload', {
+        requestId: 'u1',
+        name: 'upload.docx',
+        contentBase64: Buffer.from(docx).toString('base64'),
+      }),
+    ).resolves.toMatchObject({
+      status: 'ok',
+      source: { kind: 'docx', label: 'upload.docx', text: 'Uploaded text.' },
+    });
+  });
+
+  it('refuses a file whose content does not match its type, and path names', async () => {
+    const { connect } = await setup();
+    const cli = await connect({}, 'cli');
+    const renamed = await cli.request('researchTools.extractUpload', {
+      requestId: 'u2',
+      name: 'invoice.pdf',
+      contentBase64: Buffer.from('MZ not a pdf').toString('base64'),
+    });
+    expect(renamed).toMatchObject({ status: 'error' });
+    await expect(
+      cli.request('researchTools.extractUpload', {
+        requestId: 'u3',
+        name: '../../etc/passwd.docx',
+        contentBase64: 'AAAA',
+      }),
+    ).rejects.toMatchObject({ code: 'bad_request' });
+  });
+
+  it('hands out the database as a snapshot read in chunks (no save dialog, no file)', async () => {
+    const { connect } = await setup();
+    const cli = await connect({}, 'cli');
+    await cli.request('tasks.runPersistenceCheck', {});
+    const info = await cli.request('storage.createSnapshot', {});
+    expect(info.fileName).toMatch(/^research-.+\.db$/);
+    const parts: Buffer[] = [];
+    for (let offset = 0; ;) {
+      const chunk = await cli.request('storage.readSnapshot', {
+        snapshotId: info.snapshotId,
+        offset,
+        length: 64 * 1024,
+      });
+      if (!chunk) throw new Error('snapshot expired');
+      const bytes = Buffer.from(chunk.dataBase64, 'base64');
+      parts.push(bytes);
+      offset += bytes.length;
+      if (chunk.eof) break;
+    }
+    const bytes = Buffer.concat(parts);
+    expect(bytes.length).toBe(info.sizeBytes);
+    expect(bytes.subarray(0, 15).toString('latin1')).toBe('SQLite format 3');
+    await expect(
+      cli.request('storage.readSnapshot', {
+        snapshotId: '00000000-0000-4000-8000-000000000000',
+        offset: 0,
+        length: 1,
+      }),
+    ).resolves.toBeNull();
+  });
+});
