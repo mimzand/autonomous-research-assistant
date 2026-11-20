@@ -1,3 +1,8 @@
+import {
+  type ChatController,
+  type DashboardService,
+  type ResearchToolsService,
+} from '@rka/agent-host';
 import { type AgentRuntime } from '@rka/agent-runtime';
 import {
   AppInfoSchema,
@@ -7,10 +12,7 @@ import {
   ModelHealthSchema,
   type AppInfo,
 } from '@rka/shared';
-import { type ChatController } from './chat.js';
-import { type DashboardService } from './dashboard.js';
-import { type SettingsService } from './config/settings-service.js';
-import { type ResearchToolsService } from './research-tools.js';
+import { type SettingsService } from '@rka/agent-host';
 
 /** Minimal shape of Electron's WebContents that we rely on. */
 export interface SenderLike {
@@ -43,24 +45,31 @@ export interface IpcDeps {
 }
 
 /**
- * Registers every IPC handler. Each handler rejects calls from frames that
- * are not our renderer, validates renderer-supplied arguments, and
- * validates its own response against the shared contract.
+ * Wraps a handler so it rejects calls from frames that are not our renderer and
+ * calls with more than one argument.
  */
-export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
-  const guard =
-    <T>(handler: (event: InvokeEventLike, payload: unknown) => Promise<T> | T) =>
+export function createIpcGuard(isTrustedSender: (url: string) => boolean) {
+  return <T>(handler: (event: InvokeEventLike, payload: unknown) => Promise<T> | T) =>
     async (event: InvokeEventLike, ...args: unknown[]): Promise<T> => {
       const frame = event.senderFrame;
       const url = frame?.url;
       // Only our own page, and only its top-level frame (never an iframe).
-      if (!frame || !url || !deps.isTrustedSender(url) || (frame.parent ?? null) !== null) {
+      if (!frame || !url || !isTrustedSender(url) || (frame.parent ?? null) !== null) {
         throw new Error('Rejected IPC call from an untrusted sender.');
       }
       // Every channel takes at most one (validated) argument.
       if (args.length > 1) throw new Error('Rejected IPC call with unexpected arguments.');
       return handler(event, args[0]);
     };
+}
+
+/**
+ * Registers every IPC handler. Each handler rejects calls from frames that
+ * are not our renderer, validates renderer-supplied arguments, and
+ * validates its own response against the shared contract.
+ */
+export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
+  const guard = createIpcGuard(deps.isTrustedSender);
 
   const watchedSenders = new Set<number>();
 

@@ -20,7 +20,7 @@ import {
   type WebFetcher,
   type WebSearchProvider,
 } from '@rka/tools';
-import { researchTaskModelsFor } from '../research-engine.js';
+import { researchTaskModelsFor } from '@rka/agent-host';
 
 export const GOAL = 'What does the Lindholm lighthouse look like and when was it built?';
 export const LIMITS = { maxQuestions: 1, maxQueriesPerQuestion: 1, maxSources: 2 };

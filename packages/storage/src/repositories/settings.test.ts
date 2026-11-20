@@ -79,4 +79,29 @@ describe('settings repository', () => {
     ).not.toThrow();
     expect(() => storage.settings.getSecret('plain')).toThrow(/not a secret/);
   });
+
+  it('stores and reads ciphertext a key holder produced, without a cipher (agent service)', () => {
+    const cipher = fakeCipher();
+    const writer = memoryStorage({ cipher });
+    writer.settings.setSecret('search.api_key', 'sk-live-123456');
+    const ciphertext = writer.settings.getSecretCiphertext('search.api_key') ?? '';
+    expect(ciphertext).not.toBe('');
+    expect(ciphertext).not.toContain('sk-live');
+
+    const agent = memoryStorage();
+    agent.settings.setSecretCiphertext('search.api_key', ciphertext);
+    expect(agent.settings.getSecretCiphertext('search.api_key')).toBe(ciphertext);
+    expect(agent.settings.list()).toEqual([
+      expect.objectContaining({ key: 'search.api_key', value: '[encrypted]', isSecret: true }),
+    ]);
+    expect(agent.settings.getSecretCiphertext('missing')).toBeUndefined();
+  });
+
+  it('rejects ciphertext that is not base64, and plain rows read as ciphertext', () => {
+    const storage = memoryStorage();
+    expect(() => storage.settings.setSecretCiphertext('k', 'not base64!')).toThrow();
+    expect(() => storage.settings.setSecretCiphertext('k', '')).toThrow();
+    storage.settings.set('plain', 1);
+    expect(() => storage.settings.getSecretCiphertext('plain')).toThrow(/not a secret/);
+  });
 });

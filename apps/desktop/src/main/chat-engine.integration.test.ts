@@ -27,9 +27,13 @@ import { openStorage, type Storage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chatUsageRecorder } from './app-storage.js';
-import { createRuntimeConfig } from './config/runtime-config.js';
-import { ChatController } from './chat.js';
-import { AGENT_ENGINE_ENV, createAppChatEngines, type AgentEngine } from './chat-engine.js';
+import { createRuntimeConfig } from '@rka/agent-host';
+import {
+  AGENT_ENGINE_ENV,
+  ChatController,
+  createAppChatEngines,
+  type AgentEngine,
+} from '@rka/agent-host';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
 
 const ENGINES: readonly AgentEngine[] = ['legacy', 'adk'];

@@ -1,7 +1,9 @@
 /**
  * Architecture guards for the agent and main process. These scan the source
  * so that a forbidden capability cannot be added without a failing test:
- * - no shell / process execution anywhere in shipped code,
+ * - no shell / process execution anywhere in shipped code, except the one spawn
+ *   allow-list (Phase 8): Electron starts the bundled agent with utilityProcess,
+ *   only from agent-supervisor.ts, with a fixed entry and fixed arguments,
  * - no model downloads (the app never calls Ollama's pull/push/create/delete),
  * - no file deletion except the backup's own temporary file,
  * - no dynamic code evaluation,
@@ -14,8 +16,13 @@ import { describe, expect, it } from 'vitest';
 
 const repo = join(import.meta.dirname, '..', '..', '..', '..');
 const roots = [
+  'apps/agent/src',
+  'apps/api/src',
   'apps/desktop/src',
   'packages/adk-runtime/src',
+  'packages/agent-client/src',
+  'packages/agent-host/src',
+  'packages/agent-protocol/src',
   'packages/agent-runtime/src',
   'packages/model-provider/src',
   'packages/storage/src',
@@ -50,12 +57,44 @@ describe('security guards', () => {
     expect(files.length).toBeGreaterThan(50);
   });
 
-  it('never executes shell commands or processes', () => {
+  it('never executes shell commands or processes, except the supervised agent (Phase 8)', () => {
+    // Nothing anywhere runs a shell or a child process through Node.
     expect(
       offenders(
-        /child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(|\bfork\s*\(|process\.binding|worker_threads/,
+        /child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(|process\.binding|worker_threads/,
       ),
     ).toEqual([]);
+    // The spawn allow-list: only the supervisor forks, and only Electron main hands it
+    // utilityProcess. The agent and every package (tools included) start nothing.
+    expect(
+      offenders(/\bfork\s*\(|utilityProcess/, [
+        'apps/desktop/src/main/agent-supervisor.ts',
+        'apps/desktop/src/main/index.ts',
+      ]),
+    ).toEqual([]);
+    const index = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
+    expect(index.match(/\bfork\s*\([^)]*\)/g)).toEqual(['fork(modulePath, args, options)']);
+    expect(index).toContain(
+      'fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options),',
+    );
+    expect(index.match(/utilityProcess\.\w+/g)).toEqual(['utilityProcess.fork']);
+    // The supervisor starts exactly one module, the bundled agent under the app path,
+    // with fixed arguments built from Electron's own paths; no shell, no token in argv.
+    const supervisor = readFileSync(
+      join(repo, 'apps/desktop/src/main/agent-supervisor.ts'),
+      'utf8',
+    );
+    expect(supervisor).not.toMatch(/from 'electron'/);
+    expect(supervisor.match(/\bfork\(/g)).toHaveLength(1);
+    expect(supervisor).toContain('const entry = agentEntryPath(deps.appPath);');
+    expect(supervisor).toMatch(
+      /deps\.fork\(entry, agentLaunchArgs\(\{ dataDir: deps\.dataDir, stateFile \}\), \{/,
+    );
+    expect(supervisor).toContain("return join(appPath, 'out', 'agent', 'main.js');");
+    expect(supervisor).toContain(
+      "return ['--data-dir', paths.dataDir, '--state-file', paths.stateFile, '--port', '0'];",
+    );
+    expect(supervisor).not.toMatch(/\btoken\s*:/);
   });
 
   it('never downloads, creates or deletes Ollama models', () => {
@@ -67,8 +106,24 @@ describe('security guards', () => {
       offenders(/\b(rmSync|unlinkSync|rmdirSync|unlink|rmdir)\s*\(|fs\.rm\(|\.rm\(/, [
         'packages/storage/src/inspect.ts',
         'apps/desktop/src/bench/runner.ts',
+        'apps/agent/src/state-file.ts',
+        'apps/desktop/src/main/agent-supervisor.ts',
       ]),
     ).toEqual([]);
+    // The supervisor removes only its agent's state file in the app's data folder.
+    const supervisor = readFileSync(
+      join(repo, 'apps/desktop/src/main/agent-supervisor.ts'),
+      'utf8',
+    );
+    expect(supervisor.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(stateFile']);
+    expect(supervisor).toContain('const stateFile = join(deps.dataDir, AGENT_STATE_FILE_NAME);');
+    // The agent removes only its own connection state file, and only while it still
+    // holds this run's token.
+    const agentState = readFileSync(join(repo, 'apps/agent/src/state-file.ts'), 'utf8');
+    expect(agentState.match(/rmSync\(([^,)]+)/g)).toEqual(['rmSync(path']);
+    expect(agentState).toMatch(
+      /if \(current\.status !== 'ok' \|\| !tokensEqual\(current\.state\.token, token\)\) return false;\s*rmSync\(path, \{ force: true \}\);/,
+    );
     // The benchmark (dev tooling, not part of the app) removes only the temporary
     // directories it created with mkdtempSync in the OS temp folder.
     const bench = readFileSync(join(repo, 'apps/desktop/src/bench/runner.ts'), 'utf8');
@@ -104,7 +159,7 @@ describe('security guards', () => {
     expect(provider).toMatch(
       /withToolCalling\(\): OllamaProvider \{\s*return new OllamaProvider\(this\.config, \{ \.\.\.this\.options, allowToolCalls: true \}\);/,
     );
-    expect(offenders(/\.withToolCalling\(\)/, ['apps/desktop/src/main/chat-engine.ts'])).toEqual(
+    expect(offenders(/\.withToolCalling\(\)/, ['packages/agent-host/src/chat-engine.ts'])).toEqual(
       [],
     );
     const main = readFileSync(join(repo, 'apps/desktop/src/main/index.ts'), 'utf8');
@@ -121,7 +176,7 @@ describe('security guards', () => {
       offenders(/\bstreamChatWithTools\b/, [
         'packages/agent-runtime/src/chat/tool-chat.ts',
         'packages/agent-runtime/src/index.ts',
-        'apps/desktop/src/main/chat-engine.ts',
+        'packages/agent-host/src/chat-engine.ts',
       ]),
     ).toEqual([]);
     const loop = readFileSync(join(repo, 'packages/agent-runtime/src/chat/tool-chat.ts'), 'utf8');
@@ -132,7 +187,7 @@ describe('security guards', () => {
       offenders(/\b(?:tools|registry)\.execute\(/, [
         'packages/agent-runtime/src/tools/gateway.ts',
         'packages/agent-runtime/src/research/workflow.ts',
-        'apps/desktop/src/main/research-tools.ts',
+        'packages/agent-host/src/research-tools.ts',
         'packages/adk-runtime/src/tools/registry-tool.ts',
       ]),
     ).toEqual([]);
@@ -161,9 +216,11 @@ describe('security guards', () => {
   it('opens external links only from the checked call sites', () => {
     expect(
       offenders(/openExternal\s*\(|openPath\s*\(|showItemInFolder\s*\(/, [
-        'apps/desktop/src/main/index.ts',
+        'apps/desktop/src/main/host-ports.ts',
+        // Service mode: delegates to the host-ports implementation above.
+        'apps/desktop/src/main/service-shell-ports.ts',
         'apps/desktop/src/main/window.ts',
-        'apps/desktop/src/main/research-tools.ts',
+        'packages/agent-host/src/research-tools.ts',
       ]),
     ).toEqual([]);
   });

@@ -26,7 +26,7 @@ import {
   type WebSearchProvider,
 } from '@rka/tools';
 import { afterAll, describe, expect, it } from 'vitest';
-import { researchTaskModelsFor, type ResearchEngine } from './research-engine.js';
+import { researchTaskModelsFor, type ResearchEngine } from '@rka/agent-host';
 /** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
 const liveTransport = {
   ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,

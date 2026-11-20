@@ -5,12 +5,14 @@ import { createSourceStore } from '@rka/agent-runtime';
 import { createToolRegistry, createWebServices, loadWebConfig } from '@rka/tools';
 import { IpcChannels, IpcEvents, type AppInfo, type ModelHealth } from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatController } from './chat.js';
-import { createRuntimeConfig } from './config/runtime-config.js';
-import { createSettingsService } from './config/settings-service.js';
-import { createDashboardService } from './dashboard.js';
+import {
+  ChatController,
+  createDashboardService,
+  createResearchToolsService,
+} from '@rka/agent-host';
+import { createRuntimeConfig } from '@rka/agent-host';
+import { createSettingsService } from '@rka/agent-host';
 import { registerIpcHandlers, type InvokeEventLike, type IpcMainLike } from './ipc.js';
-import { createResearchToolsService } from './research-tools.js';
 
 type Listener = (event: InvokeEventLike, ...args: unknown[]) => unknown;
 
@@ -204,6 +206,42 @@ describe('chat IPC', () => {
     expect(sender.once).toHaveBeenCalledTimes(1); // Watched once per window.
     destroyedListeners.forEach((listener) => listener());
     expect(stopForSink).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('research tools IPC', () => {
+  it('registers a fixed set of research channels and no generic fetch', () => {
+    const { handlers } = setup();
+    const research = [...handlers.keys()].filter((c) => c.startsWith('research:')).sort();
+    expect(research).toEqual([
+      'research:cancel',
+      'research:check-search',
+      'research:extract-file',
+      'research:fetch',
+      'research:open-url',
+      'research:pick-file',
+      'research:save-source',
+      'research:search',
+      'research:status',
+    ]);
+  });
+
+  it('serves validated results and rejects bad payloads and untrusted senders', async () => {
+    const { invoke } = setup();
+    await expect(invoke(IpcChannels.researchStatus, trusted)).resolves.toMatchObject({
+      search: { configured: false },
+    });
+    // Refused before any network access (SSRF check), returned as a validated result.
+    await expect(
+      invoke(IpcChannels.researchFetch, trusted, { requestId: 'r1', url: 'http://127.0.0.1/' }),
+    ).resolves.toMatchObject({ status: 'error', error: { code: 'blocked-url' } });
+    await expect(invoke(IpcChannels.researchFetch, trusted, { url: 42 })).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.researchFetch, trusted, { requestId: 'r', url: 'x', path: '/etc' }),
+    ).rejects.toThrow();
+    await expect(
+      invoke(IpcChannels.researchSearch, 'https://evil.example', { requestId: 'r', query: 'q' }),
+    ).rejects.toThrow(/untrusted sender/);
   });
 });
 

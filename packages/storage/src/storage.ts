@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import {
@@ -98,6 +98,14 @@ function runInTransaction<T>(db: Executor, fn: (tx: Transaction) => T): T {
     }
     return result;
   });
+}
+
+/**
+ * The app database inside a data folder: Electron's userData (in-process) or the
+ * agent's `--data-dir` (service mode). `%APPDATA%/<app>/data/research.db` on Windows.
+ */
+export function appDatabasePath(dataDir: string): string {
+  return join(dataDir, 'data', 'research.db');
 }
 
 /** Opens (or creates) the database, applies migrations and returns typed repositories. */

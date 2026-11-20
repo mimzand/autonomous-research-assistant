@@ -1,0 +1,25 @@
+{
+  "name": "@rka/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web API (HTTP + OpenAPI/Swagger) for the agent service. Talks to apps/agent over its loopback protocol; runs without Electron and opens no database.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.5",
+    "@rka/agent-client": "workspace:*",
+    "@rka/agent-protocol": "workspace:*",
+    "@rka/shared": "workspace:*",
+    "hono": "4.13.16",
+    "swagger-ui-dist": "5.34.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@rka/tools": "workspace:*",
+    "tsx": "4.23.15"
+  }
+}

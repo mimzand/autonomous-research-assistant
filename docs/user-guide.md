@@ -16,6 +16,12 @@ The portable zip works the same way: unblock it, unzip it and run
 Your data is stored in `%APPDATA%\Autonomous Research Assistant` (database:
 `data\research.db`). Uninstalling keeps it.
 
+The app runs its research engine as a second, background process of the same program
+(Task Manager → Details shows two `Autonomous Research Assistant.exe`). It talks to the
+window only through this computer (`127.0.0.1`), never over the network, and it closes
+with the app. While the app runs you will also see `agent-state.json` in the data folder;
+it is removed when the app closes. Existing data from earlier versions is used as is.
+
 Details: [installation.md](installation.md).
 
 ## 2. Configure Ollama (required)
@@ -92,4 +98,12 @@ Point the app at them in Settings:
   does not exist, ADK Chat ends the reply with an "invalid response" error (nothing is
   run). Legacy Chat refuses the call and continues.
 - **One reply at a time; Chat history is kept only for the session.**
+- **If the background process stops, restart the app.** Should the research engine
+  process end unexpectedly (for example if it is ended in Task Manager), requests show
+  errors until you close and reopen the app; nothing is lost beyond the running step,
+  and an interrupted research task can be resumed.
+- **"The agent service exited during startup" or "did not start in time".** Close the
+  app, make sure no `Autonomous Research Assistant.exe` is left in Task Manager, and
+  start it again. Security software that blocks programs from listening on
+  `127.0.0.1` can cause this.
 - **Some sites cannot be read.** Sites behind bot checks or CAPTCHAs are never bypassed.

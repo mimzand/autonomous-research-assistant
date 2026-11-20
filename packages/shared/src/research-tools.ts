@@ -166,6 +166,35 @@ export const ToolExtractFileRequestSchema = z.strictObject({
   token: z.string().min(1).max(100),
 });
 
+/**
+ * Largest file the Web API can upload for extraction (agent Web API, Phase 3). The
+ * base64 content must fit one agent protocol frame (16 MiB); the agent's own limit
+ * (`web.maxDownloadBytes`) still applies when it is lower.
+ */
+export const MAX_UPLOAD_BYTES = 11 * 1024 * 1024;
+const MAX_UPLOAD_BASE64_CHARS = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4;
+
+/** A file's bytes sent by a client without a desktop shell (no native file dialog). */
+export const ToolExtractUploadRequestSchema = z.strictObject({
+  requestId: RequestId,
+  /** The file name only (it decides the type); never a path. */
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .refine(
+      (n) => !/[\\/\0]/.test(n) && n !== '.' && n !== '..',
+      'must be a file name, not a path',
+    ),
+  contentBase64: z
+    .string()
+    .min(1)
+    .max(MAX_UPLOAD_BASE64_CHARS)
+    .regex(/^[A-Za-z0-9+/]*={0,2}$/, 'must be base64'),
+});
+export type ToolExtractUploadRequest = z.infer<typeof ToolExtractUploadRequestSchema>;
+
 // --- Save / open / cancel ---------------------------------------------------------------
 
 export const SaveTestSourceRequestSchema = z.strictObject({ resultId: z.string().min(1).max(100) });

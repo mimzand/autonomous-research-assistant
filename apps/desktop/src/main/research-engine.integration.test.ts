@@ -27,15 +27,15 @@ import {
   type WebSearchProvider,
 } from '@rka/tools';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createRuntimeConfig } from './config/runtime-config.js';
-import { createDashboardService } from './dashboard.js';
-import { taskModelsFor } from './config/services.js';
+import { createRuntimeConfig } from '@rka/agent-host';
 import {
+  createDashboardService,
   PINNED_ENGINE_KEY,
   researchTaskInfo,
   researchTaskModelsFor,
+  taskModelsFor,
   type ResearchEngine,
-} from './research-engine.js';
+} from '@rka/agent-host';
 
 const ENGINES: readonly ResearchEngine[] = ['legacy', 'adk'];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

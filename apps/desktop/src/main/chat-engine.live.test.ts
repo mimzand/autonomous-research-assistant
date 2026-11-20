@@ -21,8 +21,13 @@ import { openStorage } from '@rka/storage';
 import { createToolRegistry } from '@rka/tools';
 import { afterAll, describe, expect, it } from 'vitest';
 import { chatUsageRecorder } from './app-storage.js';
-import { ChatController, type ChatEventSink } from './chat.js';
-import { AGENT_ENGINE_ENV, createAppChatEngines, type AgentEngine } from './chat-engine.js';
+import {
+  AGENT_ENGINE_ENV,
+  ChatController,
+  createAppChatEngines,
+  type AgentEngine,
+  type ChatEventSink,
+} from '@rka/agent-host';
 /** Trusted ngrok tunnels from OLLAMA_NGROK_BYPASS_HOSTS (same rule as the app). */
 const liveTransport = {
   ngrokBypassHosts: ollamaTransportOptionsFromEnv(process.env).ngrokBypassHosts,

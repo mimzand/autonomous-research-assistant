@@ -28,7 +28,10 @@ import { type Storage } from '@rka/storage';
 import { createToolRegistry, createWebTools } from '@rka/tools';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { databasePath, openAppStorage } from '../app-storage.js';
-import { researchTaskInfo, researchTaskModelsFor } from '../research-engine.js';
+
+/** The test drives the in-process startup path (development transport). */
+const INPROCESS = { AGENT_TRANSPORT: 'inprocess' };
+import { researchTaskInfo, researchTaskModelsFor } from '@rka/agent-host';
 import {
   killMarker,
   ollamaReply,
@@ -291,7 +294,7 @@ describe('Phase 7.6: real process interruption → restart → recovery → resu
         const id = run.taskId as string;
 
         // 2. Restart: the app's startup path (migrations + recovery).
-        const first = openAppStorage({ userDataDir: join(root, 'userData') });
+        const first = openAppStorage({ userDataDir: join(root, 'userData'), env: INPROCESS });
         expect(first.recovery.interruptedTaskIds).toEqual([id]);
         expect(first.storage.sqlite.pragma('integrity_check', { simple: true })).toBe('ok');
         const recovered = state(first.storage, id);
@@ -309,7 +312,7 @@ describe('Phase 7.6: real process interruption → restart → recovery → resu
         first.storage.close();
 
         // 3. Restart again before resuming: recovery is idempotent.
-        const second = openAppStorage({ userDataDir: join(root, 'userData') });
+        const second = openAppStorage({ userDataDir: join(root, 'userData'), env: INPROCESS });
         expect(second.recovery.interruptedTaskIds).toEqual([]);
         expect(state(second.storage, id)).toEqual(recovered);
 

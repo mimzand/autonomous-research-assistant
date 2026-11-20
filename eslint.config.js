@@ -53,6 +53,11 @@ const nodePrefixPattern = {
  */
 const banPackages = (message, packages) => ({ group: packages, message });
 
+const mainCrossFolderBan = banPackages('Do not import across Electron process folders.', [
+  '**/preload/**',
+  '**/renderer/**',
+]);
+
 export default defineConfig(
   {
     ignores: [
@@ -109,6 +114,10 @@ export default defineConfig(
       'apps/desktop/*.{js,ts}',
       'apps/desktop/src/main/**/*.ts',
       'apps/desktop/src/preload/**/*.ts',
+      'apps/agent/*.{js,ts}',
+      'apps/agent/src/**/*.ts',
+      'apps/api/*.{js,ts}',
+      'apps/api/src/**/*.ts',
       'packages/*/*.{js,ts}',
       'packages/*/src/**/*.ts',
     ],
@@ -134,7 +143,11 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('The renderer may only import @rka/shared.', [
+              '@rka/agent-client',
+              '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -160,7 +173,11 @@ export default defineConfig(
           patterns: [
             nodePrefixPattern,
             banPackages('Preload may only import electron and @rka/shared.', [
+              '@rka/agent-client',
+              '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -179,13 +196,78 @@ export default defineConfig(
   {
     files: ['apps/desktop/src/main/**/*.ts'],
     rules: {
+      'no-restricted-imports': ['error', { patterns: [mainCrossFolderBan] }],
+    },
+  },
+
+  // Main reaches the agents through @rka/agent-host (createAgentHost). Exceptions:
+  // the ADK startup self-check (adk-probe.ts) and tests that inject an ADK runtime.
+  {
+    files: ['apps/desktop/src/main/**/*.ts'],
+    ignores: ['apps/desktop/src/main/adk-probe.ts', 'apps/desktop/src/main/**/*.test.ts'],
+    rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
-            banPackages('Do not import across Electron process folders.', [
-              '**/preload/**',
-              '**/renderer/**',
+            mainCrossFolderBan,
+            banPackages(
+              'Electron main uses ADK only through @rka/agent-host (createAgentHost); the startup self-check lives in adk-probe.ts.',
+              ['@rka/adk-runtime'],
+            ),
+          ],
+        },
+      ],
+    },
+  },
+
+  // Standalone agent service: plain Node, never Electron.
+  // Web API (apps/api): HTTP in front of the agent service. Never Electron, never the
+  // database or the agent host (the agent is the only SQLite writer); talks to the agent
+  // only through @rka/agent-client. Tests may start a real agent from apps/agent.
+  {
+    files: ['apps/api/src/**/*.ts'],
+    ignores: ['apps/api/src/**/*.test.ts', 'apps/api/src/test-fixtures.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'The Web API runs without Electron.' }],
+          patterns: [
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+            banPackages(
+              'The Web API opens no database and builds no agent: use @rka/agent-client.',
+              [
+                '@rka/storage',
+                '@rka/agent-host',
+                '@rka/agent-runtime',
+                '@rka/adk-runtime',
+                '@rka/model-provider',
+                '@rka/tools',
+                'better-sqlite3',
+                '**/agent/src/**',
+                '**/desktop/**',
+                '@rka/desktop',
+              ],
+            ),
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ['apps/agent/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'The agent service runs without Electron.' }],
+          patterns: [
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+            banPackages('The agent service never imports the desktop app.', [
+              '**/desktop/**',
+              '@rka/desktop',
             ]),
           ],
         },
@@ -237,6 +319,62 @@ export default defineConfig(
     },
   },
 
+  // @rka/agent-protocol: transport-agnostic contract. No Node, only @rka/shared.
+  {
+    files: ['packages/agent-protocol/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...nodeBuiltinPaths,
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+          ],
+          patterns: [
+            nodePrefixPattern,
+            banPackages('@rka/agent-protocol may depend only on @rka/shared.', [
+              '@rka/agent-client',
+              '@rka/agent-host',
+              '@rka/agent-runtime',
+              '@rka/adk-runtime',
+              '@rka/model-provider',
+              '@rka/tools',
+              '@rka/storage',
+            ]),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  },
+
+  // @rka/agent-client: Node client of the agent service. Only the protocol (+ shared).
+  {
+    files: ['packages/agent-client/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'electron', message: 'Packages must stay Electron-agnostic.' }],
+          patterns: [
+            banPackages(
+              '@rka/agent-client may depend only on @rka/agent-protocol and @rka/shared.',
+              [
+                '@rka/agent-host',
+                '@rka/agent-runtime',
+                '@rka/adk-runtime',
+                '@rka/model-provider',
+                '@rka/tools',
+                '@rka/storage',
+              ],
+            ),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  },
+
   // Leaf packages may depend only on @rka/shared.
   {
     files: [
@@ -258,7 +396,11 @@ export default defineConfig(
           ],
           patterns: [
             banPackages('Leaf packages may depend only on @rka/shared.', [
+              '@rka/agent-client',
+              '@rka/agent-host',
+              '@rka/agent-protocol',
               '@rka/agent-runtime',
+              '@rka/adk-runtime',
               '@rka/model-provider',
               '@rka/tools',
               '@rka/storage',
@@ -269,6 +411,37 @@ export default defineConfig(
       ],
     },
   },
+
+  // The two runtimes never depend on each other, and neither depends on the agent
+  // host that composes them (@rka/agent-host may import both).
+  ...[
+    { pkg: 'agent-runtime', other: '@rka/adk-runtime' },
+    { pkg: 'adk-runtime', other: '@rka/agent-runtime' },
+  ].map(({ pkg, other }) => ({
+    files: [`packages/${pkg}/src/**/*.ts`],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'electron', message: 'Packages must stay Electron-agnostic.' },
+            {
+              name: 'fflate',
+              message:
+                "Import 'fflate/browser'. The Node build declares its own `require`, which clashes with the require shim in the Electron main bundle and crashes the app at startup.",
+            },
+          ],
+          patterns: [
+            banPackages(
+              '@rka/agent-runtime and @rka/adk-runtime must not depend on each other or on @rka/agent-host.',
+              [other, '@rka/agent-host'],
+            ),
+            banPackages('Import workspace packages through their entry point only.', ['@rka/*/*']),
+          ],
+        },
+      ],
+    },
+  })),
 
   // Must stay last: turns off stylistic rules that conflict with Prettier.
   prettier,

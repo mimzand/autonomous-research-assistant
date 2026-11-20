@@ -1,4 +1,5 @@
 export {
+  appDatabasePath,
   openStorage,
   type OpenStorageOptions,
   type Repositories,

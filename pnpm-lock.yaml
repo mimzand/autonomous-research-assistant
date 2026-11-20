@@ -200,6 +200,71 @@ importers:
         specifier: 10.4.1
         version: 10.4.1(eslint@10.14.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)
 
+  apps/agent:
+    dependencies:
+      '@rka/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
+      '@rka/agent-host':
+        specifier: workspace:*
+        version: link:../../packages/agent-host
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
+      '@rka/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
+      '@rka/model-provider':
+        specifier: workspace:*
+        version: link:../../packages/model-provider
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@rka/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@rka/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+
+  apps/api:
+    dependencies:
+      '@hono/node-server':
+        specifier: 2.1.5
+        version: 2.1.5(hono@4.13.16)
+      '@rka/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      hono:
+        specifier: 4.13.16
+        version: 4.13.16
+      swagger-ui-dist:
+        specifier: 5.34.1
+        version: 5.34.1
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@rka/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+
   apps/desktop:
     dependencies:
       better-sqlite3:
@@ -209,6 +274,15 @@ importers:
       '@rka/adk-runtime':
         specifier: workspace:*
         version: link:../../packages/adk-runtime
+      '@rka/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
+      '@rka/agent-host':
+        specifier: workspace:*
+        version: link:../../packages/agent-host
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
       '@rka/agent-runtime':
         specifier: workspace:*
         version: link:../../packages/agent-runtime
@@ -270,6 +344,46 @@ importers:
         specifier: workspace:*
         version: link:../tools
     devDependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
+  packages/agent-client:
+    dependencies:
+      '@rka/agent-protocol':
+        specifier: workspace:*
+        version: link:../agent-protocol
+
+  packages/agent-host:
+    dependencies:
+      '@rka/adk-runtime':
+        specifier: workspace:*
+        version: link:../adk-runtime
+      '@rka/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
+      '@rka/model-provider':
+        specifier: workspace:*
+        version: link:../model-provider
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@rka/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@rka/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
+  packages/agent-protocol:
+    dependencies:
+      '@rka/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -1070,6 +1184,12 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  '@hono/node-server@2.1.5':
+    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4 || ^5.0.0-0
+
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
     engines: {node: '>=18.18.0'}
@@ -1406,6 +1526,9 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  '@scarf/scarf@1.4.0':
+    resolution: {integrity: sha512-xxeapPiUXdZAE3che6f3xogoJPeZgig6omHEy1rIY5WVsB3H2BHNnZH+gHG6x91SCWyQCzWGsuL2Hh3ClO5/qQ==}
 
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
@@ -2495,6 +2618,10 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
+  hono@4.13.16:
+    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
+    engines: {node: '>=16.9.0'}
+
   hookified@1.15.1:
     resolution: {integrity: sha512-MvG/clsADq1GPM2KGo2nyfaWVyn9naPiXrqIe4jYjXNZQt238kWyOGrsyc/DmRAQ+Re6yeo6yX/yoNCG5KAEVg==}
 
@@ -3251,6 +3378,9 @@ packages:
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
+
+  swagger-ui-dist@5.34.1:
+    resolution: {integrity: sha512-VSr8fXfI93obYaQicLJbLUKGRxDojj/SfRJDDLCioGTUBj4BK/Nj4eE9jCeCAnJxVLi7iS+08PbiZLyrQKBkJQ==}
 
   tar@7.5.22:
     resolution: {integrity: sha512-MFO/QzvtAOmJbkhOaCTvbGcFN9L9b+JunIsDwaKljSOdcLMea3NJ1k9Usz/rjdfSXTq4dfzfeS7W4p4YOAAHeA==}
@@ -4216,6 +4346,10 @@ snapshots:
       protobufjs: 7.6.6
       yargs: 17.7.3
 
+  '@hono/node-server@2.1.5(hono@4.13.16)':
+    dependencies:
+      hono: 4.13.16
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -4503,6 +4637,8 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@scarf/scarf@1.4.0': {}
 
   '@sindresorhus/is@4.6.0': {}
 
@@ -5819,6 +5955,8 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  hono@4.13.16: {}
+
   hookified@1.15.1: {}
 
   hookified@2.2.0: {}
@@ -6526,6 +6664,10 @@ snapshots:
   supports-color@7.2.0:
     dependencies:
       has-flag: 4.0.0
+
+  swagger-ui-dist@5.34.1:
+    dependencies:
+      '@scarf/scarf': 1.4.0
 
   tar@7.5.22:
     dependencies:

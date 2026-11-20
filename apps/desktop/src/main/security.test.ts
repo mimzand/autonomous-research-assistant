@@ -1,3 +1,4 @@
+import { AGENT_ENGINE_ENV, RESEARCH_ENGINE_ENV } from '@rka/agent-host';
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,5 +99,13 @@ describe('settings.env', () => {
     expect(isAllowedSetting('WEB_FETCH_TIMEOUT_MS')).toBe(true);
     expect(isAllowedSetting('PATH')).toBe(false);
     expect(isAllowedSetting('ollama_host')).toBe(false);
+  });
+
+  it('allows the engine flags (only AGENT_ENGINE, not other AGENT_* keys)', () => {
+    expect(isAllowedSetting(AGENT_ENGINE_ENV)).toBe(true);
+    expect(isAllowedSetting(RESEARCH_ENGINE_ENV)).toBe(true);
+    expect(isAllowedSetting('AGENT_ENGINE_X')).toBe(false);
+    expect(isAllowedSetting('AGENT_OTHER')).toBe(false);
+    expect(isAllowedSetting('agent_engine')).toBe(false);
   });
 });

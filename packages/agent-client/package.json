@@ -1,0 +1,21 @@
+{
+  "name": "@rka/agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node client for the agent service (loopback TCP + @rka/agent-protocol): state-file lookup, handshake, typed requests. Used by Electron main and apps/agent tooling. No Electron.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@rka/agent-protocol": "workspace:*"
+  }
+}

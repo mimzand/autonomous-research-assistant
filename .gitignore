@@ -8,6 +8,9 @@ dist/
 release/
 *.tsbuildinfo
 
+# Standalone agent dev data (state file with session token)
+.agent-data/
+
 # Test output
 coverage/
 
