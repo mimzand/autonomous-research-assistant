@@ -183,4 +183,19 @@ describe('streamChatWithTools', () => {
     expect(requests.every((r) => r.think === false)).toBe(true);
     expect(chunks.at(-1)).toMatchObject({ type: 'done', result: { content: 'done' } });
   });
+
+  it('puts a chat context preface after the tool instruction, before the turns', async () => {
+    const { provider, requests } = scripted([{ text: 'ok' }]);
+    await collect(
+      streamChatWithTools(
+        turns,
+        { signal: new AbortController().signal, preface: 'Earlier turns omitted: 3.' },
+        { provider, gateway: gateway() },
+      ),
+    );
+    const messages = requests[0]?.messages ?? [];
+    expect(messages.map((m) => m.role).slice(0, 2)).toEqual(['system', 'system']);
+    expect(messages[1]).toEqual({ role: 'system', content: 'Earlier turns omitted: 3.' });
+    expect(messages.slice(2)).toEqual(turns.map(({ role, content }) => ({ role, content })));
+  });
 });

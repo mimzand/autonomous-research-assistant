@@ -137,13 +137,19 @@ export function connectionChatSink(connection: AgentConnection): ChatEventSink {
  * gone is aborted. `model.health` lets the Chat page show the model state.
  */
 export function chatHandlers(
-  chat: Pick<ChatController, 'start' | 'stop'>,
+  chat: Pick<ChatController, 'start' | 'stop' | 'history' | 'clear'>,
   runtime: Pick<AgentRuntime, 'getModelHealth'>,
 ) {
   return {
     'chat.start': (params, connection) => chat.start(connectionChatSink(connection), params),
     'chat.stop': (params) => {
       chat.stop(params);
+      return null;
+    },
+    // The stored transcript lives in the agent's database.
+    'chat.history': () => chat.history(),
+    'chat.clear': async () => {
+      await chat.clear();
       return null;
     },
     'model.health': () => runtime.getModelHealth(),

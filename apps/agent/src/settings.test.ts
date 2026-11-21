@@ -128,9 +128,7 @@ async function setup(seed?: (dir: string) => void) {
 
 /** Runs one Chat turn and returns the assistant text (the fake server's name). */
 async function chat(client: AgentClient, events: ChatEvent[]): Promise<string> {
-  const started = await client.request('chat.start', {
-    messages: [{ role: 'user', content: 'Hi' }],
-  });
+  const started = await client.request('chat.start', { text: 'Hi' });
   if (started.status !== 'started') throw new Error(`not started: ${JSON.stringify(started)}`);
   for (let i = 0; i < 300; i++) {
     const end = events.find(

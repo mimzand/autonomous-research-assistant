@@ -209,16 +209,24 @@ skipped when the model does not advertise tool support).
 ## Chat playground
 
 The main window has a chat playground for testing the local model: streaming replies,
-Stop, Clear chat, and the conversation kept for the session (Enter sends, Shift+Enter
-adds a new line). The model status panel sits beside it.
+Stop, Clear chat, and a conversation that is stored and shown again when the app opens
+(Enter sends, Shift+Enter adds a new line). The model status panel sits beside it.
 
 ```text
 ChatPanel.vue → chat/session.ts → window.api.chat (preload)
-  → IPC chat:start / chat:stop (validated in main) → ChatController (@rka/agent-host, in main)
-  → runtime.streamChat() → OllamaProvider.generateStream()
-  ← chat:event (delta | done | error | cancelled), validated in the preload
+  → IPC chat:start { text } / chat:stop / chat:history / chat:clear (validated in main)
+  → agent service: ChatController (@rka/agent-host) → SQLite transcript + context window
+  → chat engine (Legacy or ADK) → OllamaProvider.generateStream()
+  ← chat:event (delta | tool | done | error | cancelled), validated in the preload
 ```
 
+- The transcript is stored in SQLite (`conversations`, `conversation_messages`; one
+  conversation for the app). The window loads it on open; **Clear chat** deletes it.
+- The window sends only the new message. The model receives the last 8 turns that
+  produced text (failed replies stay on screen but are never sent). When older turns
+  exist, the request also carries one short note built by code: how many turns were
+  left out and the first 80 characters of each omitted question (never the omitted
+  answers).
 - One generation at a time; closing the window cancels it.
 - Model output is rendered as plain text (no HTML).
 - Errors (Ollama down, model missing, timeout, generation failure) are shown with a fix.
@@ -227,7 +235,8 @@ ChatPanel.vue → chat/session.ts → window.api.chat (preload)
 
 Local SQLite database at `%APPDATA%\Autonomous Research Assistant\data\research.db`
 (better-sqlite3 + Drizzle ORM). Tables: tasks, task_steps, sources, source_contents,
-reports, model_usage, settings, approvals. Full reference: [packages/storage/SCHEMA.md](packages/storage/SCHEMA.md).
+reports, model_usage, settings, approvals, task_logs, conversations,
+conversation_messages. Full reference: [packages/storage/SCHEMA.md](packages/storage/SCHEMA.md).
 
 - Migrations are generated from `packages/storage/src/schema.ts`:
   `pnpm --filter @rka/storage db:generate`, then applied automatically at startup.
@@ -270,7 +279,7 @@ pages/*.vue → window.api.{tasks,knowledge,reports,storage} (preload, response 
   - Backup to a file you choose. The native save dialog asks before replacing a file, and the
     copy is verified before it is moved into place.
 
-Chat history is **not** persisted yet. It lives in the window for the session only.
+The Chat transcript is stored in the same database (see "Chat playground").
 
 ## Web research tools
 

@@ -174,7 +174,12 @@ function harness(options: HarnessOptions = {}) {
     log: (m) => logs.push(m),
     ...(options.loadAdk && { loadAdk: options.loadAdk }),
   });
-  const chat = new ChatController({ runtime, onUsage: chatUsageRecorder(storage), selectEngine });
+  const chat = new ChatController({
+    runtime,
+    onUsage: chatUsageRecorder(storage),
+    selectEngine,
+    conversations: storage.conversations,
+  });
 
   const handlers = new Map<string, (event: InvokeEventLike, ...args: unknown[]) => unknown>();
   const ipc: IpcMainLike = { handle: (channel, listener) => void handlers.set(channel, listener) };
@@ -204,8 +209,21 @@ function harness(options: HarnessOptions = {}) {
     if (!h) throw new Error(`no handler for ${channel}`);
     return h({ senderFrame: { url: 'file:///app/index.html', parent: null }, sender }, payload);
   };
-  const start = async (messages: ChatTurn[]) =>
-    ChatStartResultSchema.parse(await invoke(IpcChannels.chatStart, { messages }));
+  /**
+   * The model receives exactly `messages` (at most 8 turns, so no preface): the stored
+   * conversation is replaced by the earlier turns, and only the last user text is sent,
+   * as the renderer sends it.
+   */
+  const start = async (messages: ChatTurn[]) => {
+    const current = storage.conversations.current();
+    if (current) storage.conversations.delete(current.id);
+    for (const turn of messages.slice(0, -1)) {
+      storage.conversations.append({ role: turn.role, content: turn.content, status: 'complete' });
+    }
+    return ChatStartResultSchema.parse(
+      await invoke(IpcChannels.chatStart, { text: messages.at(-1)?.content ?? '' }),
+    );
+  };
   const stop = (streamId: string) => invoke(IpcChannels.chatStop, { streamId });
   const run = async (messages: ChatTurn[]) => {
     const result = await start(messages);
@@ -397,7 +415,8 @@ describe('E/F/G. renderer-supplied history', () => {
     ]);
   });
 
-  it('an exactly-empty earlier turn is refused with "unsupported" rather than silently dropped', async () => {
+  it('an empty stored turn never reaches the model: the context window leaves it out', async () => {
+    // (ADK still refuses an empty earlier turn if one were given: adk-chat.test.ts.)
     handler = reply(['ok']);
     const h = harness({ engine: 'adk' });
     await h.run([
@@ -405,15 +424,13 @@ describe('E/F/G. renderer-supplied history', () => {
       { role: 'assistant', content: '' },
       { role: 'user', content: 'Again' },
     ]);
-    expect(normal(h.events)).toEqual([
-      {
-        type: 'error',
-        streamId: 'S',
-        code: 'unsupported',
-        message: 'The ADK chat engine cannot send empty messages in the conversation history.',
-      },
+    expect(normal(h.events).map((e) => e.type)).toEqual(['delta', 'done']);
+    expect(chatBodies().map((b) => b['messages'])).toEqual([
+      [
+        { role: 'user', content: 'Hi' },
+        { role: 'user', content: 'Again' },
+      ],
     ]);
-    expect(chatBodies()).toEqual([]);
   });
 });
 

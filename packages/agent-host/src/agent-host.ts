@@ -115,6 +115,8 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
 
   const chat = new ChatController({
     runtime,
+    // The Chat transcript lives in the same database as research (one writer: the agent).
+    conversations: storage.conversations,
     ...(deps.onChatUsage && { onUsage: deps.onChatUsage }),
     // Settings → Agent Engines (default from AGENT_ENGINE, else "legacy"); read when
     // each Chat request starts, so a running reply keeps its engine.

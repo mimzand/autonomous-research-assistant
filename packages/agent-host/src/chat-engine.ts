@@ -22,7 +22,8 @@ import { z } from 'zod';
  * - "legacy" (default): AgentRuntime.streamChat → OllamaProvider.
  * - "adk": Google ADK Runner + OllamaLlm → the same OllamaProvider.
  *
- * Both engines take the renderer-supplied turns and produce the same
+ * Both engines take the same turns (the window of the stored transcript, built by
+ * ChatController) and produce the same
  * GenerateChunk stream, so ChatController, IPC and the renderer do not change.
  *
  * Source: the effective `engine.chat` setting — `AGENT_ENGINE` when set and
@@ -45,12 +46,22 @@ export type AgentEngine = z.infer<typeof AgentEngineSchema>;
 export const AGENT_ENGINE_ENV = 'AGENT_ENGINE';
 export const DEFAULT_AGENT_ENGINE: AgentEngine = 'legacy';
 
+export interface ChatEngineOptions {
+  readonly signal: AbortSignal;
+  /**
+   * Chat context note when earlier stored turns were left out (chat-context.ts).
+   * Legacy sends it as one system message before the turns; ADK uses it as this
+   * request's instruction. Absent, both engines are unchanged.
+   */
+  readonly preface?: string;
+}
+
 export interface ChatEngine {
   readonly name: AgentEngine;
   /** Throws `ModelProviderError` (or an Error with a safe message) on failure. */
   streamChat(
     turns: readonly ChatTurn[],
-    options: { readonly signal: AbortSignal },
+    options: ChatEngineOptions,
   ): AsyncIterable<ChatStreamChunk>;
 }
 

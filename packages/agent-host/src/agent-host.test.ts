@@ -85,7 +85,7 @@ describe('createAgentHost', () => {
     const { host, settings, usage } = setup();
     const events: ChatEvent[] = [];
     const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };
-    host.chat.start(sink, { messages: [{ role: 'user', content: 'Hello' }] });
+    host.chat.start(sink, { text: 'Hello' });
     await host.chat.whenIdle();
     expect(events.map((e) => e.type)).toEqual(['delta', 'done']);
     expect(settings.chatEngine).toHaveBeenCalledTimes(1);

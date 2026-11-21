@@ -87,7 +87,8 @@ const cancelledError = () => new ModelProviderError('cancelled', 'The request wa
 
 export async function* streamChatWithTools(
   turns: readonly ChatTurn[],
-  options: { readonly signal: AbortSignal },
+  /** `preface`: the Chat context note (see AgentRuntime.streamChat), after the tool instruction. */
+  options: { readonly signal: AbortSignal; readonly preface?: string },
   deps: ToolChatDeps,
 ): AsyncGenerator<ChatStreamChunk, void, undefined> {
   const { gateway, provider } = deps;
@@ -115,6 +116,7 @@ export async function* streamChatWithTools(
         gateway.limits.maxCalls,
       ),
     },
+    ...(options.preface ? [{ role: 'system' as const, content: options.preface }] : []),
     ...turns.map(({ role, content }) => ({ role, content })),
   ];
   let usedTools = false;

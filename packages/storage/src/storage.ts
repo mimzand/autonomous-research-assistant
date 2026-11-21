@@ -15,6 +15,7 @@ import { runMigrations } from './migrate.js';
 import { createRecovery } from './recovery.js';
 import { createAdkSessionRepository } from './repositories/adk-sessions.js';
 import { createApprovalRepository } from './repositories/approvals.js';
+import { createConversationRepository } from './repositories/conversations.js';
 import { createModelUsageRepository } from './repositories/model-usage.js';
 import { createReportRepository } from './repositories/reports.js';
 import { createSettingsRepository, type SecretCipher } from './repositories/settings.js';
@@ -50,6 +51,8 @@ export interface Repositories {
    * by the main process through `@rka/adk-runtime`; never exposed over IPC.
    */
   readonly adkSessions: ReturnType<typeof createAdkSessionRepository>;
+  /** The Chat transcript (one conversation for the app); see SCHEMA.md. */
+  readonly conversations: ReturnType<typeof createConversationRepository>;
   /**
    * Runs `fn` atomically: all writes commit together or none do. Nested
    * calls become savepoints. `fn` must be synchronous (better-sqlite3).
@@ -83,6 +86,7 @@ function bindRepositories(
     approvals: createApprovalRepository(db, ctx),
     logs: createTaskLogRepository(db, ctx),
     adkSessions: createAdkSessionRepository(db, ctx),
+    conversations: createConversationRepository(db, ctx),
     transaction: (fn) => runInTransaction(db, (tx) => fn(bindRepositories(tx, ctx, cipher))),
   };
   return repos;

@@ -55,4 +55,14 @@ export const MIGRATIONS: readonly EmbeddedMigration[] = [
       'CREATE TABLE `adk_user_state` (\n\t`app_name` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`state` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`app_name`, `user_id`)\n);',
     ],
   },
+  {
+    tag: '0003_conversations',
+    hash: '4f91d775e5cef58978e8af4a5cc1fd7f70172f370ec71495b5bfbec291ae1189',
+    statements: [
+      'CREATE TABLE `conversation_messages` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`conversation_id` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`status` text NOT NULL,\n\t`model` text,\n\t`prompt_tokens` integer,\n\t`completion_tokens` integer,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\tFOREIGN KEY (`conversation_id`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE cascade,\n\tCONSTRAINT "conversation_messages_role_check" CHECK("conversation_messages"."role" in (\'user\', \'assistant\')),\n\tCONSTRAINT "conversation_messages_status_check" CHECK("conversation_messages"."status" in (\'complete\', \'cancelled\', \'error\')),\n\tCONSTRAINT "conversation_messages_seq_check" CHECK("conversation_messages"."seq" >= 1)\n);',
+      'CREATE UNIQUE INDEX `conversation_messages_seq_uq` ON `conversation_messages` (`conversation_id`,`seq`);',
+      'CREATE TABLE `conversations` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`title` text NOT NULL,\n\t`model` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n);',
+      'CREATE INDEX `conversations_updated_idx` ON `conversations` (`updated_at`);',
+    ],
+  },
 ];

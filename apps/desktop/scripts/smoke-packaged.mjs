@@ -515,7 +515,8 @@ const chatWith = (message, { stopOnSearch = false, settleMs = 0 } = {}) => `(asy
       void window.api.chat.stop(e.streamId);
     }
   });
-  const started = await window.api.chat.start({ messages: [{ role: 'user', content: ${JSON.stringify(message)} }] });
+  await window.api.chat.clear(); // each scenario is a fresh stored conversation
+  const started = await window.api.chat.start({ text: ${JSON.stringify(message)} });
   for (let i = 0; i < 400 && !events.some((e) => ['done', 'error', 'cancelled'].includes(e.type)); i++)
     await new Promise((r) => setTimeout(r, 50));
   const endedAt = events.length;
@@ -533,7 +534,8 @@ const chatWith = (message, { stopOnSearch = false, settleMs = 0 } = {}) => `(asy
 const chatOnce = `(async () => {
   const events = [];
   const off = window.api.chat.onEvent((e) => events.push(e));
-  const started = await window.api.chat.start({ messages: [{ role: 'user', content: 'Reply with OK.' }] });
+  await window.api.chat.clear(); // each scenario is a fresh stored conversation
+  const started = await window.api.chat.start({ text: 'Reply with OK.' });
   for (let i = 0; i < 300 && !events.some((e) => ['done', 'error', 'cancelled'].includes(e.type)); i++)
     await new Promise((r) => setTimeout(r, 50));
   off();
@@ -830,6 +832,20 @@ async function runtimeChecks() {
         recovered.research?.engine === 'adk',
       `${recovered?.task?.status} ${recovered?.recovery?.interruption?.kind} ${recovered?.research?.engine}`,
     );
+    // The last Chat (ADK, before the kill) is stored by the agent and shown again.
+    const transcript = await s.evaluate('window.api.chat.history()');
+    check(
+      'the Chat transcript survives a restart (stored bubbles, finished reply with its model)',
+      JSON.stringify(transcript?.messages?.map((m) => [m.role, m.content, m.status])) ===
+        JSON.stringify([
+          ['user', 'Reply with OK.', 'complete'],
+          ['assistant', 'OK', 'complete'],
+        ]) && transcript.messages[1]?.model === MODEL,
+      JSON.stringify(transcript).slice(0, 200),
+    );
+    await s.evaluate('window.api.chat.clear()');
+    const cleared = await s.evaluate('window.api.chat.history()');
+    check('Clear chat deletes the stored transcript', cleared?.messages?.length === 0);
     const view2 = await s.evaluate('window.api.settings.get()');
     check(
       'saved Settings survive a restart (engines, web search)',

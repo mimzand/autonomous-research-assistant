@@ -160,7 +160,7 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ['tasks.get', { id: 'task-1' }, { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
       ['tasks.list', expect.any(Object), { timeoutMs: SERVICE_REQUEST_TIMEOUT_MS }],
     ]);
-    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(41);
+    expect(Object.keys(SERVICE_ROUTES)).toHaveLength(43);
   });
 
   it('proxies Research Tools and backup with timeouts that outlast a dialog', async () => {
@@ -271,9 +271,11 @@ describe('startServiceShell (AGENT_TRANSPORT=service)', () => {
       ),
     );
     await expect(invoke(IpcChannels.modelGetHealth)).resolves.toEqual({ from: 'model.health' });
-    await expect(
-      invoke(IpcChannels.chatStart, { messages: [{ role: 'user', content: 'Hi' }] }),
-    ).resolves.toEqual({ status: 'rejected', code: 'busy', message: 'busy' });
+    await expect(invoke(IpcChannels.chatStart, { text: 'Hi' })).resolves.toEqual({
+      status: 'rejected',
+      code: 'busy',
+      message: 'busy',
+    });
     expect(request.mock.calls.map(([method]) => method)).toEqual(['model.health', 'chat.start']);
   });
 

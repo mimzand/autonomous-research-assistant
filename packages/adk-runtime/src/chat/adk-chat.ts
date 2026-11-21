@@ -15,6 +15,12 @@
  *   `newMessage`, so it appears exactly once;
  * - an LlmAgent with no instruction, no tools and transfers disabled, so ADK
  *   adds no system prompt and the model receives the same messages as legacy.
+ *
+ * Chat context preface (stored transcript, agent-host chat-context.ts): when the
+ * request has one, it is this request's system instruction (set in a
+ * beforeModelCallback, so ADK's `{name}` state templating never touches the text),
+ * i.e. one leading system message, as Legacy Chat sends it. Without one, nothing
+ * above changes.
  */
 import {
   isModelProviderError,
@@ -31,6 +37,7 @@ import {
   InMemorySessionService,
   LlmAgent,
   StreamingMode,
+  type LlmRequest,
 } from '../adk.js';
 import { createGuardedRunner } from '../guards.js';
 import { ADAPTER_ERROR_CODES, PROVIDER_ERROR_CODES } from '../ollama/errors.js';
@@ -62,7 +69,7 @@ export interface AdkChatEngine {
   readonly name: 'adk';
   streamChat(
     turns: readonly ChatTurn[],
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly preface?: string },
   ): AsyncGenerator<AdkChatChunk, void>;
 }
 
@@ -76,10 +83,10 @@ export const cancelled = () => new ModelProviderError('cancelled', 'The request 
 export function createAdkChatEngine(options: AdkChatOptions): AdkChatEngine {
   return {
     name: 'adk',
-    streamChat: (turns, { signal } = {}) =>
+    streamChat: (turns, { signal, preface } = {}) =>
       options.webSearch
-        ? streamChatWithWebSearch(turns, signal, options.webSearch)
-        : streamChat(options.provider, turns, signal),
+        ? streamChatWithWebSearch(turns, signal, options.webSearch, preface)
+        : streamChat(options.provider, turns, signal, preface),
   };
 }
 
@@ -138,6 +145,7 @@ async function* streamChat(
   provider: OllamaProvider,
   turns: readonly ChatTurn[],
   signal: AbortSignal | undefined,
+  preface?: string,
 ): AsyncGenerator<GenerateChunk, void> {
   if (signal?.aborted) throw cancelled();
   const { last, earlier } = splitTurns(turns);
@@ -149,6 +157,14 @@ async function* streamChat(
     // No transfer targets: ADK then adds no identity system prompt.
     disallowTransferToParent: true,
     disallowTransferToPeers: true,
+    // Only with a preface: this request's instruction (never a standing one).
+    ...(preface && {
+      beforeModelCallback: ({ request }: { request: LlmRequest }) => {
+        request.config ??= {};
+        request.config.systemInstruction = preface;
+        return undefined;
+      },
+    }),
   });
   const sessionService = new InMemorySessionService();
   const runner = createGuardedRunner({ appName: APP_NAME, agent, sessionService });

@@ -200,4 +200,25 @@ describe('AdkChatEngine', () => {
       [{ role: 'user', content: 'second' }],
     ]);
   });
+
+  it('sends a chat context preface as one leading system message, for that request only', async () => {
+    const { provider, requests } = scripted(async function* () {
+      yield { type: 'done', result: result('ok') };
+    });
+    const turns: ChatTurn[] = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'd' },
+    ];
+    // Braces must stay literal: ADK state templating must not touch the preface.
+    const preface = 'Earlier turns omitted: 2. Omitted questions: what is {user:name}?.';
+    for await (const _ of createAdkChatEngine({ provider }).streamChat(turns, { preface })) {
+      // drain
+    }
+    await collect(provider, turns); // the next request has no preface again
+    expect(requests).toEqual([
+      { model: 'm:1b', messages: [{ role: 'system', content: preface }, ...turns], think: false },
+      { model: 'm:1b', messages: turns, think: false },
+    ]);
+  });
 });

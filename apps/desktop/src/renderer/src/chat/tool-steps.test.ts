@@ -29,6 +29,8 @@ function fakeApi() {
     api: {
       start: vi.fn(async () => ({ status: 'started' as const, streamId: STREAM, model: 'm' })),
       stop: vi.fn(async () => undefined),
+      history: vi.fn(async () => ({ messages: [] })),
+      clear: vi.fn(async () => undefined),
       onEvent: (fn: (event: ChatEvent) => void) => {
         listener = fn;
         return () => (listener = undefined);
@@ -83,6 +85,7 @@ describe('Chat web-search steps (Phase 8.2)', () => {
   it('attaches steps to the streaming reply, before its text, and settles them on stop', async () => {
     const { api, emit } = fakeApi();
     const chat = createChatSession(api, { model: () => 'm' });
+    await chat.whenLoaded;
     chat.draft.value = 'When was it built?';
     await chat.send();
     emit(tool('a', 'running'));
@@ -102,6 +105,7 @@ describe('Chat web-search steps (Phase 8.2)', () => {
   it('marks running steps as failed when the reply fails', async () => {
     const { api, emit } = fakeApi();
     const chat = createChatSession(api, { model: () => 'm' });
+    await chat.whenLoaded;
     chat.draft.value = 'q';
     await chat.send();
     emit(tool('a', 'running'));

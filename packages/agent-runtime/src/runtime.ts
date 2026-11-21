@@ -33,6 +33,12 @@ export interface AgentRuntimeDeps {
 
 export interface StreamChatOptions {
   readonly signal?: AbortSignal;
+  /**
+   * Chat context note built by code when earlier turns were left out (see agent-host
+   * chat-context.ts). Sent as one system message before the turns; absent, the
+   * request is the turns alone, exactly as before.
+   */
+  readonly preface?: string;
 }
 
 export type TaskActionOutcome =
@@ -141,7 +147,13 @@ export function createAgentRuntime(deps: AgentRuntimeDeps): AgentRuntime {
     listTools: () => deps.tools.list(),
     streamChat: (turns, options = {}) =>
       deps.modelProvider.generateStream(
-        { messages: turns.map(({ role, content }) => ({ role, content })), think: false },
+        {
+          messages: [
+            ...(options.preface ? [{ role: 'system' as const, content: options.preface }] : []),
+            ...turns.map(({ role, content }) => ({ role, content })),
+          ],
+          think: false,
+        },
         { signal: options.signal },
       ),
 

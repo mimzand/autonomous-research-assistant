@@ -53,6 +53,8 @@ export function serviceTimeoutFor(method: RequestMethodName): number {
  */
 export const SERVICE_ROUTES = {
   [IpcChannels.modelGetHealth]: 'model.health',
+  [IpcChannels.chatHistory]: 'chat.history',
+  [IpcChannels.chatClear]: 'chat.clear',
   [IpcChannels.tasksCounts]: 'tasks.counts',
   [IpcChannels.tasksList]: 'tasks.list',
   [IpcChannels.tasksGet]: 'tasks.get',

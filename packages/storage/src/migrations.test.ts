@@ -16,6 +16,8 @@ const TABLES = [
   'adk_sessions',
   'adk_user_state',
   'approvals',
+  'conversation_messages',
+  'conversations',
   'model_usage',
   'reports',
   'settings',
@@ -93,6 +95,7 @@ describe('migrations', () => {
       '0000_initial',
       '0001_task_logs',
       '0002_adk_sessions',
+      '0003_conversations',
     ]);
   });
 
@@ -114,7 +117,7 @@ describe('migrations', () => {
       .run();
     const schemaBefore = old
       .prepare(
-        "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+        "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'conversation%' and name not like 'sqlite_%' and name != '__migrations' order by name",
       )
       .all();
     const dataBefore = {
@@ -129,7 +132,7 @@ describe('migrations', () => {
     expect(
       sqlite
         .prepare(
-          "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+          "select name, sql from sqlite_master where name not like 'adk_%' and name not like 'conversation%' and name not like 'sqlite_%' and name != '__migrations' order by name",
         )
         .all(),
     ).toEqual(schemaBefore);
@@ -146,7 +149,49 @@ describe('migrations', () => {
       '0000_initial',
       '0001_task_logs',
       '0002_adk_sessions',
+      '0003_conversations',
     ]);
+  });
+
+  it('upgrades a 0002 database to 0003 (conversations) without touching existing tables or data', () => {
+    const { dbPath, cleanup } = tempDir();
+    cleanups.push(cleanup);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const old = new BetterSqlite3(dbPath);
+    runMigrations(old, MIGRATIONS.slice(0, 3));
+    old
+      .prepare(
+        "insert into tasks (id, title, input, status, created_at, updated_at) values ('t1', 'Old task', '{\"question\":\"q\"}', 'completed', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+      )
+      .run();
+    const schemaBefore = old
+      .prepare(
+        "select name, sql from sqlite_master where name not like 'conversation%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+      )
+      .all();
+    const tasksBefore = old.prepare('select * from tasks').all();
+    old.close();
+
+    const upgraded = openStorage({ path: dbPath });
+    cleanups.unshift(() => upgraded.close());
+    const sqlite = upgraded.sqlite;
+    expect(
+      sqlite
+        .prepare(
+          "select name, sql from sqlite_master where name not like 'conversation%' and name not like 'sqlite_%' and name != '__migrations' order by name",
+        )
+        .all(),
+    ).toEqual(schemaBefore);
+    expect(sqlite.prepare('select * from tasks').all()).toEqual(tasksBefore);
+    expect(tables(sqlite)).toEqual(['__migrations', ...TABLES]);
+    expect(upgraded.conversations.current()).toBeUndefined();
+    upgraded.conversations.append({ role: 'user', content: 'Hello', status: 'complete' });
+    expect(upgraded.conversations.current()?.title).toBe('Hello');
+    expect(
+      listAppliedMigrations(sqlite)
+        .map((m) => m.tag)
+        .at(-1),
+    ).toBe('0003_conversations');
   });
 
   it('refuses migrations that were edited after being applied', () => {

@@ -3,6 +3,10 @@ import { z } from 'zod';
 /*
  * Chat playground contract between renderer (via preload) and main.
  * Main validates every request; the preload validates every event.
+ *
+ * The transcript is stored by the agent (SQLite, one conversation). The renderer
+ * sends only the new user text; the agent builds what the model receives from its
+ * own rows (the last turns, see agent-host chat-context.ts).
  */
 
 export const CHAT_MAX_MESSAGES = 200;
@@ -14,18 +18,40 @@ export const ChatTurnSchema = z.strictObject({
 });
 export type ChatTurn = z.infer<typeof ChatTurnSchema>;
 
-export const ChatStartRequestSchema = z
-  .strictObject({
-    messages: z.array(ChatTurnSchema).min(1).max(CHAT_MAX_MESSAGES),
-  })
-  .refine(
-    ({ messages }) => {
-      const last = messages.at(-1);
-      return last?.role === 'user' && last.content.trim().length > 0;
-    },
-    { message: 'The last message must be a non-empty user message.', path: ['messages'] },
-  );
-export type ChatStartRequest = z.infer<typeof ChatStartRequestSchema>;
+/** The new user message only. The agent adds the earlier turns from the stored transcript. */
+export const ChatStartRequestSchema = z.strictObject({
+  text: z
+    .string()
+    .trim()
+    .min(1, 'The message must not be empty.')
+    .max(
+      CHAT_MAX_MESSAGE_CHARS,
+      `The message must be at most ${CHAT_MAX_MESSAGE_CHARS} characters.`,
+    ),
+});
+export type ChatStartRequest = z.input<typeof ChatStartRequestSchema>;
+
+/** Status of a stored Chat bubble. Error replies are kept so they can be shown again. */
+export const ChatMessageStatusSchema = z.enum(['complete', 'cancelled', 'error']);
+export type ChatMessageStatus = z.infer<typeof ChatMessageStatusSchema>;
+
+/** One stored bubble, in order. Web-search steps are not stored. */
+export const ChatHistoryMessageSchema = z.strictObject({
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+  status: ChatMessageStatusSchema,
+  /** Assistant replies that finished: the model and token counts. */
+  model: z.string().nullable(),
+  promptTokens: z.int().nonnegative().nullable(),
+  completionTokens: z.int().nonnegative().nullable(),
+});
+export type ChatHistoryMessage = z.infer<typeof ChatHistoryMessageSchema>;
+
+/** `chat.history`: the stored transcript (empty when there is none). */
+export const ChatHistorySchema = z.strictObject({
+  messages: z.array(ChatHistoryMessageSchema).max(CHAT_MAX_MESSAGES),
+});
+export type ChatHistory = z.infer<typeof ChatHistorySchema>;
 
 export const StreamIdSchema = z.uuid();
 
@@ -119,8 +145,13 @@ export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
 /** Chat surface exposed to the renderer as `window.api.chat`. */
 export interface ChatApi {
+  /** Sends the new user message; the agent adds the stored transcript as context. */
   start(request: ChatStartRequest): Promise<ChatStartResult>;
   stop(streamId: string): Promise<void>;
+  /** The stored transcript, oldest first. */
+  history(): Promise<ChatHistory>;
+  /** Stops the active reply (if any) and deletes the stored transcript. */
+  clear(): Promise<void>;
   /** Subscribes to chat events. Returns an unsubscribe function. */
   onEvent(listener: (event: ChatEvent) => void): () => void;
 }

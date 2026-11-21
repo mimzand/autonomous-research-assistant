@@ -96,6 +96,8 @@ export async function* streamChatWithWebSearch(
   turns: readonly ChatTurn[],
   callerSignal: AbortSignal | undefined,
   options: AdkChatWebSearch,
+  /** Chat context preface (see adk-chat.ts), added after the tool instruction. */
+  preface?: string,
 ): AsyncGenerator<AdkChatChunk, void> {
   if (callerSignal?.aborted) throw cancelled();
   const { last, earlier } = splitTurns(turns);
@@ -147,7 +149,9 @@ export async function* streamChatWithWebSearch(
     disallowTransferToPeers: true,
     beforeModelCallback: ({ request }: { request: LlmRequest }) => {
       request.config ??= {};
-      request.config.systemInstruction = options.systemPrompt;
+      request.config.systemInstruction = preface
+        ? `${options.systemPrompt}\n\n${preface}`
+        : options.systemPrompt;
       if (!turn.beginRound()) {
         // Round budget used (or no calls/bytes left): this model call must answer.
         delete request.config.tools;

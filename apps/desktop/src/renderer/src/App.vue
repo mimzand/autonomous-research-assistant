@@ -63,9 +63,12 @@ onMounted(async () => {
 
 <style scoped>
 .shell {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 .content {
   min-width: 0;
@@ -82,9 +85,6 @@ onMounted(async () => {
 @media (max-width: 960px) {
   .shell {
     grid-template-columns: 64px minmax(0, 1fr);
-  }
-  .content[data-section='chat'] {
-    overflow-y: auto;
   }
 }
 </style>

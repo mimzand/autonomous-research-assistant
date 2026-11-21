@@ -55,6 +55,9 @@ export const APPROVAL_STATUSES = ['pending', 'approved', 'rejected'] as const;
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
+export const CONVERSATION_ROLES = ['user', 'assistant'] as const;
+export const CONVERSATION_MESSAGE_STATUSES = ['complete', 'cancelled', 'error'] as const;
+
 /** A research task: the user's request (input), its result (output) and lifecycle. */
 export const tasks = sqliteTable(
   'tasks',
@@ -320,6 +323,46 @@ export const adkUserState = sqliteTable(
   (t) => [primaryKey({ name: 'adk_user_state_pk', columns: [t.appName, t.userId] })],
 );
 
+/**
+ * The Chat transcript (one conversation for the app). `model` is null until the first
+ * reply names one; `title` is the first user message, trimmed, at most 80 characters.
+ */
+export const conversations = sqliteTable(
+  'conversations',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    model: text('model'),
+    ...timestamps,
+  },
+  (t) => [index('conversations_updated_idx').on(t.updatedAt)],
+);
+
+/** One Chat bubble, in `seq` order (1, 2, 3… per conversation). Tool steps are not stored. */
+export const conversationMessages = sqliteTable(
+  'conversation_messages',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    role: text('role', { enum: CONVERSATION_ROLES }).notNull(),
+    content: text('content').notNull(),
+    status: text('status', { enum: CONVERSATION_MESSAGE_STATUSES }).notNull(),
+    model: text('model'),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('conversation_messages_seq_uq').on(t.conversationId, t.seq),
+    check('conversation_messages_role_check', inList(t.role, CONVERSATION_ROLES)),
+    check('conversation_messages_status_check', inList(t.status, CONVERSATION_MESSAGE_STATUSES)),
+    check('conversation_messages_seq_check', sql`${t.seq} >= 1`),
+  ],
+);
+
 export const schema = {
   tasks,
   taskSteps,
@@ -334,6 +377,8 @@ export const schema = {
   adkEvents,
   adkAppState,
   adkUserState,
+  conversations,
+  conversationMessages,
 };
 
 export type TaskRecord = typeof tasks.$inferSelect;
@@ -348,3 +393,5 @@ export type TaskLogRecord = typeof taskLogs.$inferSelect;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 export type AdkSessionRecord = typeof adkSessions.$inferSelect;
 export type AdkEventRecord = typeof adkEvents.$inferSelect;
+export type ConversationRecord = typeof conversations.$inferSelect;
+export type ConversationMessageRecord = typeof conversationMessages.$inferSelect;

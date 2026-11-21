@@ -51,7 +51,10 @@ Without SearXNG, Chat works but cannot search, and Research cannot start.
 
 - **Chat**
   - Type and press Enter; Shift+Enter adds a new line.
-  - **Stop** ends a reply. **Clear chat** starts over.
+  - **Stop** ends a reply. **Clear chat** deletes the conversation and starts over.
+  - The conversation is saved and shown again when you reopen the app. The model sees
+    your last 8 messages and replies, plus a short note listing earlier questions; older
+    answers stay on screen but are not sent to it again.
   - Replies are plain text.
 - **Web search in Chat**
   - Turn it on in **Settings → Agent Engines → Web search in Chat**. It is off by
@@ -97,7 +100,8 @@ Point the app at them in Settings:
 - **ADK Chat ends with an error on an unknown tool.** If the model asks for a tool that
   does not exist, ADK Chat ends the reply with an "invalid response" error (nothing is
   run). Legacy Chat refuses the call and continues.
-- **One reply at a time; Chat history is kept only for the session.**
+- **One reply at a time, one conversation.** There is no list of past conversations;
+  **Clear chat** deletes the saved one. A conversation holds at most 200 messages.
 - **If the background process stops, restart the app.** Should the research engine
   process end unexpectedly (for example if it is ended in Task Manager), requests show
   errors until you close and reopen the app; nothing is lost beyond the running step,

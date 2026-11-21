@@ -1,6 +1,7 @@
 import { type ParsedEvent } from '@rka/agent-protocol';
 import {
   ChatEventSchema,
+  ChatHistorySchema,
   ChatStartRequestSchema,
   type ChatEvent,
   type ResearchProgressEvent,
@@ -79,6 +80,8 @@ export function streamRoutes(agent: AgentLink): ApiRoute[] {
       tag: 'Chat',
       summary: 'Start a Chat reply and stream it (server-sent events)',
       description:
+        'Body: the new user message only ({text}); the agent stores it and adds the stored ' +
+        'conversation as context (the last 8 turns). ' +
         'Responds with text/event-stream. First event `started` ({streamId, model}), then one ' +
         'event per chat.event, named by its type: `delta` ({content}), `tool`, and a final `done`, ' +
         '`error` or `cancelled`. Closing the connection stops the reply. To stop it from ' +
@@ -152,6 +155,32 @@ export function streamRoutes(agent: AgentLink): ApiRoute[] {
       responses: { 204: { description: 'Stop requested' }, ...COMMON_ERRORS },
       async handle({ c, params }) {
         await agent.request('chat.stop', { streamId: params.streamId });
+        return c.body(null, 204);
+      },
+    }),
+    route({
+      method: 'get',
+      path: '/chat/history',
+      tag: 'Chat',
+      summary: 'The stored Chat transcript, oldest first',
+      description:
+        'The bubbles as the agent stored them (one conversation): role, text, status ' +
+        '(`complete`, `cancelled` or `error`) and, for finished replies, the model and token ' +
+        'counts. Web-search steps are not stored.',
+      responses: {
+        200: { description: 'The transcript', schema: ChatHistorySchema },
+        ...COMMON_ERRORS,
+      },
+      handle: async ({ c }) => c.json(await agent.request('chat.history', {})),
+    }),
+    route({
+      method: 'post',
+      path: '/chat/clear',
+      tag: 'Chat',
+      summary: 'Stop the running reply (if any) and delete the stored transcript',
+      responses: { 204: { description: 'Cleared' }, ...COMMON_ERRORS },
+      async handle({ c }) {
+        await agent.request('chat.clear', {});
         return c.body(null, 204);
       },
     }),

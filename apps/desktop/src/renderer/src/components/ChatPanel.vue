@@ -18,7 +18,7 @@ const chat = createChatSession(window.api.chat, {
   model: () => modelName.value,
   onConnectionProblem: () => void refreshHealth(),
 });
-const { messages, draft, phase, busy, canSend } = chat;
+const { messages, draft, phase, busy, canSend, loaded, startError } = chat;
 
 const log = ref<HTMLElement | null>(null);
 const input = ref<HTMLTextAreaElement | null>(null);
@@ -110,7 +110,8 @@ onBeforeUnmount(() => chat.dispose());
       data-testid="chat-log"
       @scroll="onScroll"
     >
-      <p v-if="messages.length === 0" class="empty" data-testid="chat-empty">
+      <p v-if="!loaded" class="empty" data-testid="chat-loading">Loading the conversation…</p>
+      <p v-else-if="messages.length === 0" class="empty" data-testid="chat-empty">
         <template v-if="connectionLabel === 'Remote Ollama'">
           Send a message to test the model. Messages are sent to the Ollama server configured in
           Settings.
@@ -179,6 +180,12 @@ onBeforeUnmount(() => chat.dispose());
       </article>
     </div>
 
+    <div v-if="startError" class="error" role="alert" data-testid="chat-start-error">
+      <strong>{{ startError.title }}</strong>
+      <span v-if="startError.hint">{{ startError.hint }}</span>
+      <small v-if="startError.detail">{{ startError.detail }}</small>
+    </div>
+
     <form class="composer" @submit.prevent="submit">
       <label for="chat-input" class="sr-only">Message</label>
       <textarea
@@ -213,7 +220,9 @@ onBeforeUnmount(() => chat.dispose());
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   height: 100%;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);

@@ -50,6 +50,8 @@ export const TABLE_NAMES = [
   'settings',
   'approvals',
   'task_logs',
+  'conversations',
+  'conversation_messages',
 ] as const;
 
 const INTEGRITY_KEY = 'storage.integrity.last';

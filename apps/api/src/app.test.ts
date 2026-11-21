@@ -175,7 +175,7 @@ describe('Phase 2: dashboard, research, chat, progress', () => {
     const response = await app().request('/chat', {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] }),
+      body: JSON.stringify({ text: 'Hi' }),
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
@@ -193,9 +193,33 @@ describe('Phase 2: dashboard, research, chat, progress', () => {
     const response = await app().request('/chat', {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [] }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] }),
     });
     expect(response.status).toBe(400);
+  });
+
+  it('returns the stored transcript and clears it', async () => {
+    const a = app();
+    const reply = await a.request('/chat', {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Remember this' }),
+    });
+    await reply.text(); // drain the stream: the reply is stored when it is done
+    const history = await a.request('/chat/history', { headers: auth });
+    expect(history.status).toBe(200);
+    const body = (await history.json()) as {
+      messages: { role: string; content: string; status: string }[];
+    };
+    expect(body.messages.slice(-2).map((m) => [m.role, m.content, m.status])).toEqual([
+      ['user', 'Remember this', 'complete'],
+      ['assistant', 'Hello API', 'complete'],
+    ]);
+    expect((await a.request('/chat/clear', { method: 'POST', headers: auth })).status).toBe(204);
+    await expect((await a.request('/chat/history', { headers: auth })).json()).resolves.toEqual({
+      messages: [],
+    });
+    expect((await a.request('/chat/history')).status).toBe(401);
   });
 });
 

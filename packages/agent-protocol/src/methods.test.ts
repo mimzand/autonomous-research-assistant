@@ -1,4 +1,5 @@
 import {
+  ChatHistorySchema,
   ChatStartRequestSchema,
   IpcChannels,
   type ChatEvent,
@@ -51,6 +52,7 @@ describe('PROTOCOL_METHODS', () => {
 
   it('reuses @rka/shared schemas instead of copies', () => {
     expect(PROTOCOL_METHODS['chat.start'].params).toBe(ChatStartRequestSchema);
+    expect(PROTOCOL_METHODS['chat.history'].result).toBe(ChatHistorySchema);
   });
 
   it('covers every renderer IPC channel or marks it shell-only', () => {
@@ -59,6 +61,8 @@ describe('PROTOCOL_METHODS', () => {
       'model:get-health': 'model.health',
       'chat:start': 'chat.start',
       'chat:stop': 'chat.stop',
+      'chat:history': 'chat.history',
+      'chat:clear': 'chat.clear',
       'tasks:counts': 'tasks.counts',
       'tasks:list': 'tasks.list',
       'tasks:get': 'tasks.get',
@@ -182,7 +186,7 @@ describe('parseRequest', () => {
   it('rejects invalid params without echoing values', () => {
     const secret = 'SECRET-should-not-leak';
     const result = parseRequest(
-      reqOf('chat.start', { messages: [{ role: 'assistant', content: secret }] }),
+      reqOf('chat.start', { text: secret, messages: [{ role: 'assistant', content: secret }] }),
       'toAgent',
     );
     expect(result).toMatchObject({ ok: false, error: { code: 'bad_request' } });

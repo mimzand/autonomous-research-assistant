@@ -21,6 +21,14 @@ export {
   type ChatUsage,
 } from './chat-controller.js';
 export {
+  CHAT_CONTEXT_TURNS,
+  chatContext,
+  contextPreface,
+  PREFACE_QUESTION_CHARS,
+  type ChatContext,
+  type StoredChatTurn,
+} from './chat-context.js';
+export {
   adkChatEngine,
   AGENT_ENGINE_ENV,
   AgentEngineSchema,
@@ -35,6 +43,7 @@ export {
   type ChatEngineSelectorOptions,
   type ChatWebSearch,
 } from './chat-engine.js';
+export type { ChatEngineOptions } from './chat-engine.js';
 export {
   DEFAULT_RESEARCH_ENGINE,
   parseResearchEngine,

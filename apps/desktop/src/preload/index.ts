@@ -2,6 +2,7 @@ import {
   AppInfoSchema,
   BackupResultSchema,
   ChatEventSchema,
+  ChatHistorySchema,
   ChatStartResultSchema,
   ConnectionTestResultSchema,
   EffectiveModelConfigSchema,
@@ -70,6 +71,12 @@ const chat: ChatApi = {
 
   stop: async (streamId: string) => {
     await ipcRenderer.invoke(IpcChannels.chatStop, { streamId });
+  },
+
+  history: () => call(ChatHistorySchema, IpcChannels.chatHistory),
+
+  clear: async () => {
+    await ipcRenderer.invoke(IpcChannels.chatClear);
   },
 
   onEvent: (listener: (event: ChatEvent) => void) => {

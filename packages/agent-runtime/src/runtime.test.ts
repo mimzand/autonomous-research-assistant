@@ -89,4 +89,27 @@ describe('createAgentRuntime', () => {
       { signal: controller.signal },
     );
   });
+
+  it('sends a chat context preface as one system message before the turns', async () => {
+    const runtime = createAgentRuntime({
+      modelProvider,
+      tools: createToolRegistry([]),
+      storage: openStorage({ path: ':memory:' }),
+    });
+    const turns = [
+      { role: 'user' as const, content: 'Earlier' },
+      { role: 'assistant' as const, content: 'Reply' },
+      { role: 'user' as const, content: 'Now' },
+    ];
+    for await (const _ of runtime.streamChat(turns, { preface: 'Earlier turns omitted: 2.' })) {
+      // drain
+    }
+    expect(modelProvider.generateStream).toHaveBeenLastCalledWith(
+      {
+        messages: [{ role: 'system', content: 'Earlier turns omitted: 2.' }, ...turns],
+        think: false,
+      },
+      { signal: undefined },
+    );
+  });
 });

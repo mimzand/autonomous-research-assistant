@@ -62,6 +62,14 @@ export {
   type TaskLogRepository,
 } from './repositories/task-logs.js';
 export {
+  CONVERSATION_TITLE_CHARS,
+  createConversationRepository,
+  MAX_CONVERSATION_MESSAGE_CHARS,
+  type AppendConversationMessageInput,
+  type AppendedConversationMessage,
+  type ConversationRepository,
+} from './repositories/conversations.js';
+export {
   ADK_STORAGE_LIMITS,
   AdkKeyPartSchema,
   type AdkAppendResult,
@@ -72,8 +80,12 @@ export {
   type AdkStoredSession,
 } from './repositories/adk-sessions.js';
 export {
+  CONVERSATION_MESSAGE_STATUSES,
+  CONVERSATION_ROLES,
   LOG_LEVELS,
   type AdkEventRecord,
+  type ConversationMessageRecord,
+  type ConversationRecord,
   type AdkSessionRecord,
   type ApprovalRecord,
   type JsonValue,

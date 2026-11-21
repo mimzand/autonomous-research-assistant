@@ -2,6 +2,7 @@ import {
   BackupResultSchema,
   CancelRequestSchema,
   ChatEventSchema,
+  ChatHistorySchema,
   ChatStartRequestSchema,
   ChatStartResultSchema,
   ChatStopRequestSchema,
@@ -176,6 +177,10 @@ export const PROTOCOL_METHODS = {
   // --- chat ---------------------------------------------------------------------------
   'chat.start': request('toAgent', 4, ChatStartRequestSchema, ChatStartResultSchema),
   'chat.stop': request('toAgent', 4, ChatStopRequestSchema, VoidResultSchema),
+  /** The stored Chat transcript (the agent owns it; the shell only displays it). */
+  'chat.history': request('toAgent', 11, NoParamsSchema, ChatHistorySchema),
+  /** Stops the active reply, then deletes the stored transcript. */
+  'chat.clear': request('toAgent', 11, NoParamsSchema, VoidResultSchema),
   'chat.event': event('toShell', 4, ChatEventSchema),
 
   // --- tasks / research ---------------------------------------------------------------

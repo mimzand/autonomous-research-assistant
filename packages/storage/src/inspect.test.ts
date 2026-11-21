@@ -261,6 +261,7 @@ describe('inspector: storage status, integrity and backup', () => {
       '0000_initial',
       '0001_task_logs',
       '0002_adk_sessions',
+      '0003_conversations',
     ]);
     expect(status.lastIntegrityCheck).toBeNull();
   });

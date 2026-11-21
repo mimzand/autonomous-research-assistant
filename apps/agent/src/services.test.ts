@@ -92,6 +92,8 @@ describe('openAgentServices', () => {
       .sort();
     expect(served).toEqual(toAgent);
     expect(served).toEqual([
+      'chat.clear',
+      'chat.history',
       'chat.start',
       'chat.stop',
       'model.connect',

@@ -57,6 +57,8 @@ export const IpcChannels = {
   modelGetHealth: 'model:get-health',
   chatStart: 'chat:start',
   chatStop: 'chat:stop',
+  chatHistory: 'chat:history',
+  chatClear: 'chat:clear',
   tasksCounts: 'tasks:counts',
   tasksList: 'tasks:list',
   tasksGet: 'tasks:get',

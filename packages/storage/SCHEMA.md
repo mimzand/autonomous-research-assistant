@@ -31,10 +31,11 @@ erDiagram
   tasks |o--o{ model_usage : "billed to"
   task_steps |o--o{ model_usage : "billed to"
   adk_sessions ||--o{ adk_events : "has (ordered by seq)"
+  conversations ||--o{ conversation_messages : "has (ordered by seq)"
 ```
 
-`settings`, `adk_app_state` and `adk_user_state` are standalone. The ADK tables are not
-related to the research tables.
+`settings`, `adk_app_state` and `adk_user_state` are standalone. The ADK tables and the
+Chat transcript tables are not related to the research tables.
 
 ## Tables
 
@@ -350,17 +351,60 @@ The dashboard reads through `storage.inspect`. It adds **no tables or columns**.
   - Refuses `:memory:` and the live database, WAL and SHM paths.
   - The caller (the native save dialog) is responsible for overwrite confirmation.
 
-## Proposed: conversation history (not implemented)
+## Chat transcript (migration `0003_conversations`)
 
-The chat playground keeps messages in renderer memory only. A minimal design:
+The Chat playground's conversation, stored by the agent (`ChatController` in
+`@rka/agent-host`, through `storage.conversations`). One conversation for the app: no
+list and no picker. The window loads it on open (`chat.history`); **Clear chat**
+deletes it (`chat.clear`). Separate from `adk_sessions` / `adk_events`, which Chat
+never writes.
 
-- `conversations`: `id`, `title`, `model`, `created_at`, `updated_at`.
-- `conversation_messages`: `id`, `conversation_id` (FK, cascade), `seq` (unique per
-  conversation), `role` (`user` | `assistant`), `content`, `status`
-  (`complete` | `cancelled` | `error`), `model`, `prompt_tokens`, `completion_tokens`,
-  `created_at`, `updated_at`.
-- A `ConversationRepository` (`create`, `appendMessage`, `list`, `get`, `delete`), with
-  `ChatController` in main persisting a turn when it is done or cancelled.
+`conversations`
+
+| Column       | Type | Notes                                                             |
+| ------------ | ---- | ----------------------------------------------------------------- |
+| `id`         | text | PK                                                                |
+| `title`      | text | The first user message, trimmed, at most 80 characters            |
+| `model`      | text | Nullable until the first finished reply names one; then its model |
+| `created_at` | text |                                                                   |
+| `updated_at` | text | Every appended message updates it                                 |
+
+Index: `updated_at`.
+
+`conversation_messages`
+
+| Column              | Type    | Notes                                                           |
+| ------------------- | ------- | --------------------------------------------------------------- |
+| `id`                | text    | PK                                                              |
+| `conversation_id`   | text    | FK → `conversations` (cascade delete)                           |
+| `seq`               | integer | 1, 2, 3… per conversation (≥ 1, CHECK; unique per conversation) |
+| `role`              | text    | `user` \| `assistant` (CHECK)                                   |
+| `content`           | text    | The bubble text as shown (may be empty for a failed reply)      |
+| `status`            | text    | `complete` \| `cancelled` \| `error` (CHECK)                    |
+| `model`             | text    | Nullable; set on finished replies                               |
+| `prompt_tokens`     | integer | Nullable; from the finished reply                               |
+| `completion_tokens` | integer | Nullable; from the finished reply                               |
+| `created_at`        | text    |                                                                 |
+| `updated_at`        | text    |                                                                 |
+
+Rules enforced by `storage.conversations` and `ChatController`:
+
+- `append` assigns `seq` in the same transaction as the insert. Without a conversation
+  id it appends to the current conversation, which a non-empty user message creates.
+  With the id of a deleted conversation it fails (`not-found`).
+- At most `CHAT_MAX_MESSAGES` (200) messages: message 201 is refused (`invalid-input`);
+  older messages are never dropped to make room. `ChatController` refuses a new message
+  when there is no room for it and its reply.
+- What is stored: an accepted message (`complete`) before streaming starts; the reply on
+  `done` (`complete`, with model and token counts); on cancel only when it has text
+  (`cancelled`); on error always, even empty (`error`), so the bubble comes back. A
+  rejected start writes nothing. Web-search steps are not stored.
+- A reply that finishes after Clear stores nothing (its conversation is gone).
+- What the model sees is not the transcript: the last 8 non-empty `complete` or
+  `cancelled` turns, plus, when older ones exist, one preface built by code with the
+  number of omitted turns and the first 80 characters of each omitted user message
+  (`chatContext`, agent-host `chat-context.ts`). Error rows never reach the model.
+- These tables are in the inspector's table list (`TABLE_NAMES`).
 
 ## Secrets
 

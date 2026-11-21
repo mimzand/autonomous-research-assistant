@@ -203,6 +203,7 @@ async function chatThrough(setup: Setup, message = 'When was the Lindholm lighth
   const audit: unknown[] = [];
   const chat = new ChatController({
     runtime,
+    conversations: storage.conversations,
     onUsage: (u) => {
       usage.push(u);
       record(u);
@@ -234,7 +235,10 @@ async function chatThrough(setup: Setup, message = 'When was the Lindholm lighth
       onEvent(e);
     },
   };
-  const started = chat.start(sink, { messages: [{ role: 'user', content: message }] });
+  // Each scenario is a fresh conversation (the database is shared by the file's tests).
+  const current = storage.conversations.current();
+  if (current) storage.conversations.delete(current.id);
+  const started = chat.start(sink, { text: message });
   if (started.status !== 'started') throw new Error(started.message);
   return {
     chat,
