@@ -88,6 +88,28 @@ const GOAL_REVIEW_MAX_TOKENS = 400;
 /** Evidence items given to the model in the compare/report steps (context window). */
 const MAX_EVIDENCE_ITEMS = 40;
 const REVIEW_BATCH = 8;
+
+/**
+ * `num_ctx` of the task's captured Ollama configuration (`task.input.model.config`),
+ * for the `context.budget` log only. Same range as the provider's OllamaConfigSchema
+ * (pinned by a test); anything else counts as unknown.
+ */
+export const CapturedNumCtxSchema = z.object({ numCtx: z.int().min(512).max(262_144) });
+
+/** Evidence counts of the analyze step around the MAX_EVIDENCE_ITEMS cap. */
+interface EvidenceBudget {
+  readonly evidenceKept: number;
+  readonly evidenceOmitted: number;
+}
+
+/** The task's captured `num_ctx`, or null when no config was captured or it has none. */
+function capturedNumCtx(task: TaskRecord): number | null {
+  const model = (task.input as { model?: unknown }).model;
+  if (!model || typeof model !== 'object') return null;
+  const parsed = CapturedNumCtxSchema.safeParse((model as { config?: unknown }).config);
+  return parsed.success ? parsed.data.numCtx : null;
+}
+
 /** Network failures on this many different sites in a row mean "offline". */
 const OFFLINE_HOST_THRESHOLD = 2;
 const MAX_BACKOFF_MS = 30_000;
@@ -446,11 +468,39 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
     signal: AbortSignal,
     /** Usage purpose; default `research:<step kind>`. */
     purpose = `research:${step.kind}`,
+    /** Analyze step only: verified evidence kept for the prompt and omitted by the cap. */
+    evidenceBudget?: EvidenceBudget,
   ): Promise<z.output<S>> {
     const limits = taskInput(task).limits;
     const modelProvider = providerFor(task);
+    const numCtx = capturedNumCtx(task);
     let messages = prompt;
     for (let attempt = 0; ; attempt++) {
+      // Observability only: the size of exactly what this attempt sends (characters,
+      // not tokens) next to the captured num_ctx. No prompt text in the log.
+      const promptChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+      log(
+        task.id,
+        'debug',
+        'context.budget',
+        `Context budget (${step.kind}): prompt ${promptChars} chars, num_ctx ${numCtx ?? 'unknown'}` +
+          (evidenceBudget
+            ? `, evidence ${evidenceBudget.evidenceKept} kept, ${evidenceBudget.evidenceOmitted} omitted.`
+            : '.'),
+        {
+          stepId: step.id,
+          data: {
+            kind: step.kind,
+            attempt: attempt + 1,
+            promptChars,
+            numCtx,
+            ...(evidenceBudget && {
+              evidenceKept: evidenceBudget.evidenceKept,
+              evidenceOmitted: evidenceBudget.evidenceOmitted,
+            }),
+          },
+        },
+      );
       const deadline = AbortSignal.timeout(limits.modelTimeoutMs);
       try {
         const { object, result } = await generateObject(
@@ -822,6 +872,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
             perSource.push({ sourceId: out.sourceId, claims: out.claims });
         }
         const evidence = indexEvidence(perSource, MAX_EVIDENCE_ITEMS);
+        // Verified claims beyond the cap are the tail indexEvidence leaves out.
+        const verified = perSource.reduce((sum, s) => sum + s.claims.length, 0);
         if (!evidence.length) {
           const fetches = steps
             .filter((x) => x.kind === 'fetch')
@@ -841,6 +893,8 @@ export function createResearchAgent(deps: ResearchAgentDeps) {
           AnalysisSchema,
           1500,
           signal,
+          undefined,
+          { evidenceKept: evidence.length, evidenceOmitted: verified - evidence.length },
         );
         const cleaned = cleanAnalysis(
           raw,

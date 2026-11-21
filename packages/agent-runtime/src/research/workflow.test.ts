@@ -1,3 +1,4 @@
+import { OllamaConfigSchema } from '@rka/model-provider';
 import { openStorage } from '@rka/storage';
 import { WebError } from '@rka/tools';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,7 +14,8 @@ import {
   tempDbPath,
   waitFor,
 } from './test-fixtures.js';
-import { PAUSED_MESSAGE } from './workflow.js';
+import { type TaskModelConfig } from './schemas.js';
+import { CapturedNumCtxSchema, PAUSED_MESSAGE } from './workflow.js';
 
 afterEach(cleanupDirs);
 
@@ -487,5 +489,249 @@ describe('research workflow: pause, cancel, resume, recovery', () => {
     expect(h2.model.calls('write-report')).toBe(1);
     expect(second.reports.listByTask(id)).toHaveLength(1);
     second.close();
+  });
+});
+
+// ------------------------------------------------------------------------------------
+
+/** `data` of a `context.budget` log row. */
+interface BudgetData {
+  readonly kind: string;
+  readonly attempt: number;
+  readonly promptChars: number;
+  readonly numCtx: number | null;
+  readonly evidenceKept?: number;
+  readonly evidenceOmitted?: number;
+}
+
+describe('research workflow: context budget log', () => {
+  /** The `context.budget` rows of a task, oldest first. */
+  const budgets = (h: ReturnType<typeof harness>, taskId: string) =>
+    h.storage.logs
+      .listByTask(taskId)
+      .filter((row) => row.event === 'context.budget')
+      .map((row) => ({ message: row.message, data: row.data as unknown as BudgetData }));
+
+  /** Six sources with eight verifiable quotes each: 48 verified claims before the cap. */
+  const SOURCES = 6;
+  const CLAIMS = 8;
+  const MARKER = 'QUOKKA-MARKER-41';
+  const url = (n: number) => `https://s${n}.example/data`;
+  const sentence = (n: number, k: number) =>
+    n === 6 && k === 1
+      ? `Station ${n} recorded ${MARKER} reading ${n * 100 + k} at noon`
+      : `Station ${n} recorded reading ${n * 100 + k} at noon`;
+  const pageText = (n: number) =>
+    Array.from({ length: CLAIMS }, (_, i) => `${sentence(n, i + 1)}.`).join(' ');
+
+  function budgetWeb() {
+    const base = fakeWeb();
+    return {
+      ...base,
+      searchProvider: {
+        ...base.searchProvider,
+        search: async () =>
+          Array.from({ length: SOURCES }, (_, i) => ({
+            title: `Station ${i + 1}`,
+            url: url(i + 1),
+            snippet: 'snippet',
+            engines: ['test'],
+            publishedAt: null,
+          })),
+      },
+      fetcher: {
+        fetch: async (requested: string) => {
+          const n = Number(/s(\d+)\.example/.exec(requested)?.[1]);
+          const text = pageText(n);
+          return {
+            requestedUrl: requested,
+            finalUrl: requested,
+            canonicalUrl: requested,
+            redirects: [],
+            status: 200,
+            kind: 'html' as const,
+            contentType: 'text/html',
+            byteLength: text.length,
+            sha256: 'b'.repeat(64),
+            retrievedAt: '2026-11-21T10:00:00.000Z',
+            title: `Station ${n}`,
+            text,
+            truncated: false,
+            metadata: {},
+            timings: { downloadMs: 1, extractMs: 1 },
+          };
+        },
+      },
+    };
+  }
+
+  const budgetModel = () =>
+    fakeModel({
+      'create-plan': () => ({
+        title: 'Station readings',
+        objective: 'Collect the noon readings of every station.',
+        questions: [
+          { question: 'What did the stations record?', searchQueries: ['station readings'] },
+        ],
+      }),
+      'extract-evidence': (prompt) => {
+        const n = Array.from({ length: SOURCES }, (_, i) => i + 1).find((i) =>
+          prompt.includes(`url="${url(i)}"`),
+        );
+        if (!n) return { relevant: false, summary: '', claims: [] };
+        return {
+          relevant: true,
+          summary: `Readings of station ${n}.`,
+          claims: Array.from({ length: CLAIMS }, (_, i) => ({
+            claim: `${sentence(n, i + 1)}.`,
+            quote: sentence(n, i + 1),
+            questions: ['q1'],
+            confidence: 'high',
+          })),
+        };
+      },
+    });
+
+  it('logs kept and omitted evidence at the 40-item cap; the prompt holds E1..E40 only', async () => {
+    const h = harness({ model: budgetModel(), web: budgetWeb() });
+    const id = await h.start('What did the weather stations record at noon?', {
+      maxSources: SOURCES,
+      maxClaimsPerSource: CLAIMS,
+      resultsPerQuery: SOURCES,
+      maxQueriesPerQuestion: 1,
+    });
+    await h.runtime.tasks.whenIdle();
+    expect(h.storage.tasks.require(id).status).toBe('completed');
+
+    // Every quote was in its source: nothing was cut by grounding, only by the cap.
+    expect(h.storage.logs.listByTask(id).filter((r) => r.event === 'grounding.dropped')).toEqual(
+      [],
+    );
+    const evidenceSteps = h.storage.steps.listByTask(id).filter((s) => s.kind === 'evidence');
+    expect(evidenceSteps).toHaveLength(SOURCES);
+
+    const compare = h.model.prompts.filter((p) => p.task === 'compare-findings');
+    expect(compare).toHaveLength(1);
+    const prompt = compare[0]?.prompt ?? '';
+    expect(prompt).toContain('E40');
+    expect(prompt).not.toContain('E41');
+    expect(prompt).not.toContain(MARKER);
+
+    const analyze = budgets(h, id).filter((b) => b.data.kind === 'analyze');
+    expect(analyze).toHaveLength(1);
+    expect(analyze[0]?.data).toMatchObject({
+      attempt: 1,
+      numCtx: null,
+      evidenceKept: 40,
+      evidenceOmitted: SOURCES * CLAIMS - 40,
+    });
+    expect(analyze[0]?.data.evidenceOmitted).toBeGreaterThanOrEqual(1);
+
+    // promptChars is the length of exactly what that attempt sent (system + user).
+    const sent = h.model.generate.mock.calls
+      .map(([request]) => request.messages)
+      .find((messages) => messages.some((m) => m.content.startsWith('Task: compare-findings')));
+    const chars = (sent ?? []).reduce((sum, m) => sum + m.content.length, 0);
+    expect(chars).toBeGreaterThan(prompt.length);
+    expect(analyze[0]?.data.promptChars).toBe(chars);
+    expect(analyze[0]?.message).toBe(
+      `Context budget (analyze): prompt ${chars} chars, num_ctx unknown, evidence 40 kept, 8 omitted.`,
+    );
+    // No prompt text, quotes or URLs in the log data.
+    expect(JSON.stringify(budgets(h, id))).not.toMatch(/Station|example|QUOKKA/);
+  });
+
+  it('logs one row per attempt, with the retry correction counted in promptChars', async () => {
+    let calls = 0;
+    const h = harness({
+      model: fakeModel({ 'create-plan': () => (++calls === 1 ? 'not json' : PLAN) }),
+    });
+    const id = await h.start();
+    await h.runtime.tasks.whenIdle();
+    expect(h.storage.tasks.require(id).status).toBe('completed');
+    const plan = budgets(h, id).filter((b) => b.data.kind === 'plan');
+    expect(plan.map((b) => b.data.attempt)).toEqual([1, 2]);
+    const sent = h.model.generate.mock.calls
+      .map(([request]) => request.messages)
+      .filter((messages) => messages.some((m) => m.content.startsWith('Task: create-plan')))
+      .map((messages) => messages.reduce((sum, m) => sum + m.content.length, 0));
+    expect(plan.map((b) => b.data.promptChars)).toEqual(sent);
+    expect(sent[1]).toBeGreaterThan(sent[0] ?? 0);
+    expect(plan[0]?.data).not.toHaveProperty('evidenceKept');
+  });
+
+  it("records the task's captured num_ctx", async () => {
+    const model = fakeModel();
+    const h = harness({
+      model,
+      runtime: {
+        taskModels: {
+          capture: (): TaskModelConfig => ({
+            provider: 'ollama',
+            name: 'qwen3:8b',
+            url: 'http://127.0.0.1:11434',
+            config: { baseUrl: 'http://127.0.0.1:11434', model: 'qwen3:8b', numCtx: 8192 },
+          }),
+          providerFor: () => model.provider,
+        },
+      },
+    });
+    const id = await h.start();
+    await h.runtime.tasks.whenIdle();
+    const analyze = budgets(h, id).find((b) => b.data.kind === 'analyze');
+    expect(analyze?.data).toMatchObject({ numCtx: 8192, evidenceKept: 4, evidenceOmitted: 0 });
+    expect(analyze?.message).toMatch(/num_ctx 8192, evidence 4 kept, 0 omitted\.$/);
+  });
+
+  it('stores num_ctx as null when no config was captured or its value is invalid', async () => {
+    const h = harness();
+    const id = await h.start();
+    await h.runtime.tasks.whenIdle();
+    const plan = budgets(h, id).find((b) => b.data.kind === 'plan');
+    expect(plan?.data).toEqual({
+      kind: 'plan',
+      attempt: 1,
+      promptChars: expect.any(Number),
+      numCtx: null,
+    });
+    expect(plan?.message).toMatch(/^Context budget \(plan\): prompt \d+ chars, num_ctx unknown\.$/);
+
+    const model = fakeModel();
+    const invalid = harness({
+      model,
+      runtime: {
+        taskModels: {
+          capture: (): TaskModelConfig => ({
+            provider: 'ollama',
+            name: 'qwen3:8b',
+            url: 'http://127.0.0.1:11434',
+            config: { numCtx: 100 },
+          }),
+          providerFor: () => model.provider,
+        },
+      },
+    });
+    const other = await invalid.start();
+    await invalid.runtime.tasks.whenIdle();
+    expect(budgets(invalid, other).every((b) => b.data.numCtx === null)).toBe(true);
+  });
+
+  it('keeps grounding.dropped separate from evidenceOmitted', async () => {
+    const h = harness();
+    const id = await h.start();
+    await h.runtime.tasks.whenIdle();
+    // The default fixture has one quote that is not in its source (COP of 10).
+    const dropped = h.storage.logs.listByTask(id).filter((r) => r.event === 'grounding.dropped');
+    expect(dropped.length).toBeGreaterThanOrEqual(1);
+    const analyze = budgets(h, id).find((b) => b.data.kind === 'analyze');
+    expect(analyze?.data).toMatchObject({ evidenceKept: 4, evidenceOmitted: 0 });
+  });
+
+  it("accepts the same num_ctx range as the provider's OllamaConfigSchema", () => {
+    for (const value of [511, 512, 8192, 262_144, 262_145, 4096.5]) {
+      expect(CapturedNumCtxSchema.shape.numCtx.safeParse(value).success, String(value)).toBe(
+        OllamaConfigSchema.shape.numCtx.safeParse(value).success,
+      );
+    }
   });
 });
