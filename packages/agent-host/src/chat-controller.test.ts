@@ -6,6 +6,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatController, toChatError, type ChatEventSink } from './chat-controller.js';
 import { type ChatEngine } from './chat-engine.js';
 
+/** The conversation every request here goes to. */
+const CID = 'c1';
+/** An in-memory database with one empty conversation, `c1`. */
+function chatStorage() {
+  const storage = openStorage({ path: ':memory:' });
+  const now = new Date().toISOString();
+  storage.sqlite
+    .prepare(
+      "insert into conversations (id, title, created_at, updated_at) values (?, 'New chat', ?, ?)",
+    )
+    .run(CID, now, now);
+  return storage;
+}
+
 const IDS = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
 
 const done: GenerateChunk = {
@@ -33,7 +47,7 @@ function setup(
     send: (event) => events.push(event),
   };
   const calls: Parameters<StreamFn>[] = [];
-  const storage = openStorage({ path: ':memory:' });
+  const storage = chatStorage();
   const controller = new ChatController({
     conversations: storage.conversations,
     runtime: {
@@ -70,7 +84,7 @@ describe('ChatController', () => {
       yield done;
     });
 
-    expect(controller.start(sink, { text: 'Hi' })).toEqual({
+    expect(controller.start(sink, { conversationId: CID, text: 'Hi' })).toEqual({
       status: 'started',
       streamId: IDS[0],
       model: 'qwen3:8b',
@@ -96,7 +110,7 @@ describe('ChatController', () => {
     const { controller, sink, calls } = setup(async function* () {
       yield done;
     });
-    controller.start(sink, { text: '  More  ' });
+    controller.start(sink, { conversationId: CID, text: '  More  ' });
     await controller.whenIdle();
     expect(calls[0]?.[0]).toEqual([user('More')]);
     expect(calls[0]?.[1]).not.toHaveProperty('preface');
@@ -104,8 +118,8 @@ describe('ChatController', () => {
 
   it('allows one generation at a time, then the next', async () => {
     const { controller, sink, events } = setup(endless);
-    controller.start(sink, { text: 'first' });
-    expect(controller.start(sink, { text: 'second' })).toMatchObject({
+    controller.start(sink, { conversationId: CID, text: 'first' });
+    expect(controller.start(sink, { conversationId: CID, text: 'second' })).toMatchObject({
       status: 'rejected',
       code: 'busy',
     });
@@ -114,7 +128,7 @@ describe('ChatController', () => {
     await controller.whenIdle();
     expect(events.at(-1)).toEqual({ type: 'cancelled', streamId: IDS[0] });
 
-    expect(controller.start(sink, { text: 'second' })).toMatchObject({
+    expect(controller.start(sink, { conversationId: CID, text: 'second' })).toMatchObject({
       status: 'started',
       streamId: IDS[1],
     });
@@ -124,7 +138,7 @@ describe('ChatController', () => {
 
   it('cancels via stop and stops emitting deltas', async () => {
     const { controller, sink, events } = setup(endless);
-    controller.start(sink, { text: 'go' });
+    controller.start(sink, { conversationId: CID, text: 'go' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     controller.stop({ streamId: IDS[0] });
     await controller.whenIdle();
@@ -145,7 +159,7 @@ describe('ChatController', () => {
 
   it('aborts when the window goes away', async () => {
     const { controller, sink, events, destroy } = setup(endless);
-    controller.start(sink, { text: 'go' });
+    controller.start(sink, { conversationId: CID, text: 'go' });
     await new Promise((resolve) => setTimeout(resolve, 10));
     destroy();
     await controller.whenIdle();
@@ -157,7 +171,7 @@ describe('ChatController', () => {
 
   it('stopForSink only cancels that window', async () => {
     const { controller, sink, events } = setup(endless);
-    controller.start(sink, { text: 'go' });
+    controller.start(sink, { conversationId: CID, text: 'go' });
     controller.stopForSink(99);
     expect(controller.activeStreamId).toBe(IDS[0]);
     controller.stopForSink(1);
@@ -176,7 +190,7 @@ describe('ChatController', () => {
       yield { type: 'delta', content: 'partial' };
       throw new ModelProviderError(providerCode, `boom: ${providerCode}`);
     });
-    controller.start(sink, { text: 'go' });
+    controller.start(sink, { conversationId: CID, text: 'go' });
     await controller.whenIdle();
     expect(events.at(-1)).toEqual({
       type: 'error',
@@ -188,7 +202,7 @@ describe('ChatController', () => {
 
   it('rejects invalid requests with a reason and stores nothing', () => {
     const { controller, sink, storage } = setup(endless);
-    expect(controller.start(sink, { text: '  \n ' })).toEqual({
+    expect(controller.start(sink, { conversationId: CID, text: '  \n ' })).toEqual({
       status: 'rejected',
       code: 'invalid-request',
       message: 'The message must not be empty.',
@@ -197,7 +211,12 @@ describe('ChatController', () => {
       status: 'rejected',
       code: 'invalid-request',
     });
-    expect(storage.conversations.current()).toBeUndefined();
+    expect(controller.start(sink, { conversationId: 'nope', text: 'Hi' })).toMatchObject({
+      status: 'rejected',
+      code: 'invalid-request',
+    });
+    expect(storage.conversations.listMessages(CID)).toEqual([]);
+    expect(storage.conversations.list().map((c) => c.id)).toEqual([CID]);
   });
 });
 
@@ -211,7 +230,7 @@ describe('ChatController usage reporting', () => {
       },
       (usage) => usages.push(usage),
     );
-    controller.start(sink, { text: 'Hi' });
+    controller.start(sink, { conversationId: CID, text: 'Hi' });
     await controller.whenIdle();
     expect(usages).toEqual([
       {
@@ -234,7 +253,7 @@ describe('ChatController usage reporting', () => {
         throw new Error('disk full');
       },
     );
-    controller.start(sink, { text: 'Hi' });
+    controller.start(sink, { conversationId: CID, text: 'Hi' });
     await controller.whenIdle();
     expect(events.at(-1)?.type).toBe('done');
     expect(error).toHaveBeenCalled();
@@ -244,7 +263,7 @@ describe('ChatController usage reporting', () => {
   it('does not report usage for cancelled replies', async () => {
     const usages: unknown[] = [];
     const { controller, sink } = setup(endless, (usage) => usages.push(usage));
-    controller.start(sink, { text: 'go' });
+    controller.start(sink, { conversationId: CID, text: 'go' });
     controller.stop({ streamId: IDS[0] });
     await controller.whenIdle();
     expect(usages).toEqual([]);
@@ -274,7 +293,7 @@ describe('ChatController engine selection', () => {
     return e;
   };
   const runtime = { model: 'm', streamChat: vi.fn() };
-  const conversations = () => openStorage({ path: ':memory:' }).conversations;
+  const conversations = () => chatStorage().conversations;
 
   it('without a selector it uses the legacy runtime (unchanged behaviour)', async () => {
     const legacy = engine('legacy');
@@ -283,7 +302,7 @@ describe('ChatController engine selection', () => {
       conversations: conversations(),
     });
     const events: ChatEvent[] = [];
-    chat.start(sink(events), { text: 'Hi' });
+    chat.start(sink(events), { conversationId: CID, text: 'Hi' });
     await chat.whenIdle();
     expect(events.map((e) => e.type)).toEqual(['delta', 'done']);
     expect(legacy.calls).toBe(1);
@@ -296,13 +315,13 @@ describe('ChatController engine selection', () => {
     const selectEngine = vi.fn(() => current);
     const chat = new ChatController({ runtime, selectEngine, conversations: conversations() });
     const events: ChatEvent[] = [];
-    chat.start(sink(events), { text: 'Hi' });
+    chat.start(sink(events), { conversationId: CID, text: 'Hi' });
     current = legacy; // changed after start: does not affect the running request
     await chat.whenIdle();
     expect(selectEngine).toHaveBeenCalledTimes(1);
     expect(events[0]).toMatchObject({ type: 'delta', content: 'adk' });
 
-    chat.start(sink(events), { text: 'Hi' });
+    chat.start(sink(events), { conversationId: CID, text: 'Hi' });
     await chat.whenIdle();
     expect(events.at(-2)).toMatchObject({ type: 'delta', content: 'legacy' });
   });
@@ -310,9 +329,11 @@ describe('ChatController engine selection', () => {
   it('rejected requests (busy, invalid) never select an engine', async () => {
     const selectEngine = vi.fn(() => engine('adk'));
     const chat = new ChatController({ runtime, selectEngine, conversations: conversations() });
-    expect(chat.start(sink([]), { text: '' })).toMatchObject({ status: 'rejected' });
-    chat.start(sink([]), { text: 'Hi' });
-    expect(chat.start(sink([]), { text: 'Hi' })).toMatchObject({
+    expect(chat.start(sink([]), { conversationId: CID, text: '' })).toMatchObject({
+      status: 'rejected',
+    });
+    chat.start(sink([]), { conversationId: CID, text: 'Hi' });
+    expect(chat.start(sink([]), { conversationId: CID, text: 'Hi' })).toMatchObject({
       code: 'busy',
     });
     await chat.whenIdle();

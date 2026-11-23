@@ -1,4 +1,6 @@
 import {
+  ChatConversationListSchema,
+  ChatConversationRequestSchema,
   ChatHistorySchema,
   ChatStartRequestSchema,
   IpcChannels,
@@ -53,6 +55,9 @@ describe('PROTOCOL_METHODS', () => {
   it('reuses @rka/shared schemas instead of copies', () => {
     expect(PROTOCOL_METHODS['chat.start'].params).toBe(ChatStartRequestSchema);
     expect(PROTOCOL_METHODS['chat.history'].result).toBe(ChatHistorySchema);
+    expect(PROTOCOL_METHODS['chat.history'].params).toBe(ChatConversationRequestSchema);
+    expect(PROTOCOL_METHODS['chat.clear'].params).toBe(ChatConversationRequestSchema);
+    expect(PROTOCOL_METHODS['chat.list'].result).toBe(ChatConversationListSchema);
   });
 
   it('covers every renderer IPC channel or marks it shell-only', () => {
@@ -61,6 +66,8 @@ describe('PROTOCOL_METHODS', () => {
       'model:get-health': 'model.health',
       'chat:start': 'chat.start',
       'chat:stop': 'chat.stop',
+      'chat:list': 'chat.list',
+      'chat:create': 'chat.create',
       'chat:history': 'chat.history',
       'chat:clear': 'chat.clear',
       'tasks:counts': 'tasks.counts',

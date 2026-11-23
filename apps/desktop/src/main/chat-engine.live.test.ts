@@ -67,12 +67,16 @@ function wire(engine: AgentEngine, config: Partial<OllamaConfig> = {}) {
   const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };
   /** The model receives exactly `messages`: earlier turns are stored, the last is sent. */
   const start = (messages: ChatTurn[]) => {
-    const current = storage.conversations.current();
-    if (current) storage.conversations.delete(current.id);
+    const { id: conversationId } = storage.conversations.create();
     for (const turn of messages.slice(0, -1)) {
-      storage.conversations.append({ role: turn.role, content: turn.content, status: 'complete' });
+      storage.conversations.append({
+        conversationId,
+        role: turn.role,
+        content: turn.content,
+        status: 'complete',
+      });
     }
-    const result = chat.start(sink, { text: messages.at(-1)?.content ?? '' });
+    const result = chat.start(sink, { conversationId, text: messages.at(-1)?.content ?? '' });
     if (result.status !== 'started') throw new Error(result.message);
     return result.streamId;
   };

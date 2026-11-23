@@ -96,6 +96,7 @@ describe('migrations', () => {
       '0001_task_logs',
       '0002_adk_sessions',
       '0003_conversations',
+      '0004_conversation_summary',
     ]);
   });
 
@@ -150,10 +151,11 @@ describe('migrations', () => {
       '0001_task_logs',
       '0002_adk_sessions',
       '0003_conversations',
+      '0004_conversation_summary',
     ]);
   });
 
-  it('upgrades a 0002 database to 0003 (conversations) without touching existing tables or data', () => {
+  it('upgrades a 0002 database to conversations without touching existing tables or data', () => {
     const { dbPath, cleanup } = tempDir();
     cleanups.push(cleanup);
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -184,14 +186,56 @@ describe('migrations', () => {
     ).toEqual(schemaBefore);
     expect(sqlite.prepare('select * from tasks').all()).toEqual(tasksBefore);
     expect(tables(sqlite)).toEqual(['__migrations', ...TABLES]);
-    expect(upgraded.conversations.current()).toBeUndefined();
-    upgraded.conversations.append({ role: 'user', content: 'Hello', status: 'complete' });
-    expect(upgraded.conversations.current()?.title).toBe('Hello');
+    expect(upgraded.conversations.list()).toEqual([]);
+    const { id } = upgraded.conversations.create();
+    upgraded.conversations.append({
+      conversationId: id,
+      role: 'user',
+      content: 'Hello',
+      status: 'complete',
+    });
+    expect(upgraded.conversations.get(id)?.title).toBe('Hello');
     expect(
       listAppliedMigrations(sqlite)
         .map((m) => m.tag)
         .at(-1),
-    ).toBe('0003_conversations');
+    ).toBe('0004_conversation_summary');
+  });
+
+  it('upgrades a 0003 database: its conversation and messages stay, with no summary yet', () => {
+    const { dbPath, cleanup } = tempDir();
+    cleanups.push(cleanup);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const old = new BetterSqlite3(dbPath);
+    old.pragma('foreign_keys = ON');
+    runMigrations(old, MIGRATIONS.slice(0, 4));
+    old
+      .prepare(
+        "insert into conversations (id, title, model, created_at, updated_at) values ('c1', 'Old chat', 'qwen3:8b', '2026-11-01T00:00:00Z', '2026-11-01T00:00:02Z')",
+      )
+      .run();
+    const insert = old.prepare(
+      "insert into conversation_messages (id, conversation_id, seq, role, content, status, created_at, updated_at) values (?, 'c1', ?, ?, ?, 'complete', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+    );
+    insert.run('m1', 1, 'user', 'Old question');
+    insert.run('m2', 2, 'assistant', 'Old answer');
+    old.close();
+
+    const upgraded = openStorage({ path: dbPath });
+    cleanups.unshift(() => upgraded.close());
+    expect(upgraded.conversations.list()).toEqual([
+      expect.objectContaining({
+        id: 'c1',
+        title: 'Old chat',
+        model: 'qwen3:8b',
+        summary: null,
+        summarizedThroughSeq: null,
+      }),
+    ]);
+    expect(upgraded.conversations.listMessages('c1').map((m) => m.content)).toEqual([
+      'Old question',
+      'Old answer',
+    ]);
   });
 
   it('refuses migrations that were edited after being applied', () => {

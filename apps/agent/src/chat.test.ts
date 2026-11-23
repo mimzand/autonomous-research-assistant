@@ -125,10 +125,12 @@ async function terminal(events: ChatEvent[], streamId: string): Promise<ChatEven
 const text = (events: ChatEvent[]) =>
   events.map((e) => (e.type === 'delta' ? e.content : '')).join('');
 
-async function started(client: AgentClient, content = 'Hi') {
-  const result = await client.request('chat.start', { text: content });
+/** Starts a reply in a new conversation (or the given one). */
+async function started(client: AgentClient, content = 'Hi', conversationId?: string) {
+  const id = conversationId ?? (await client.request('chat.create', {})).conversationId;
+  const result = await client.request('chat.start', { conversationId: id, text: content });
   if (result.status !== 'started') throw new Error(`not started: ${JSON.stringify(result)}`);
-  return result;
+  return { ...result, conversationId: id };
 }
 
 describe('chat over the agent protocol', () => {
@@ -172,7 +174,9 @@ describe('chat over the agent protocol', () => {
     const { client, events } = await setup();
     const first = await started(client, 'Long essay');
 
-    await expect(client.request('chat.start', { text: 'Again' })).resolves.toMatchObject({
+    await expect(
+      client.request('chat.start', { conversationId: first.conversationId, text: 'Again' }),
+    ).resolves.toMatchObject({
       status: 'rejected',
       code: 'busy',
     });
@@ -191,7 +195,10 @@ describe('chat over the agent protocol', () => {
     const { client, events, connect } = await setup();
     const other = await connect();
     const first = await started(client);
-    await expect(other.client.request('chat.start', { text: 'Hi' })).resolves.toMatchObject({
+    const { conversationId } = await other.client.request('chat.create', {});
+    await expect(
+      other.client.request('chat.start', { conversationId, text: 'Hi' }),
+    ).resolves.toMatchObject({
       status: 'rejected',
       code: 'busy',
     });
@@ -217,12 +224,21 @@ describe('chat over the agent protocol', () => {
     expect(closedEarly).toBe(true);
   });
 
-  it('stores the transcript in the agent database: chat.history, then chat.clear', async () => {
+  it('stores conversations in the agent database: list, history, clear', async () => {
     handler = (_req, res) => void streamReply(res, ['Stored', ' reply']);
     const { client, events } = await setup();
+    await expect(client.request('chat.list', {})).resolves.toEqual({ conversations: [] });
     const first = await started(client, 'Keep this');
     await terminal(events, first.streamId);
-    await expect(client.request('chat.history', {})).resolves.toEqual({
+    const { conversationId: other } = await client.request('chat.create', {});
+    const id = first.conversationId;
+    await expect(client.request('chat.list', {})).resolves.toEqual({
+      conversations: [
+        { id: other, title: 'New chat', updatedAt: expect.any(String) },
+        { id, title: 'Keep this', updatedAt: expect.any(String) },
+      ],
+    });
+    await expect(client.request('chat.history', { conversationId: id })).resolves.toEqual({
       messages: [
         {
           role: 'user',
@@ -235,8 +251,20 @@ describe('chat over the agent protocol', () => {
         expect.objectContaining({ role: 'assistant', content: 'Stored reply', model: MODEL }),
       ],
     });
-    await expect(client.request('chat.clear', {})).resolves.toBeNull();
-    await expect(client.request('chat.history', {})).resolves.toEqual({ messages: [] });
+    await expect(client.request('chat.history', { conversationId: other })).resolves.toEqual({
+      messages: [],
+    });
+    await expect(client.request('chat.clear', { conversationId: id })).resolves.toBeNull();
+    await expect(client.request('chat.history', { conversationId: id })).resolves.toEqual({
+      messages: [],
+    });
+    await expect(client.request('chat.list', {})).resolves.toMatchObject({
+      conversations: [{ id: other }],
+    });
+    // An unknown conversation is refused and nothing is written.
+    await expect(
+      client.request('chat.start', { conversationId: id, text: 'Gone' }),
+    ).resolves.toMatchObject({ status: 'rejected', code: 'invalid-request' });
   });
 
   it('rejects malformed chat requests at the protocol boundary', async () => {
@@ -247,6 +275,9 @@ describe('chat over the agent protocol', () => {
       code: 'bad_request',
     });
     await expect(client.request('chat.stop', { streamId: 'nope' })).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+    await expect(client.request('chat.history', {} as never)).rejects.toMatchObject({
       code: 'bad_request',
     });
   });

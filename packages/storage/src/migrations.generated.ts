@@ -65,4 +65,12 @@ export const MIGRATIONS: readonly EmbeddedMigration[] = [
       'CREATE INDEX `conversations_updated_idx` ON `conversations` (`updated_at`);',
     ],
   },
+  {
+    tag: '0004_conversation_summary',
+    hash: '139a9fb61abc0444b22a80eb39c9a1b2a98362c601a7396149d404b9237cd05a',
+    statements: [
+      'ALTER TABLE `conversations` ADD `summary` text;',
+      'ALTER TABLE `conversations` ADD `summarized_through_seq` integer;',
+    ],
+  },
 ];

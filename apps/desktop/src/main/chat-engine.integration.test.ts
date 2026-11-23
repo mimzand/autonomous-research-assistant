@@ -210,18 +210,25 @@ function harness(options: HarnessOptions = {}) {
     return h({ senderFrame: { url: 'file:///app/index.html', parent: null }, sender }, payload);
   };
   /**
-   * The model receives exactly `messages` (at most 8 turns, so no preface): the stored
-   * conversation is replaced by the earlier turns, and only the last user text is sent,
-   * as the renderer sends it.
+   * The model receives exactly `messages` (at most 8 turns, so no preface): a new
+   * conversation holds the earlier turns, and only the last user text is sent, as the
+   * renderer sends it.
    */
   const start = async (messages: ChatTurn[]) => {
-    const current = storage.conversations.current();
-    if (current) storage.conversations.delete(current.id);
+    const { id: conversationId } = storage.conversations.create();
     for (const turn of messages.slice(0, -1)) {
-      storage.conversations.append({ role: turn.role, content: turn.content, status: 'complete' });
+      storage.conversations.append({
+        conversationId,
+        role: turn.role,
+        content: turn.content,
+        status: 'complete',
+      });
     }
     return ChatStartResultSchema.parse(
-      await invoke(IpcChannels.chatStart, { text: messages.at(-1)?.content ?? '' }),
+      await invoke(IpcChannels.chatStart, {
+        conversationId,
+        text: messages.at(-1)?.content ?? '',
+      }),
     );
   };
   const stop = (streamId: string) => invoke(IpcChannels.chatStop, { streamId });

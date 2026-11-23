@@ -92,6 +92,8 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
     newId: () => STREAM_ID,
     conversations: storage.conversations,
   });
+  /** The conversation the chat IPC tests send to. */
+  const conversationId = chat.create().conversationId;
   registerIpcHandlers(ipc, {
     runtime,
     chat,
@@ -116,7 +118,7 @@ function setup(overrides: Partial<{ health: unknown; appInfo: unknown }> = {}) {
     return handler({ senderFrame: url === null ? null : { url }, sender }, payload);
   };
 
-  return { handlers, invoke, chat, sender, destroyedListeners, storage };
+  return { handlers, invoke, chat, sender, destroyedListeners, storage, conversationId };
 }
 
 const trusted = 'file:///app/index.html';
@@ -165,8 +167,10 @@ describe('registerIpcHandlers', () => {
 
 describe('chat IPC', () => {
   it('starts a stream and pushes events to the requesting window only', async () => {
-    const { invoke, chat, sender } = setup();
-    await expect(invoke(IpcChannels.chatStart, trusted, { text: 'Hi' })).resolves.toEqual({
+    const { invoke, chat, sender, conversationId } = setup();
+    await expect(
+      invoke(IpcChannels.chatStart, trusted, { conversationId, text: 'Hi' }),
+    ).resolves.toEqual({
       status: 'started',
       streamId: STREAM_ID,
       model: 'qwen3:8b',
@@ -180,13 +184,15 @@ describe('chat IPC', () => {
   });
 
   it('rejects invalid chat requests without starting a stream', async () => {
-    const { invoke, chat } = setup();
+    const { invoke, chat, conversationId } = setup();
     for (const payload of [
       undefined,
       'hi',
-      { text: '   ' },
+      { conversationId, text: '   ' },
+      { text: 'no conversation' },
+      { conversationId: 'unknown', text: 'x' },
       { messages: [{ role: 'user', content: 'x' }] },
-      { text: 'x', baseUrl: 'https://api.example' },
+      { conversationId, text: 'x', baseUrl: 'https://api.example' },
     ]) {
       await expect(invoke(IpcChannels.chatStart, trusted, payload)).resolves.toMatchObject({
         status: 'rejected',
@@ -194,14 +200,24 @@ describe('chat IPC', () => {
       });
     }
     expect(chat.activeStreamId).toBeUndefined();
-    await expect(invoke(IpcChannels.chatHistory, trusted)).resolves.toEqual({ messages: [] });
+    await expect(invoke(IpcChannels.chatHistory, trusted, { conversationId })).resolves.toEqual({
+      messages: [],
+    });
+    await expect(invoke(IpcChannels.chatHistory, trusted)).rejects.toThrow();
   });
 
-  it('returns the stored transcript and clears it', async () => {
-    const { invoke, chat } = setup();
-    await invoke(IpcChannels.chatStart, trusted, { text: 'Hi' });
+  it('lists, creates, returns one transcript and deletes one conversation', async () => {
+    const { invoke, chat, conversationId } = setup();
+    const created = (await invoke(IpcChannels.chatCreate, trusted)) as { conversationId: string };
+    const list = (await invoke(IpcChannels.chatList, trusted)) as {
+      conversations: { id: string; title: string }[];
+    };
+    expect(list.conversations.map((c) => c.id).sort()).toEqual(
+      [conversationId, created.conversationId].sort(),
+    );
+    await invoke(IpcChannels.chatStart, trusted, { conversationId, text: 'Hi' });
     await chat.whenIdle();
-    const history = (await invoke(IpcChannels.chatHistory, trusted)) as {
+    const history = (await invoke(IpcChannels.chatHistory, trusted, { conversationId })) as {
       messages: { role: string; content: string; status: string }[];
     };
     // This fake stream ends without `done`: the reply never finished, so only the
@@ -209,8 +225,19 @@ describe('chat IPC', () => {
     expect(history.messages.map((m) => [m.role, m.content, m.status])).toEqual([
       ['user', 'Hi', 'complete'],
     ]);
-    await expect(invoke(IpcChannels.chatClear, trusted)).resolves.toBeUndefined();
-    await expect(invoke(IpcChannels.chatHistory, trusted)).resolves.toEqual({ messages: [] });
+    await expect(
+      invoke(IpcChannels.chatHistory, trusted, { conversationId: created.conversationId }),
+    ).resolves.toEqual({ messages: [] });
+    await expect(
+      invoke(IpcChannels.chatClear, trusted, { conversationId }),
+    ).resolves.toBeUndefined();
+    await expect(invoke(IpcChannels.chatHistory, trusted, { conversationId })).resolves.toEqual({
+      messages: [],
+    });
+    const after = (await invoke(IpcChannels.chatList, trusted)) as {
+      conversations: { id: string }[];
+    };
+    expect(after.conversations.map((c) => c.id)).toEqual([created.conversationId]);
   });
 
   it('validates stop requests', async () => {
@@ -222,10 +249,10 @@ describe('chat IPC', () => {
   });
 
   it('cancels generation when the window is destroyed', async () => {
-    const { invoke, chat, destroyedListeners, sender } = setup();
+    const { invoke, chat, destroyedListeners, sender, conversationId } = setup();
     const stopForSink = vi.spyOn(chat, 'stopForSink');
-    await invoke(IpcChannels.chatStart, trusted, { text: 'Hi' });
-    await invoke(IpcChannels.chatStart, trusted, { text: 'Hi' });
+    await invoke(IpcChannels.chatStart, trusted, { conversationId, text: 'Hi' });
+    await invoke(IpcChannels.chatStart, trusted, { conversationId, text: 'Hi' });
     expect(sender.once).toHaveBeenCalledTimes(1); // Watched once per window.
     destroyedListeners.forEach((listener) => listener());
     expect(stopForSink).toHaveBeenCalledWith(7);

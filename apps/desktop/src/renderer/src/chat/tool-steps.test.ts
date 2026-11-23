@@ -29,6 +29,10 @@ function fakeApi() {
     api: {
       start: vi.fn(async () => ({ status: 'started' as const, streamId: STREAM, model: 'm' })),
       stop: vi.fn(async () => undefined),
+      list: vi.fn(async () => ({
+        conversations: [{ id: 'c1', title: 'New chat', updatedAt: '2026-11-21T10:00:00.000Z' }],
+      })),
+      create: vi.fn(async () => ({ conversationId: 'c2' })),
       history: vi.fn(async () => ({ messages: [] })),
       clear: vi.fn(async () => undefined),
       onEvent: (fn: (event: ChatEvent) => void) => {

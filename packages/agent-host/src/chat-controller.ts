@@ -3,18 +3,29 @@ import { type AgentRuntime } from '@rka/agent-runtime';
 import { isModelProviderError } from '@rka/model-provider';
 import {
   CHAT_MAX_MESSAGES,
+  ChatConversationListSchema,
+  ChatConversationRequestSchema,
+  ChatCreateResultSchema,
   ChatEventSchema,
   ChatHistorySchema,
   ChatStartRequestSchema,
   ChatStopRequestSchema,
   type ChatErrorCode,
+  type ChatConversationList,
+  type ChatCreateResult,
   type ChatEvent,
   type ChatHistory,
   type ChatStartResult,
 } from '@rka/shared';
 import { isStorageError, type ConversationRepository } from '@rka/storage';
-import { chatContext, type ChatContext } from './chat-context.js';
+import { chatContext, chatWindow, newlyOmitted } from './chat-context.js';
 import { type ChatEngine, legacyChatEngine } from './chat-engine.js';
+import {
+  acceptSummary,
+  clipForSummary,
+  SUMMARY_TIMEOUT_MS,
+  type ChatSummarizer,
+} from './chat-summary.js';
 
 /**
  * Where a stream's events go: one renderer. The Electron adapter (a webContents
@@ -46,8 +57,16 @@ export interface ChatControllerDeps {
   readonly selectEngine?: () => ChatEngine;
   /** Injected for tests. */
   readonly newId?: () => string;
-  /** The stored transcript (SQLite, one conversation): what Chat remembers. */
+  /** The stored conversations (SQLite): what Chat remembers, per conversation. */
   readonly conversations: ConversationRepository;
+  /**
+   * Folds turns that fell out of the context window into the conversation's
+   * summary (the host uses the local model). Without it, older turns are only
+   * represented by the code-built note.
+   */
+  readonly summarize?: ChatSummarizer;
+  /** Deadline for one summarize call. Injected for tests. */
+  readonly summaryTimeoutMs?: number;
 }
 
 interface ActiveStream {
@@ -72,9 +91,11 @@ interface StoredReply {
  * development): the renderer only sends validated requests and receives validated
  * events. One generation at a time (single local model, single GPU).
  *
- * The transcript is stored here: an accepted message is a row before streaming
- * starts, and the reply is a row when it ends (done, cancelled with text, or error).
- * The model receives only the last turns of that transcript (chat-context.ts).
+ * Many conversations may exist; every request names one, and only that
+ * conversation's rows (and summary) are read for it. The transcript is stored
+ * here: an accepted message is a row before streaming starts, and the reply is a
+ * row when it ends (done, cancelled with text, or error). The model receives only
+ * the last turns of that conversation plus a summary of older ones (chat-context.ts).
  */
 export class ChatController {
   private active: ActiveStream | undefined;
@@ -104,47 +125,55 @@ export class ChatController {
         message: 'A response is already being generated. Stop it or wait for it to finish.',
       };
     }
+    const { conversationId, text } = parsed.data;
     const { conversations } = this.deps;
-    const existing = conversations.current();
-    // Room for this message and its reply; older messages are never dropped.
-    if (existing && conversations.listMessages(existing.id).length > CHAT_MAX_MESSAGES - 2) {
+    if (!conversations.get(conversationId)) {
       return {
         status: 'rejected',
         code: 'invalid-request',
-        message: `The conversation is full (${CHAT_MAX_MESSAGES} messages). Clear the chat to continue.`,
+        message: 'That conversation does not exist. Choose or create another one.',
+      };
+    }
+    // Room for this message and its reply; older messages are never dropped.
+    if (conversations.listMessages(conversationId).length > CHAT_MAX_MESSAGES - 2) {
+      return {
+        status: 'rejected',
+        code: 'invalid-request',
+        message: `The conversation is full (${CHAT_MAX_MESSAGES} messages). Start a new chat to continue.`,
       };
     }
 
     // Stored before streaming begins; the model's context comes from the stored rows.
-    const { conversation } = conversations.append({
-      role: 'user',
-      content: parsed.data.text,
-      status: 'complete',
-    });
-    const context = chatContext(conversations.listMessages(conversation.id));
+    conversations.append({ conversationId, role: 'user', content: text, status: 'complete' });
 
     // The engine is fixed for this request: a later flag change affects only new requests.
     const engine = this.deps.selectEngine?.() ?? legacyChatEngine(this.deps.runtime);
     const streamId = this.newId();
     const controller = new AbortController();
-    const finished = this.run(engine, sink, streamId, context, conversation.id, controller);
-    this.active = {
-      streamId,
-      sinkId: sink.id,
-      controller,
-      finished,
-      conversationId: conversation.id,
-    };
+    const finished = this.run(engine, sink, streamId, conversationId, controller);
+    this.active = { streamId, sinkId: sink.id, controller, finished, conversationId };
     return { status: 'started', streamId, model: this.deps.runtime.model };
   }
 
-  /** The stored transcript, oldest first (empty when there is none). */
-  history(): ChatHistory {
-    const { conversations } = this.deps;
-    const conversation = conversations.current();
-    if (!conversation) return { messages: [] };
+  /** Conversations, newest-updated first. */
+  list(): ChatConversationList {
+    return ChatConversationListSchema.parse({
+      conversations: this.deps.conversations
+        .list()
+        .map(({ id, title, updatedAt }) => ({ id, title, updatedAt })),
+    });
+  }
+
+  /** A new empty conversation (`New chat`). */
+  create(): ChatCreateResult {
+    return ChatCreateResultSchema.parse({ conversationId: this.deps.conversations.create().id });
+  }
+
+  /** One conversation's stored transcript, oldest first (empty for an unknown id). */
+  history(payload: unknown): ChatHistory {
+    const { conversationId } = ChatConversationRequestSchema.parse(payload);
     return ChatHistorySchema.parse({
-      messages: conversations.listMessages(conversation.id).map((m) => ({
+      messages: this.deps.conversations.listMessages(conversationId).map((m) => ({
         role: m.role,
         content: m.content,
         status: m.status,
@@ -156,16 +185,17 @@ export class ChatController {
   }
 
   /**
-   * Stops the active reply (if any), deletes the stored conversation, and resolves
-   * once that reply has finished. Its late finish finds the conversation gone and
-   * stores nothing; the next message starts a new conversation.
+   * Deletes one conversation and its messages. If the running reply belongs to it,
+   * that reply is stopped first and this resolves once it has finished (its late
+   * finish finds the conversation gone and stores nothing). A reply running in
+   * another conversation is left alone.
    */
-  async clear(): Promise<void> {
-    const active = this.active;
-    active?.controller.abort();
-    const ids = new Set([this.deps.conversations.current()?.id, active?.conversationId]);
-    for (const id of ids) if (id) this.deps.conversations.delete(id);
-    await active?.finished;
+  async clear(payload: unknown): Promise<void> {
+    const { conversationId } = ChatConversationRequestSchema.parse(payload);
+    const own = this.active?.conversationId === conversationId ? this.active : undefined;
+    own?.controller.abort();
+    this.deps.conversations.delete(conversationId);
+    await own?.finished;
   }
 
   /** Cancels a stream. Unknown or finished stream ids are ignored. Throws on malformed input. */
@@ -218,11 +248,64 @@ export class ChatController {
     }
   }
 
+  /**
+   * Folds the turns that newly fell out of the window into this conversation's
+   * summary. Calls the model only when there are such turns; on any failure
+   * (throw, timeout, invalid text) the stored summary and cursor stay as they were.
+   * Never throws.
+   */
+  private async updateSummary(conversationId: string, signal: AbortSignal): Promise<void> {
+    const { conversations, summarize } = this.deps;
+    if (!summarize) return;
+    const conversation = conversations.get(conversationId);
+    if (!conversation) return;
+    const fresh = newlyOmitted(
+      chatWindow(conversations.listMessages(conversationId)).omitted,
+      conversation.summarizedThroughSeq,
+    );
+    const throughSeq = fresh.at(-1)?.seq;
+    if (throughSeq === undefined) return;
+
+    const deadline = new AbortController();
+    const abort = () => deadline.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, this.deps.summaryTimeoutMs ?? SUMMARY_TIMEOUT_MS);
+    try {
+      const ended = new Promise<never>((_resolve, reject) => {
+        const fail = () => reject(new Error('The summary call was stopped or timed out.'));
+        if (deadline.signal.aborted) fail();
+        else deadline.signal.addEventListener('abort', fail, { once: true });
+      });
+      ended.catch(() => undefined);
+      const text = await Promise.race([
+        summarize({
+          previousSummary: conversation.summary ?? '',
+          turns: fresh.map(clipForSummary),
+          signal: deadline.signal,
+        }),
+        ended,
+      ]);
+      const summary = acceptSummary(text);
+      if (summary === null) {
+        console.warn('Chat summary rejected: empty or longer than allowed.');
+        return;
+      }
+      if (signal.aborted) return;
+      conversations.setSummary({ conversationId, summary, throughSeq });
+    } catch (error) {
+      // Diagnostics only: never the conversation text.
+      const reason = error instanceof Error ? error.name : typeof error;
+      console.warn(`Chat summary skipped (${reason}); the previous summary is kept.`);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  }
+
   private async run(
     engine: ChatEngine,
     sink: ChatEventSink,
     streamId: string,
-    context: ChatContext,
     conversationId: string,
     controller: AbortController,
   ): Promise<void> {
@@ -240,6 +323,13 @@ export class ChatController {
     let text = '';
 
     try {
+      // After the user row is stored and before the reply stream: once per message.
+      await this.updateSummary(conversationId, controller.signal);
+      if (controller.signal.aborted) throw new Error('cancelled');
+      // Only this conversation's rows and summary.
+      const context = chatContext(this.deps.conversations.listMessages(conversationId), {
+        summary: this.deps.conversations.get(conversationId)?.summary ?? null,
+      });
       for await (const chunk of engine.streamChat(context.turns, {
         signal: controller.signal,
         ...(context.preface !== undefined && { preface: context.preface }),

@@ -324,8 +324,14 @@ export const adkUserState = sqliteTable(
 );
 
 /**
- * The Chat transcript (one conversation for the app). `model` is null until the first
- * reply names one; `title` is the first user message, trimmed, at most 80 characters.
+ * One Chat conversation (the app keeps several; the renderer picks one). `model` is
+ * null until the first reply names one; `title` is `New chat` until the first user
+ * message, then that message, trimmed, at most 80 characters.
+ *
+ * `summary` is a model-written digest of the turns that fell out of the 8-turn
+ * window, and `summarized_through_seq` the highest message `seq` folded into it.
+ * Both are null until the first summary is accepted (`seq` starts at 1, so 0 would
+ * be ambiguous).
  */
 export const conversations = sqliteTable(
   'conversations',
@@ -333,8 +339,12 @@ export const conversations = sqliteTable(
     id: text('id').primaryKey(),
     title: text('title').notNull(),
     model: text('model'),
+    summary: text('summary'),
+    summarizedThroughSeq: integer('summarized_through_seq'),
     ...timestamps,
   },
+  // No CHECK on the summary pair: adding one would rebuild the table (and its
+  // cascading messages). The repository writes both columns together, cursor >= 1.
   (t) => [index('conversations_updated_idx').on(t.updatedAt)],
 );
 

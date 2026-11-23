@@ -51,10 +51,14 @@ Without SearXNG, Chat works but cannot search, and Research cannot start.
 
 - **Chat**
   - Type and press Enter; Shift+Enter adds a new line.
-  - **Stop** ends a reply. **Clear chat** deletes the conversation and starts over.
-  - The conversation is saved and shown again when you reopen the app. The model sees
-    your last 8 messages and replies, plus a short note listing earlier questions; older
-    answers stay on screen but are not sent to it again.
+  - **New chat** starts a conversation; the list beside it shows your saved ones (the
+    most recent first). Click one to open it. **×** or **Delete chat** deletes one.
+  - Each conversation is separate: the model only sees the one you are in.
+  - **Stop** ends a reply. While a reply is running you cannot switch, create or delete
+    conversations; stop it or wait.
+  - Conversations are saved and shown again when you reopen the app. The model sees
+    your last 8 messages and replies, plus a short summary of anything older that the
+    same local model keeps up to date.
   - Replies are plain text.
 - **Web search in Chat**
   - Turn it on in **Settings → Agent Engines → Web search in Chat**. It is off by
@@ -100,8 +104,10 @@ Point the app at them in Settings:
 - **ADK Chat ends with an error on an unknown tool.** If the model asks for a tool that
   does not exist, ADK Chat ends the reply with an "invalid response" error (nothing is
   run). Legacy Chat refuses the call and continues.
-- **One reply at a time, one conversation.** There is no list of past conversations;
-  **Clear chat** deletes the saved one. A conversation holds at most 200 messages.
+- **One reply at a time.** Only one conversation can be answering at once. A
+  conversation holds at most 200 messages; start a new chat after that.
+- **The summary of older turns is written by the model.** It can leave things out. If
+  writing it fails, the model gets a list of your earlier questions instead.
 - **If the background process stops, restart the app.** Should the research engine
   process end unexpectedly (for example if it is ended in Task Manager), requests show
   errors until you close and reopen the app; nothing is lost beyond the running step,

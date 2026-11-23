@@ -209,25 +209,32 @@ skipped when the model does not advertise tool support).
 ## Chat playground
 
 The main window has a chat playground for testing the local model: streaming replies,
-Stop, Clear chat, and a conversation that is stored and shown again when the app opens
-(Enter sends, Shift+Enter adds a new line). The model status panel sits beside it.
+Stop, and several stored conversations in a list beside the transcript (New chat,
+switch, Delete; Enter sends, Shift+Enter adds a new line). The model status panel sits
+beside it.
 
 ```text
 ChatPanel.vue → chat/session.ts → window.api.chat (preload)
-  → IPC chat:start { text } / chat:stop / chat:history / chat:clear (validated in main)
-  → agent service: ChatController (@rka/agent-host) → SQLite transcript + context window
+  → IPC chat:list / chat:create / chat:start { conversationId, text } / chat:stop /
+    chat:history { conversationId } / chat:clear { conversationId } (validated in main)
+  → agent service: ChatController (@rka/agent-host) → SQLite conversations + context window
   → chat engine (Legacy or ADK) → OllamaProvider.generateStream()
   ← chat:event (delta | tool | done | error | cancelled), validated in the preload
 ```
 
-- The transcript is stored in SQLite (`conversations`, `conversation_messages`; one
-  conversation for the app). The window loads it on open; **Clear chat** deletes it.
-- The window sends only the new message. The model receives the last 8 turns that
-  produced text (failed replies stay on screen but are never sent). When older turns
-  exist, the request also carries one short note built by code: how many turns were
-  left out and the first 80 characters of each omitted question (never the omitted
-  answers).
-- One generation at a time; closing the window cancels it.
+- Conversations are stored in SQLite (`conversations`, `conversation_messages`). The
+  window opens the most recently updated one (an empty database opens none until you
+  press **New chat**). **Delete chat** removes the open one. Switching, creating and
+  deleting are disabled while a reply is streaming.
+- The window sends the open conversation's id and the new message. The model receives
+  only that conversation: its last 8 turns that produced text (failed replies stay on
+  screen but are never sent), plus, when older turns exist, a preface:
+  - a rolling summary of those older turns, stored on the conversation and written by
+    the same local model in one short call when turns newly fall out of the window
+    (only the new ones are sent, with the previous summary; fenced as untrusted data);
+  - until the first summary succeeds, a note built by code: how many turns were left out
+    and the first 80 characters of each omitted question (never the omitted answers).
+- One generation at a time for the whole app; closing the window cancels it.
 - Model output is rendered as plain text (no HTML).
 - Errors (Ollama down, model missing, timeout, generation failure) are shown with a fix.
 
@@ -550,7 +557,10 @@ Endpoints (see `/docs` for schemas):
   `POST /tasks/research`, `/tasks/{id}/pause|resume|cancel|retry`;
   `GET /events/research` (server-sent progress events)
 - Knowledge base: `GET /sources`, `/sources/{id}`, `/reports`, `/reports/{id}`
-- Chat: `POST /chat` (the reply as server-sent events), `POST /chat/{streamId}/stop`
+- Chat: `GET /chat/conversations`, `POST /chat/conversations` (new, empty),
+  `POST /chat` (`{conversationId, text}`; the reply as server-sent events),
+  `POST /chat/{streamId}/stop`, `GET /chat/history?conversationId=…`,
+  `POST /chat/clear` (`{conversationId}`; deletes that conversation)
 - Files: `POST /research-tools/extract` (multipart upload of a PDF/DOCX, up to 11 MB),
   `POST /storage/backup` (downloads a copy of the database), `GET /storage/status`,
   `POST /storage/integrity-check`

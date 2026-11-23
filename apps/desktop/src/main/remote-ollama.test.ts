@@ -120,9 +120,8 @@ async function chatThrough(engine: AgentEngine, reply: ChatReply = okChat) {
   const events: ChatEvent[] = [];
   const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };
   // A fresh conversation per run (the database is shared by the file's tests).
-  const current = storage.conversations.current();
-  if (current) storage.conversations.delete(current.id);
-  const started = chat.start(sink, { text: 'Reply with OK.' });
+  const { id: conversationId } = storage.conversations.create();
+  const started = chat.start(sink, { conversationId, text: 'Reply with OK.' });
   if (started.status !== 'started') throw new Error(started.message);
   await chat.whenIdle();
   // Stream ids differ per run; compare everything else.

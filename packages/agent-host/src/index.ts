@@ -23,11 +23,26 @@ export {
 export {
   CHAT_CONTEXT_TURNS,
   chatContext,
+  chatWindow,
   contextPreface,
+  newlyOmitted,
   PREFACE_QUESTION_CHARS,
+  summaryPreface,
   type ChatContext,
+  type ChatWindow,
+  type QualifyingTurn,
   type StoredChatTurn,
 } from './chat-context.js';
+export {
+  acceptSummary,
+  CHAT_SUMMARY_CHARS,
+  ollamaChatSummarizer,
+  SUMMARY_TIMEOUT_MS,
+  SUMMARY_TURN_CHARS,
+  summaryPrompt,
+  type ChatSummarizer,
+  type SummarizeRequest,
+} from './chat-summary.js';
 export {
   adkChatEngine,
   AGENT_ENGINE_ENV,

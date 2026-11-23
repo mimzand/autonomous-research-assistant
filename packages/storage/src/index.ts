@@ -62,10 +62,14 @@ export {
   type TaskLogRepository,
 } from './repositories/task-logs.js';
 export {
+  CONVERSATION_LIST_LIMIT,
+  CONVERSATION_SUMMARY_CHARS,
   CONVERSATION_TITLE_CHARS,
   createConversationRepository,
   MAX_CONVERSATION_MESSAGE_CHARS,
+  NEW_CONVERSATION_TITLE,
   type AppendConversationMessageInput,
+  type SetConversationSummaryInput,
   type AppendedConversationMessage,
   type ConversationRepository,
 } from './repositories/conversations.js';

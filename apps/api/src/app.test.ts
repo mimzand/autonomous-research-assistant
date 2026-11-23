@@ -45,6 +45,13 @@ function app(options: { stateFile?: string; corsOrigins?: string[]; perMinute?: 
   });
 }
 
+/** Creates a Chat conversation over the API and returns its id. */
+async function newConversation(a: ReturnType<typeof app>): Promise<string> {
+  const response = await a.request('/chat/conversations', { method: 'POST', headers: auth });
+  expect(response.status).toBe(200);
+  return ((await response.json()) as { conversationId: string }).conversationId;
+}
+
 /** Parses a text/event-stream body into `{ event, data }` items. */
 async function sse(response: Response): Promise<{ event: string; data: unknown }[]> {
   const text = await response.text();
@@ -75,6 +82,8 @@ describe('Phase 1: health, auth, ping, OpenAPI', () => {
         '/agent/ping',
         '/tasks',
         '/chat',
+        '/chat/conversations',
+        '/chat/history',
         '/events/research',
         '/storage/backup',
       ]),
@@ -172,10 +181,12 @@ describe('Phase 2: dashboard, research, chat, progress', () => {
   });
 
   it('streams a Chat reply as server-sent events', async () => {
-    const response = await app().request('/chat', {
+    const a = app();
+    const conversationId = await newConversation(a);
+    const response = await a.request('/chat', {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ text: 'Hi' }),
+      body: JSON.stringify({ conversationId, text: 'Hi' }),
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
@@ -190,36 +201,64 @@ describe('Phase 2: dashboard, research, chat, progress', () => {
   });
 
   it('rejects an invalid Chat request before streaming', async () => {
-    const response = await app().request('/chat', {
-      method: 'POST',
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] }),
-    });
-    expect(response.status).toBe(400);
+    const a = app();
+    const post = (body: unknown) =>
+      a.request('/chat', {
+        method: 'POST',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ messages: [{ role: 'user', content: 'Hi' }] })).status).toBe(400);
+    expect((await post({ text: 'No conversation' })).status).toBe(400);
+    const unknown = await post({ conversationId: 'does-not-exist', text: 'Hi' });
+    expect(unknown.status).toBe(400);
+    expect(((await unknown.json()) as { error: { code: string } }).error.code).toBe(
+      'invalid-request',
+    );
   });
 
-  it('returns the stored transcript and clears it', async () => {
+  it('creates and lists conversations, returns one transcript, and deletes only that one', async () => {
     const a = app();
+    const id = await newConversation(a);
+    const other = await newConversation(a);
     const reply = await a.request('/chat', {
       method: 'POST',
       headers: { ...auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ text: 'Remember this' }),
+      body: JSON.stringify({ conversationId: id, text: 'Remember this' }),
     });
     await reply.text(); // drain the stream: the reply is stored when it is done
-    const history = await a.request('/chat/history', { headers: auth });
+    const list = (await (await a.request('/chat/conversations', { headers: auth })).json()) as {
+      conversations: { id: string; title: string }[];
+    };
+    expect(list.conversations.slice(0, 2).map((c) => [c.id, c.title])).toEqual([
+      [id, 'Remember this'],
+      [other, 'New chat'],
+    ]);
+    const history = await a.request(`/chat/history?conversationId=${id}`, { headers: auth });
     expect(history.status).toBe(200);
     const body = (await history.json()) as {
       messages: { role: string; content: string; status: string }[];
     };
-    expect(body.messages.slice(-2).map((m) => [m.role, m.content, m.status])).toEqual([
+    expect(body.messages.map((m) => [m.role, m.content, m.status])).toEqual([
       ['user', 'Remember this', 'complete'],
       ['assistant', 'Hello API', 'complete'],
     ]);
-    expect((await a.request('/chat/clear', { method: 'POST', headers: auth })).status).toBe(204);
-    await expect((await a.request('/chat/history', { headers: auth })).json()).resolves.toEqual({
-      messages: [],
+    expect((await a.request('/chat/history', { headers: auth })).status).toBe(400);
+    const clear = await a.request('/chat/clear', {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ conversationId: id }),
     });
-    expect((await a.request('/chat/history')).status).toBe(401);
+    expect(clear.status).toBe(204);
+    await expect(
+      (await a.request(`/chat/history?conversationId=${id}`, { headers: auth })).json(),
+    ).resolves.toEqual({ messages: [] });
+    const after = (await (await a.request('/chat/conversations', { headers: auth })).json()) as {
+      conversations: { id: string }[];
+    };
+    expect(after.conversations.map((c) => c.id)).toContain(other);
+    expect(after.conversations.map((c) => c.id)).not.toContain(id);
+    expect((await a.request('/chat/conversations')).status).toBe(401);
   });
 });
 

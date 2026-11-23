@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CHAT_MAX_MESSAGE_CHARS,
   ChatEventSchema,
+  ChatConversationListSchema,
+  ChatConversationRequestSchema,
   ChatHistorySchema,
   ChatStartRequestSchema,
   ChatStopRequestSchema,
@@ -10,20 +12,43 @@ import {
 const id = '3b241101-e2bb-4255-8caf-4136c566a962';
 
 describe('ChatStartRequestSchema', () => {
-  it('accepts the new user text only, trimmed', () => {
-    expect(ChatStartRequestSchema.parse({ text: '  How are you?\n' })).toEqual({
+  it('accepts the conversation id and the new user text, trimmed', () => {
+    expect(
+      ChatStartRequestSchema.parse({ conversationId: 'c1', text: '  How are you?\n' }),
+    ).toEqual({
+      conversationId: 'c1',
       text: 'How are you?',
     });
   });
 
   it.each([
-    ['blank text', { text: '   \n ' }],
+    ['blank text', { conversationId: 'c1', text: '   \n ' }],
+    ['no conversation id', { text: 'Hi' }],
+    ['an empty conversation id', { conversationId: '', text: 'Hi' }],
     ['a messages array (the old shape)', { messages: [{ role: 'user', content: 'Hi' }] }],
-    ['extra fields', { text: 'x', model: 'gpt-4' }],
-    ['oversized text', { text: 'x'.repeat(CHAT_MAX_MESSAGE_CHARS + 1) }],
+    ['extra fields', { conversationId: 'c1', text: 'x', model: 'gpt-4' }],
+    ['oversized text', { conversationId: 'c1', text: 'x'.repeat(CHAT_MAX_MESSAGE_CHARS + 1) }],
     ['not an object', 'hello'],
   ])('rejects %s', (_label, input) => {
     expect(ChatStartRequestSchema.safeParse(input).success).toBe(false);
+  });
+});
+
+describe('conversation list and requests', () => {
+  it('lists id, title and updatedAt only', () => {
+    const item = { id: 'c1', title: 'New chat', updatedAt: '2026-11-21T10:00:00.000Z' };
+    expect(ChatConversationListSchema.safeParse({ conversations: [item] }).success).toBe(true);
+    expect(
+      ChatConversationListSchema.safeParse({ conversations: [{ ...item, messages: [] }] }).success,
+    ).toBe(false);
+  });
+
+  it('requires a conversation id for history and clear', () => {
+    expect(ChatConversationRequestSchema.safeParse({ conversationId: 'c1' }).success).toBe(true);
+    expect(ChatConversationRequestSchema.safeParse({}).success).toBe(false);
+    expect(
+      ChatConversationRequestSchema.safeParse({ conversationId: 'x'.repeat(101) }).success,
+    ).toBe(false);
   });
 });
 

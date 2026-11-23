@@ -351,25 +351,31 @@ The dashboard reads through `storage.inspect`. It adds **no tables or columns**.
   - Refuses `:memory:` and the live database, WAL and SHM paths.
   - The caller (the native save dialog) is responsible for overwrite confirmation.
 
-## Chat transcript (migration `0003_conversations`)
+## Chat conversations (migrations `0003_conversations`, `0004_conversation_summary`)
 
-The Chat playground's conversation, stored by the agent (`ChatController` in
-`@rka/agent-host`, through `storage.conversations`). One conversation for the app: no
-list and no picker. The window loads it on open (`chat.history`); **Clear chat**
-deletes it (`chat.clear`). Separate from `adk_sessions` / `adk_events`, which Chat
+The Chat playground's conversations, stored by the agent (`ChatController` in
+`@rka/agent-host`, through `storage.conversations`). The app keeps several; the
+renderer lists them (`chat.list`), creates one (`chat.create`), opens one
+(`chat.history`) and deletes one (`chat.clear`). Every request names its conversation:
+nothing picks "the latest one". Separate from `adk_sessions` / `adk_events`, which Chat
 never writes.
 
 `conversations`
 
-| Column       | Type | Notes                                                             |
-| ------------ | ---- | ----------------------------------------------------------------- |
-| `id`         | text | PK                                                                |
-| `title`      | text | The first user message, trimmed, at most 80 characters            |
-| `model`      | text | Nullable until the first finished reply names one; then its model |
-| `created_at` | text |                                                                   |
-| `updated_at` | text | Every appended message updates it                                 |
+| Column                   | Type    | Notes                                                                    |
+| ------------------------ | ------- | ------------------------------------------------------------------------ |
+| `id`                     | text    | PK                                                                       |
+| `title`                  | text    | `New chat`, then the first non-empty user message, trimmed, ≤ 80 chars   |
+| `model`                  | text    | Nullable until the first finished reply names one; then its model        |
+| `summary`                | text    | Nullable; model-written summary of the turns outside the window (≤ 1500) |
+| `summarized_through_seq` | integer | Nullable; highest message `seq` folded into `summary` (≥ 1 when set)     |
+| `created_at`             | text    |                                                                          |
+| `updated_at`             | text    | Every appended message updates it (summaries do not)                     |
 
-Index: `updated_at`.
+Index: `updated_at`. `0004` only adds the two summary columns (`ALTER TABLE … ADD`):
+existing rows keep their data with both columns null. There is no CHECK on the pair
+(adding one would rebuild the table and its cascading messages); `setSummary` writes
+both together.
 
 `conversation_messages`
 
@@ -389,9 +395,11 @@ Index: `updated_at`.
 
 Rules enforced by `storage.conversations` and `ChatController`:
 
-- `append` assigns `seq` in the same transaction as the insert. Without a conversation
-  id it appends to the current conversation, which a non-empty user message creates.
-  With the id of a deleted conversation it fails (`not-found`).
+- `create` makes an empty conversation titled `New chat`; its first non-empty user
+  message becomes the title, and later messages leave it alone.
+- `append` needs an existing conversation id (`not-found` otherwise, e.g. deleted) and
+  assigns `seq` in the same transaction as the insert. `ChatController` refuses a start
+  for an unknown id (`invalid-request`) and writes nothing.
 - At most `CHAT_MAX_MESSAGES` (200) messages: message 201 is refused (`invalid-input`);
   older messages are never dropped to make room. `ChatController` refuses a new message
   when there is no room for it and its reply.
@@ -399,11 +407,25 @@ Rules enforced by `storage.conversations` and `ChatController`:
   `done` (`complete`, with model and token counts); on cancel only when it has text
   (`cancelled`); on error always, even empty (`error`), so the bubble comes back. A
   rejected start writes nothing. Web-search steps are not stored.
-- A reply that finishes after Clear stores nothing (its conversation is gone).
-- What the model sees is not the transcript: the last 8 non-empty `complete` or
-  `cancelled` turns, plus, when older ones exist, one preface built by code with the
-  number of omitted turns and the first 80 characters of each omitted user message
-  (`chatContext`, agent-host `chat-context.ts`). Error rows never reach the model.
+- Deleting a conversation deletes its messages (cascade). If its reply is running, it is
+  stopped first; a reply that finishes after the delete stores nothing. Other
+  conversations, and a reply running in one of them, are untouched.
+- One reply at a time for the whole app (`busy`), whichever conversation it is for.
+- What the model sees is not the transcript, and only ever comes from the conversation
+  being answered: its last 8 non-empty `complete` or `cancelled` turns verbatim, plus,
+  when older ones exist, a preface (agent-host `chat-context.ts`):
+  - the stored `summary`, fenced as untrusted data, with one line saying it covers the
+    earlier turns; or
+  - while there is no summary, a note built by code: the number of omitted turns and the
+    first 80 characters of each omitted user message.
+- Error rows never reach the model.
+- The summary is updated once per accepted message, after the user row is stored and
+  before the reply streams, only when qualifying turns newly fell out of the window
+  (`seq` > `summarized_through_seq`). The model (`Task: summarize-chat`, thinking off)
+  gets the previous summary and only those turns, each clipped to 2000 characters, all
+  fenced. A non-empty answer of at most 1500 characters is stored and the cursor moves to
+  the highest folded `seq`; on an error, timeout or invalid answer both columns stay as
+  they were and the reply starts anyway. The cursor only moves forward.
 - These tables are in the inspector's table list (`TABLE_NAMES`).
 
 ## Secrets

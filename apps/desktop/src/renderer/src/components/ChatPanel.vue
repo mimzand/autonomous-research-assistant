@@ -18,7 +18,21 @@ const chat = createChatSession(window.api.chat, {
   model: () => modelName.value,
   onConnectionProblem: () => void refreshHealth(),
 });
-const { messages, draft, phase, busy, canSend, loaded, startError } = chat;
+const {
+  conversations,
+  openId,
+  messages,
+  draft,
+  phase,
+  busy,
+  canSend,
+  initialized,
+  loaded,
+  startError,
+} = chat;
+
+/** Shown on the list's controls while a reply is streaming. */
+const busyHint = computed(() => (busy.value ? 'Stop the reply first' : undefined));
 
 const log = ref<HTMLElement | null>(null);
 const input = ref<HTMLTextAreaElement | null>(null);
@@ -51,9 +65,19 @@ async function submit(): Promise<void> {
   input.value?.focus();
 }
 
-async function clearChat(): Promise<void> {
-  await chat.clear();
-  input.value?.focus();
+async function openConversation(id: string): Promise<void> {
+  if (id === openId.value) return;
+  stickToBottom = true;
+  if (await chat.open(id)) input.value?.focus();
+}
+
+async function newConversation(): Promise<void> {
+  stickToBottom = true;
+  if (await chat.create()) input.value?.focus();
+}
+
+async function deleteConversation(id: string): Promise<void> {
+  await chat.remove(id);
 }
 
 const statusText = computed(() => {
@@ -81,144 +105,208 @@ onBeforeUnmount(() => chat.dispose());
 
 <template>
   <section class="chat" aria-labelledby="chat-heading">
-    <header class="chat-header">
-      <div>
-        <h2 id="chat-heading">Chat playground</h2>
-        <p class="model" data-testid="chat-model">
-          <span class="dot" :data-ready="modelReady" aria-hidden="true"></span>
-          <code>{{ modelName }}</code>
-          <span class="muted" data-testid="chat-connection">· {{ connectionLabel }}</span>
-        </p>
-      </div>
+    <nav class="conversations" aria-label="Conversations" data-testid="chat-conversations">
       <button
         type="button"
-        class="secondary"
-        data-testid="chat-clear"
-        :disabled="messages.length === 0"
-        @click="clearChat"
+        class="new"
+        data-testid="chat-new"
+        :disabled="busy"
+        :title="busyHint"
+        @click="newConversation"
       >
-        Clear chat
+        New chat
       </button>
-    </header>
-
-    <div
-      ref="log"
-      class="log"
-      role="log"
-      aria-live="polite"
-      aria-label="Conversation"
-      data-testid="chat-log"
-      @scroll="onScroll"
-    >
-      <p v-if="!loaded" class="empty" data-testid="chat-loading">Loading the conversation…</p>
-      <p v-else-if="messages.length === 0" class="empty" data-testid="chat-empty">
-        <template v-if="connectionLabel === 'Remote Ollama'">
-          Send a message to test the model. Messages are sent to the Ollama server configured in
-          Settings.
-        </template>
-        <template v-else>
-          Send a message to test the local model. Everything stays on this computer.
-        </template>
-      </p>
-
-      <article
-        v-for="message in messages"
-        :key="message.id"
-        class="message"
-        :data-role="message.role"
-        :data-status="message.status"
-        data-testid="chat-message"
-      >
-        <!-- Web searches the model made for this reply (Legacy Chat with web search). -->
-        <ul v-if="message.tools.length" class="tools" data-testid="chat-tools">
-          <li
-            v-for="step in message.tools"
-            :key="step.callId"
-            class="tool"
-            :data-status="step.status"
-            data-testid="chat-tool"
-          >
-            <span class="tool-label">{{ toolStepLabel(step) }}</span>
-            <span v-if="step.query" class="tool-query">“{{ step.query }}”</span>
-            <span class="tool-status" data-testid="chat-tool-status">{{
-              toolStepStatusText(step)
-            }}</span>
-          </li>
-          <li
-            v-if="message.tools.some((t) => t.status === 'completed')"
-            class="tool-note muted"
-            data-testid="chat-tool-note"
-          >
-            Search results are unverified web content; check important facts at the source.
-          </li>
-        </ul>
-        <div class="bubble">
-          <span class="sr-only">{{ message.role === 'user' ? 'You:' : 'Assistant:' }}</span>
-          <!-- Plain text only (no HTML rendering of model output). -->
-          <span class="text">{{ message.content }}</span>
-          <span
-            v-if="message.status === 'streaming' && !message.content"
-            class="typing"
-            aria-label="Model is responding"
-          >
-            <i></i><i></i><i></i>
-          </span>
-          <span v-else-if="message.status === 'streaming'" class="caret" aria-hidden="true"></span>
-        </div>
-
-        <p v-if="message.status === 'cancelled'" class="meta">
-          {{ message.content ? 'Stopped' : 'Stopped before any output' }}
-        </p>
-        <p v-if="message.status === 'complete' && message.stats" class="meta">
-          {{ formatStats(message.stats) }}
-        </p>
-        <div v-if="message.error" class="error" role="alert" data-testid="chat-error">
-          <strong>{{ message.error.title }}</strong>
-          <span v-if="message.error.hint">{{ message.error.hint }}</span>
-          <small>{{ message.error.detail }}</small>
-        </div>
-      </article>
-    </div>
-
-    <div v-if="startError" class="error" role="alert" data-testid="chat-start-error">
-      <strong>{{ startError.title }}</strong>
-      <span v-if="startError.hint">{{ startError.hint }}</span>
-      <small v-if="startError.detail">{{ startError.detail }}</small>
-    </div>
-
-    <form class="composer" @submit.prevent="submit">
-      <label for="chat-input" class="sr-only">Message</label>
-      <textarea
-        id="chat-input"
-        ref="input"
-        v-model="draft"
-        rows="3"
-        placeholder="Message the local model… (Enter to send, Shift+Enter for a new line)"
-        data-testid="chat-input"
-        @keydown="onKeydown"
-      ></textarea>
-      <div class="actions">
-        <span class="status" role="status" data-testid="chat-status">{{ statusText }}</span>
-        <button
-          v-if="busy"
-          type="button"
-          class="stop"
-          data-testid="chat-stop"
-          :disabled="phase === 'stopping'"
-          @click="chat.stop"
+      <ul class="conversation-list">
+        <li
+          v-for="conversation in conversations"
+          :key="conversation.id"
+          class="conversation"
+          :data-open="conversation.id === openId"
+          data-testid="chat-conversation"
         >
-          Stop
+          <button
+            type="button"
+            class="conversation-open"
+            :aria-current="conversation.id === openId ? 'true' : undefined"
+            :disabled="busy && conversation.id !== openId"
+            :title="busyHint ?? conversation.title"
+            data-testid="chat-conversation-open"
+            @click="openConversation(conversation.id)"
+          >
+            {{ conversation.title }}
+          </button>
+          <button
+            type="button"
+            class="conversation-delete"
+            :aria-label="`Delete “${conversation.title}”`"
+            :title="busyHint ?? 'Delete this conversation'"
+            :disabled="busy"
+            data-testid="chat-conversation-delete"
+            @click="deleteConversation(conversation.id)"
+          >
+            ×
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="thread">
+      <header class="chat-header">
+        <div>
+          <h2 id="chat-heading">Chat playground</h2>
+          <p class="model" data-testid="chat-model">
+            <span class="dot" :data-ready="modelReady" aria-hidden="true"></span>
+            <code>{{ modelName }}</code>
+            <span class="muted" data-testid="chat-connection">· {{ connectionLabel }}</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          class="secondary"
+          data-testid="chat-clear"
+          :disabled="openId === null || busy"
+          :title="busyHint"
+          @click="chat.clear"
+        >
+          Delete chat
         </button>
-        <button v-else type="submit" data-testid="chat-send" :disabled="!canSend">Send</button>
+      </header>
+
+      <div
+        ref="log"
+        class="log"
+        role="log"
+        aria-live="polite"
+        aria-label="Conversation"
+        data-testid="chat-log"
+        @scroll="onScroll"
+      >
+        <p
+          v-if="!initialized || (openId !== null && !loaded)"
+          class="empty"
+          data-testid="chat-loading"
+        >
+          Loading the conversation…
+        </p>
+        <div v-else-if="openId === null" class="empty" data-testid="chat-none">
+          <p>No conversation is open. Choose one from the list or start a new chat.</p>
+          <button type="button" :disabled="busy" @click="newConversation">New chat</button>
+        </div>
+        <p v-else-if="messages.length === 0" class="empty" data-testid="chat-empty">
+          <template v-if="connectionLabel === 'Remote Ollama'">
+            Send a message to test the model. Messages are sent to the Ollama server configured in
+            Settings.
+          </template>
+          <template v-else>
+            Send a message to test the local model. Everything stays on this computer.
+          </template>
+        </p>
+
+        <article
+          v-for="message in messages"
+          :key="message.id"
+          class="message"
+          :data-role="message.role"
+          :data-status="message.status"
+          data-testid="chat-message"
+        >
+          <!-- Web searches the model made for this reply (Legacy Chat with web search). -->
+          <ul v-if="message.tools.length" class="tools" data-testid="chat-tools">
+            <li
+              v-for="step in message.tools"
+              :key="step.callId"
+              class="tool"
+              :data-status="step.status"
+              data-testid="chat-tool"
+            >
+              <span class="tool-label">{{ toolStepLabel(step) }}</span>
+              <span v-if="step.query" class="tool-query">“{{ step.query }}”</span>
+              <span class="tool-status" data-testid="chat-tool-status">{{
+                toolStepStatusText(step)
+              }}</span>
+            </li>
+            <li
+              v-if="message.tools.some((t) => t.status === 'completed')"
+              class="tool-note muted"
+              data-testid="chat-tool-note"
+            >
+              Search results are unverified web content; check important facts at the source.
+            </li>
+          </ul>
+          <div class="bubble">
+            <span class="sr-only">{{ message.role === 'user' ? 'You:' : 'Assistant:' }}</span>
+            <!-- Plain text only (no HTML rendering of model output). -->
+            <span class="text">{{ message.content }}</span>
+            <span
+              v-if="message.status === 'streaming' && !message.content"
+              class="typing"
+              aria-label="Model is responding"
+            >
+              <i></i><i></i><i></i>
+            </span>
+            <span
+              v-else-if="message.status === 'streaming'"
+              class="caret"
+              aria-hidden="true"
+            ></span>
+          </div>
+
+          <p v-if="message.status === 'cancelled'" class="meta">
+            {{ message.content ? 'Stopped' : 'Stopped before any output' }}
+          </p>
+          <p v-if="message.status === 'complete' && message.stats" class="meta">
+            {{ formatStats(message.stats) }}
+          </p>
+          <div v-if="message.error" class="error" role="alert" data-testid="chat-error">
+            <strong>{{ message.error.title }}</strong>
+            <span v-if="message.error.hint">{{ message.error.hint }}</span>
+            <small>{{ message.error.detail }}</small>
+          </div>
+        </article>
       </div>
-    </form>
+
+      <div v-if="startError" class="error" role="alert" data-testid="chat-start-error">
+        <strong>{{ startError.title }}</strong>
+        <span v-if="startError.hint">{{ startError.hint }}</span>
+        <small v-if="startError.detail">{{ startError.detail }}</small>
+      </div>
+
+      <form class="composer" @submit.prevent="submit">
+        <label for="chat-input" class="sr-only">Message</label>
+        <textarea
+          id="chat-input"
+          ref="input"
+          v-model="draft"
+          rows="3"
+          :disabled="openId === null"
+          placeholder="Message the local model… (Enter to send, Shift+Enter for a new line)"
+          data-testid="chat-input"
+          @keydown="onKeydown"
+        ></textarea>
+        <div class="actions">
+          <span class="status" role="status" data-testid="chat-status">{{ statusText }}</span>
+          <button
+            v-if="busy"
+            type="button"
+            class="stop"
+            data-testid="chat-stop"
+            :disabled="phase === 'stopping'"
+            @click="chat.stop"
+          >
+            Stop
+          </button>
+          <button v-else type="submit" data-testid="chat-send" :disabled="!canSend">Send</button>
+        </div>
+      </form>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .chat {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   height: 100%;
@@ -226,6 +314,62 @@ onBeforeUnmount(() => chat.dispose());
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+.conversations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+}
+.conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+}
+.conversation {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 6px;
+}
+.conversation[data-open='true'] {
+  background: var(--bubble);
+}
+.conversation-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.conversation-delete {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 8px;
+}
+.conversation-delete:hover:not(:disabled) {
+  color: var(--error);
+}
+.thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 .chat-header {
   display: flex;
@@ -451,6 +595,16 @@ button[type='submit'] {
   }
   40% {
     opacity: 1;
+  }
+}
+@media (max-width: 700px) {
+  .chat {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 120px) minmax(0, 1fr);
+  }
+  .conversations {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
 }
 @media (prefers-reduced-motion: reduce) {

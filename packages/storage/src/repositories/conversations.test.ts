@@ -1,25 +1,37 @@
 import { CHAT_MAX_MESSAGES } from '@rka/shared';
 import { describe, expect, it } from 'vitest';
 import { memoryStorage } from '../testing.js';
+import { NEW_CONVERSATION_TITLE } from './conversations.js';
 
-const user = (content: string) => ({ role: 'user' as const, content, status: 'complete' as const });
+const user = (conversationId: string, content: string) => ({
+  conversationId,
+  role: 'user' as const,
+  content,
+  status: 'complete' as const,
+});
 
 describe('conversation repository', () => {
-  it('creates the conversation with the first user message and appends in seq order', () => {
+  it('creates an empty "New chat"; the first user message becomes the title; seq order', () => {
     const storage = memoryStorage();
-    expect(storage.conversations.current()).toBeUndefined();
+    expect(storage.conversations.list()).toEqual([]);
+    const created = storage.conversations.create();
+    expect(created).toMatchObject({
+      title: NEW_CONVERSATION_TITLE,
+      model: null,
+      summary: null,
+      summarizedThroughSeq: null,
+    });
+    expect(storage.conversations.listMessages(created.id)).toEqual([]);
+    const id = created.id;
 
-    const first = storage.conversations.append(
-      user(`   ${'Tell me about heat pumps. '.repeat(6)}   `),
-    );
+    const raw = `   ${'Tell me about heat pumps. '.repeat(6)}   `;
+    const first = storage.conversations.append(user(id, raw));
     expect(first.message.seq).toBe(1);
     expect(first.conversation.title).toBe(
       'Tell me about heat pumps. '.repeat(6).trim().slice(0, 80),
     );
     expect(first.conversation.title).toHaveLength(80);
-    expect(first.conversation.model).toBeNull();
 
-    const id = first.conversation.id;
     const reply = storage.conversations.append({
       conversationId: id,
       role: 'assistant',
@@ -31,7 +43,10 @@ describe('conversation repository', () => {
     });
     expect(reply.message).toMatchObject({ seq: 2, model: 'qwen3:8b', promptTokens: 12 });
     expect(reply.conversation.model).toBe('qwen3:8b');
-    storage.conversations.append({ ...user('And the cost?') });
+    // Later user messages leave the title alone.
+    expect(storage.conversations.append(user(id, 'And the cost?')).conversation.title).toBe(
+      first.conversation.title,
+    );
     storage.conversations.append({
       conversationId: id,
       role: 'assistant',
@@ -39,8 +54,6 @@ describe('conversation repository', () => {
       status: 'error',
     });
 
-    expect(storage.conversations.current()?.id).toBe(id);
-    const raw = `   ${'Tell me about heat pumps. '.repeat(6)}   `;
     expect(
       storage.conversations.listMessages(id).map((m) => [m.seq, m.role, m.status, m.content]),
     ).toEqual([
@@ -51,47 +64,117 @@ describe('conversation repository', () => {
     ]);
   });
 
-  it('refuses to start a conversation with an assistant or empty message', () => {
+  it('keeps "New chat" when the first message is not a non-empty user message', () => {
     const storage = memoryStorage();
-    expect(() =>
-      storage.conversations.append({ role: 'assistant', content: 'x', status: 'complete' }),
-    ).toThrow(/starts with a non-empty user message/);
-    expect(() => storage.conversations.append(user('   '))).toThrow();
-    expect(storage.conversations.current()).toBeUndefined();
+    const { id } = storage.conversations.create();
+    storage.conversations.append({
+      conversationId: id,
+      role: 'assistant',
+      content: 'x',
+      status: 'complete',
+    });
+    storage.conversations.append(user(id, '   '));
+    expect(storage.conversations.get(id)?.title).toBe(NEW_CONVERSATION_TITLE);
+    storage.conversations.append(user(id, 'Real question'));
+    expect(storage.conversations.get(id)?.title).toBe('Real question');
   });
 
-  it('deletes the conversation and its messages (cascade); a deleted id is not found', () => {
+  it('lists conversations newest-updated first, without message bodies', () => {
+    const storage = memoryStorage(); // its clock ticks one second per call
+    const a = storage.conversations.create();
+    const b = storage.conversations.create();
+    expect(storage.conversations.list().map((c) => c.id)).toEqual([b.id, a.id]);
+    storage.conversations.append(user(a.id, 'Bump A'));
+    expect(storage.conversations.list().map((c) => [c.id, c.title])).toEqual([
+      [a.id, 'Bump A'],
+      [b.id, NEW_CONVERSATION_TITLE],
+    ]);
+  });
+
+  it('appends only to an existing conversation', () => {
     const storage = memoryStorage();
-    const { conversation } = storage.conversations.append(user('Hi'));
-    storage.conversations.append({ ...user('Again') });
-    expect(storage.conversations.delete(conversation.id)).toBe(true);
-    expect(storage.conversations.delete(conversation.id)).toBe(false);
-    expect(storage.conversations.current()).toBeUndefined();
-    expect(storage.sqlite.prepare('select count(*) as n from conversation_messages').get()).toEqual(
-      { n: 0 },
+    expect(() => storage.conversations.append(user('missing', 'Hi'))).toThrow(
+      expect.objectContaining({ code: 'not-found' }),
     );
+    expect(storage.conversations.list()).toEqual([]);
+  });
+
+  it('deletes one conversation and its messages (cascade); others stay', () => {
+    const storage = memoryStorage();
+    const a = storage.conversations.create();
+    const b = storage.conversations.create();
+    storage.conversations.append(user(a.id, 'Hi A'));
+    storage.conversations.append(user(b.id, 'Hi B'));
+    storage.conversations.setSummary({ conversationId: b.id, summary: 'B so far', throughSeq: 1 });
+    expect(storage.conversations.delete(a.id)).toBe(true);
+    expect(storage.conversations.delete(a.id)).toBe(false);
+    expect(storage.conversations.list().map((c) => c.id)).toEqual([b.id]);
+    expect(storage.conversations.listMessages(b.id).map((m) => m.content)).toEqual(['Hi B']);
+    expect(storage.conversations.get(b.id)?.summary).toBe('B so far');
+    expect(
+      storage.sqlite
+        .prepare('select count(*) as n from conversation_messages where conversation_id = ?')
+        .get(a.id),
+    ).toEqual({ n: 0 });
     expect(() =>
       storage.conversations.append({
-        conversationId: conversation.id,
+        conversationId: a.id,
         role: 'assistant',
         content: 'late',
         status: 'complete',
       }),
     ).toThrow(expect.objectContaining({ code: 'not-found' }));
-    // The next user message starts a new conversation.
-    const next = storage.conversations.append(user('New start'));
-    expect(next.conversation.id).not.toBe(conversation.id);
-    expect(next.message.seq).toBe(1);
+  });
+
+  it('stores the summary with its cursor, which only moves forward', () => {
+    const storage = memoryStorage();
+    const { id, updatedAt } = storage.conversations.create();
+    expect(
+      storage.conversations.setSummary({ conversationId: id, summary: ' S1 ', throughSeq: 2 }),
+    ).toBe(true);
+    expect(storage.conversations.get(id)).toMatchObject({
+      summary: 'S1',
+      summarizedThroughSeq: 2,
+      updatedAt,
+    });
+    expect(
+      storage.conversations.setSummary({ conversationId: id, summary: 'older', throughSeq: 2 }),
+    ).toBe(false);
+    expect(
+      storage.conversations.setSummary({ conversationId: id, summary: 'older', throughSeq: 1 }),
+    ).toBe(false);
+    expect(
+      storage.conversations.setSummary({ conversationId: id, summary: 'S2', throughSeq: 4 }),
+    ).toBe(true);
+    expect(storage.conversations.get(id)).toMatchObject({ summary: 'S2', summarizedThroughSeq: 4 });
+    expect(
+      storage.conversations.setSummary({ conversationId: 'gone', summary: 'x', throughSeq: 9 }),
+    ).toBe(false);
+    // Invalid summaries never reach the database.
+    expect(() =>
+      storage.conversations.setSummary({ conversationId: id, summary: '  ', throughSeq: 5 }),
+    ).toThrow();
+    expect(() =>
+      storage.conversations.setSummary({
+        conversationId: id,
+        summary: 'x'.repeat(1501),
+        throughSeq: 5,
+      }),
+    ).toThrow();
+    expect(() =>
+      storage.conversations.setSummary({ conversationId: id, summary: 'x', throughSeq: 0 }),
+    ).toThrow();
+    expect(storage.conversations.get(id)).toMatchObject({ summary: 'S2', summarizedThroughSeq: 4 });
   });
 
   it(`refuses message ${CHAT_MAX_MESSAGES + 1} without dropping older ones`, () => {
     const storage = memoryStorage();
-    const { conversation } = storage.conversations.append(user('m1'));
-    for (let i = 2; i <= CHAT_MAX_MESSAGES; i++) storage.conversations.append(user(`m${i}`));
-    expect(() => storage.conversations.append(user('one too many'))).toThrow(
+    const { id } = storage.conversations.create();
+    for (let i = 1; i <= CHAT_MAX_MESSAGES; i++) storage.conversations.append(user(id, `m${i}`));
+    expect(() => storage.conversations.append(user(id, 'one too many'))).toThrow(
       expect.objectContaining({ code: 'invalid-input' }),
     );
-    const messages = storage.conversations.listMessages(conversation.id);
+    const messages = storage.conversations.listMessages(id);
     expect(messages).toHaveLength(CHAT_MAX_MESSAGES);
     expect(messages[0]?.content).toBe('m1');
     expect(messages.at(-1)?.seq).toBe(CHAT_MAX_MESSAGES);
@@ -99,20 +182,21 @@ describe('conversation repository', () => {
 
   it('enforces role and status in the database too', () => {
     const storage = memoryStorage();
-    const { conversation } = storage.conversations.append(user('Hi'));
+    const { id } = storage.conversations.create();
+    storage.conversations.append(user(id, 'Hi'));
     expect(() =>
       storage.sqlite
         .prepare(
           "insert into conversation_messages (id, conversation_id, seq, role, content, status, created_at, updated_at) values ('x', ?, 2, 'system', 'x', 'complete', 'now', 'now')",
         )
-        .run(conversation.id),
+        .run(id),
     ).toThrow(/CHECK/);
     expect(() =>
       storage.sqlite
         .prepare(
           "insert into conversation_messages (id, conversation_id, seq, role, content, status, created_at, updated_at) values ('y', ?, 1, 'user', 'dup', 'complete', 'now', 'now')",
         )
-        .run(conversation.id),
+        .run(id),
     ).toThrow(/UNIQUE/);
   });
 });

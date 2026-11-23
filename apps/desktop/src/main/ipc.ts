@@ -6,6 +6,8 @@ import {
 import { type AgentRuntime } from '@rka/agent-runtime';
 import {
   AppInfoSchema,
+  ChatConversationListSchema,
+  ChatCreateResultSchema,
   ChatHistorySchema,
   ChatStartResultSchema,
   IpcChannels,
@@ -114,15 +116,23 @@ export function registerIpcHandlers(ipc: IpcMainLike, deps: IpcDeps): void {
     }),
   );
 
-  // The stored transcript (SQLite): shown again when the window opens; Clear deletes it.
+  // Stored conversations (SQLite): the renderer lists them, opens one, and deletes one.
+  ipc.handle(
+    IpcChannels.chatList,
+    guard(() => ChatConversationListSchema.parse(deps.chat.list())),
+  );
+  ipc.handle(
+    IpcChannels.chatCreate,
+    guard(() => ChatCreateResultSchema.parse(deps.chat.create())),
+  );
   ipc.handle(
     IpcChannels.chatHistory,
-    guard(() => ChatHistorySchema.parse(deps.chat.history())),
+    guard((_event, payload) => ChatHistorySchema.parse(deps.chat.history(payload))),
   );
   ipc.handle(
     IpcChannels.chatClear,
-    guard(async () => {
-      await deps.chat.clear();
+    guard(async (_event, payload) => {
+      await deps.chat.clear(payload);
     }),
   );
 

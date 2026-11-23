@@ -236,9 +236,8 @@ async function chatThrough(setup: Setup, message = 'When was the Lindholm lighth
     },
   };
   // Each scenario is a fresh conversation (the database is shared by the file's tests).
-  const current = storage.conversations.current();
-  if (current) storage.conversations.delete(current.id);
-  const started = chat.start(sink, { text: message });
+  const { id: conversationId } = storage.conversations.create();
+  const started = chat.start(sink, { conversationId, text: message });
   if (started.status !== 'started') throw new Error(started.message);
   return {
     chat,

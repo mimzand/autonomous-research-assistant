@@ -1,6 +1,9 @@
 import {
   BackupResultSchema,
   CancelRequestSchema,
+  ChatConversationListSchema,
+  ChatConversationRequestSchema,
+  ChatCreateResultSchema,
   ChatEventSchema,
   ChatHistorySchema,
   ChatStartRequestSchema,
@@ -177,10 +180,14 @@ export const PROTOCOL_METHODS = {
   // --- chat ---------------------------------------------------------------------------
   'chat.start': request('toAgent', 4, ChatStartRequestSchema, ChatStartResultSchema),
   'chat.stop': request('toAgent', 4, ChatStopRequestSchema, VoidResultSchema),
-  /** The stored Chat transcript (the agent owns it; the shell only displays it). */
-  'chat.history': request('toAgent', 11, NoParamsSchema, ChatHistorySchema),
-  /** Stops the active reply, then deletes the stored transcript. */
-  'chat.clear': request('toAgent', 11, NoParamsSchema, VoidResultSchema),
+  /** Chat conversations, newest-updated first (the agent owns them; the shell displays). */
+  'chat.list': request('toAgent', 11, NoParamsSchema, ChatConversationListSchema),
+  /** A new empty conversation (`New chat`). */
+  'chat.create': request('toAgent', 11, NoParamsSchema, ChatCreateResultSchema),
+  /** One conversation's stored transcript (empty for an unknown id). */
+  'chat.history': request('toAgent', 11, ChatConversationRequestSchema, ChatHistorySchema),
+  /** Stops that conversation's running reply (if any), then deletes the conversation. */
+  'chat.clear': request('toAgent', 11, ChatConversationRequestSchema, VoidResultSchema),
   'chat.event': event('toShell', 4, ChatEventSchema),
 
   // --- tasks / research ---------------------------------------------------------------

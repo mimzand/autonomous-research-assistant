@@ -15,6 +15,7 @@ import {
   type ToolRegistry,
 } from '@rka/tools';
 import { ChatController, type ChatUsage } from './chat-controller.js';
+import { ollamaChatSummarizer } from './chat-summary.js';
 import { createAppChatEngines, createChatWebSearch } from './chat-engine.js';
 import { createDashboardService, type DashboardService } from './dashboard.js';
 import { type HostPorts, type HostUiPort } from './ports.js';
@@ -118,6 +119,12 @@ export function createAgentHost(deps: AgentHostDeps): AgentHost {
     // The Chat transcript lives in the same database as research (one writer: the agent).
     conversations: storage.conversations,
     ...(deps.onChatUsage && { onUsage: deps.onChatUsage }),
+    // Turns that fall out of the 8-turn window are folded into that conversation's
+    // summary by the same local model (one short call per new message, when needed).
+    summarize: ollamaChatSummarizer({
+      provider: modelProvider,
+      ...(deps.onChatUsage && { onUsage: deps.onChatUsage }),
+    }),
     // Settings → Agent Engines (default from AGENT_ENGINE, else "legacy"); read when
     // each Chat request starts, so a running reply keeps its engine.
     selectEngine: createAppChatEngines({

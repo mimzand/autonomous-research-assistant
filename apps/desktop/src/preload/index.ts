@@ -1,6 +1,8 @@
 import {
   AppInfoSchema,
   BackupResultSchema,
+  ChatConversationListSchema,
+  ChatCreateResultSchema,
   ChatEventSchema,
   ChatHistorySchema,
   ChatStartResultSchema,
@@ -67,16 +69,21 @@ async function call<S extends z.ZodType>(
 }
 
 const chat: ChatApi = {
+  list: () => call(ChatConversationListSchema, IpcChannels.chatList),
+
+  create: () => call(ChatCreateResultSchema, IpcChannels.chatCreate),
+
   start: async (request) => call(ChatStartResultSchema, IpcChannels.chatStart, request),
 
   stop: async (streamId: string) => {
     await ipcRenderer.invoke(IpcChannels.chatStop, { streamId });
   },
 
-  history: () => call(ChatHistorySchema, IpcChannels.chatHistory),
+  history: (conversationId: string) =>
+    call(ChatHistorySchema, IpcChannels.chatHistory, { conversationId }),
 
-  clear: async () => {
-    await ipcRenderer.invoke(IpcChannels.chatClear);
+  clear: async (conversationId: string) => {
+    await ipcRenderer.invoke(IpcChannels.chatClear, { conversationId });
   },
 
   onEvent: (listener: (event: ChatEvent) => void) => {

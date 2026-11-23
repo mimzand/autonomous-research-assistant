@@ -1,5 +1,8 @@
 import { type ParsedEvent } from '@rka/agent-protocol';
 import {
+  ChatConversationListSchema,
+  ChatConversationRequestSchema,
+  ChatCreateResultSchema,
   ChatEventSchema,
   ChatHistorySchema,
   ChatStartRequestSchema,
@@ -80,8 +83,9 @@ export function streamRoutes(agent: AgentLink): ApiRoute[] {
       tag: 'Chat',
       summary: 'Start a Chat reply and stream it (server-sent events)',
       description:
-        'Body: the new user message only ({text}); the agent stores it and adds the stored ' +
-        'conversation as context (the last 8 turns). ' +
+        'Body: the conversation and the new user message only ({conversationId, text}); the ' +
+        'agent stores it and adds that conversation as context (its last 8 turns, plus a ' +
+        'summary of older ones). An unknown conversationId is a 400 and writes nothing. ' +
         'Responds with text/event-stream. First event `started` ({streamId, model}), then one ' +
         'event per chat.event, named by its type: `delta` ({content}), `tool`, and a final `done`, ' +
         '`error` or `cancelled`. Closing the connection stops the reply. To stop it from ' +
@@ -160,27 +164,55 @@ export function streamRoutes(agent: AgentLink): ApiRoute[] {
     }),
     route({
       method: 'get',
+      path: '/chat/conversations',
+      tag: 'Chat',
+      summary: 'Chat conversations, newest-updated first',
+      description: 'Each item is {id, title, updatedAt}; no message bodies.',
+      responses: {
+        200: { description: 'The conversations', schema: ChatConversationListSchema },
+        ...COMMON_ERRORS,
+      },
+      handle: async ({ c }) => c.json(await agent.request('chat.list', {})),
+    }),
+    route({
+      method: 'post',
+      path: '/chat/conversations',
+      tag: 'Chat',
+      summary: 'Create an empty conversation (titled "New chat")',
+      description: 'Its first non-empty message becomes the title.',
+      responses: {
+        200: { description: 'The new conversation id', schema: ChatCreateResultSchema },
+        ...COMMON_ERRORS,
+      },
+      handle: async ({ c }) => c.json(await agent.request('chat.create', {})),
+    }),
+    route({
+      method: 'get',
       path: '/chat/history',
       tag: 'Chat',
-      summary: 'The stored Chat transcript, oldest first',
+      summary: "One conversation's stored transcript, oldest first",
       description:
-        'The bubbles as the agent stored them (one conversation): role, text, status ' +
-        '(`complete`, `cancelled` or `error`) and, for finished replies, the model and token ' +
-        'counts. Web-search steps are not stored.',
+        'The bubbles as the agent stored them: role, text, status (`complete`, `cancelled` ' +
+        'or `error`) and, for finished replies, the model and token counts. Web-search steps ' +
+        'are not stored. An unknown conversationId returns an empty list.',
+      query: ChatConversationRequestSchema,
       responses: {
         200: { description: 'The transcript', schema: ChatHistorySchema },
         ...COMMON_ERRORS,
       },
-      handle: async ({ c }) => c.json(await agent.request('chat.history', {})),
+      handle: async ({ c, query }) => c.json(await agent.request('chat.history', query)),
     }),
     route({
       method: 'post',
       path: '/chat/clear',
       tag: 'Chat',
-      summary: 'Stop the running reply (if any) and delete the stored transcript',
-      responses: { 204: { description: 'Cleared' }, ...COMMON_ERRORS },
-      async handle({ c }) {
-        await agent.request('chat.clear', {});
+      summary: 'Delete one conversation (stopping its running reply, if any)',
+      description:
+        'Body: {conversationId}. A reply running in another conversation is not stopped.',
+      body: ChatConversationRequestSchema,
+      responses: { 204: { description: 'Deleted' }, ...COMMON_ERRORS },
+      async handle({ c, body }) {
+        await agent.request('chat.clear', body);
         return c.body(null, 204);
       },
     }),

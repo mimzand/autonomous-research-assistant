@@ -1,19 +1,46 @@
-import { type ChatApi, type ChatEvent, type ChatHistory, type ChatStartRequest } from '@rka/shared';
+import {
+  type ChatApi,
+  type ChatConversationItem,
+  type ChatEvent,
+  type ChatHistory,
+  type ChatStartRequest,
+} from '@rka/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { isSubmitKey } from './keyboard';
 import { createChatSession } from './session';
 
 const IDS = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
 
-/** Fake preload bridge: records requests and lets tests push events. */
+const item = (id: string, title = 'New chat'): ChatConversationItem => ({
+  id,
+  title,
+  updatedAt: '2026-11-21T10:00:00.000Z',
+});
+
+/**
+ * Fake preload bridge: records requests and lets tests push events. By default
+ * one stored conversation, `c1`, which the session opens.
+ */
 function fakeApi(
-  options: { eventBeforeStartResolves?: boolean; history?: () => Promise<ChatHistory> } = {},
+  options: {
+    eventBeforeStartResolves?: boolean;
+    history?: (conversationId: string) => Promise<ChatHistory>;
+    conversations?: ChatConversationItem[];
+  } = {},
 ) {
   const ids = [...IDS];
   let listener: ((event: ChatEvent) => void) | undefined;
   const requests: ChatStartRequest[] = [];
   const stops: string[] = [];
+  let list = [...(options.conversations ?? [item('c1')])];
+  let created = 0;
   const api: ChatApi = {
+    list: vi.fn(async () => ({ conversations: [...list] })),
+    create: vi.fn(async () => {
+      const id = `new-${++created}`;
+      list = [item(id), ...list];
+      return { conversationId: id };
+    }),
     start: vi.fn(async (request: ChatStartRequest) => {
       requests.push(request);
       const streamId = ids.shift() ?? 'x';
@@ -23,7 +50,9 @@ function fakeApi(
     }),
     stop: vi.fn(async (streamId: string) => void stops.push(streamId)),
     history: vi.fn(options.history ?? (async () => ({ messages: [] }))),
-    clear: vi.fn(async () => undefined),
+    clear: vi.fn(async (conversationId: string) => {
+      list = list.filter((c) => c.id !== conversationId);
+    }),
     onEvent: (fn) => {
       listener = fn;
       return () => (listener = undefined);
@@ -58,6 +87,8 @@ describe('chat session: stored transcript', () => {
     });
     const chat = createChatSession(api, { model: () => 'qwen3:8b' });
     chat.draft.value = 'Too early';
+    await vi.waitFor(() => expect(api.history).toHaveBeenCalledWith('c1'));
+    expect(chat.openId.value).toBe('c1');
     expect(chat.loaded.value).toBe(false);
     expect(chat.canSend.value).toBe(false);
     await chat.send();
@@ -160,7 +191,10 @@ describe('chat session', () => {
 
     chat.draft.value = '  Second  ';
     await chat.send();
-    expect(requests).toEqual([{ text: 'First' }, { text: 'Second' }]);
+    expect(requests).toEqual([
+      { conversationId: 'c1', text: 'First' },
+      { conversationId: 'c1', text: 'Second' },
+    ]);
     expect(chat.messages.value.map((m) => m.content)).toEqual([
       'First',
       'Answer one',
@@ -259,7 +293,10 @@ describe('chat session', () => {
     emit({ type: 'error', streamId: IDS[0] as string, code: 'unavailable', message: 'down' });
     chat.draft.value = 'Two';
     await chat.send();
-    expect(requests).toEqual([{ text: 'One' }, { text: 'Two' }]);
+    expect(requests).toEqual([
+      { conversationId: 'c1', text: 'One' },
+      { conversationId: 'c1', text: 'Two' },
+    ]);
     expect(chat.messages.value.map((m) => [m.content, m.status])).toEqual([
       ['One', 'complete'],
       ['', 'error'],
@@ -304,47 +341,32 @@ describe('chat session', () => {
     expect(chat.canSend.value).toBe(true);
   });
 
-  it('clears through the agent, then empties the list; late events are ignored', async () => {
+  it('Delete chat removes the open conversation through the agent and shows the empty state', async () => {
     const { api, emit } = fakeApi();
     const chat = await session(api);
     chat.draft.value = 'Hi';
     await chat.send();
-    await chat.clear();
-    expect(api.clear).toHaveBeenCalledTimes(1);
+    emit(done(IDS[0] as string));
+    expect(await chat.clear()).toBe(true);
+    expect(api.clear).toHaveBeenCalledWith('c1');
+    expect(chat.openId.value).toBeNull();
     expect(chat.messages.value).toEqual([]);
-    expect(chat.phase.value).toBe('idle');
-
-    emit({ type: 'cancelled', streamId: IDS[0] as string }); // Late event is ignored.
-    expect(chat.messages.value).toEqual([]);
+    expect(chat.conversations.value).toEqual([]);
+    chat.draft.value = 'Nowhere to go';
+    expect(chat.canSend.value).toBe(false);
   });
 
-  it('keeps the list when Clear fails', async () => {
+  it('keeps the list when Delete fails', async () => {
     const { api, emit } = fakeApi();
     vi.mocked(api.clear).mockRejectedValueOnce(new Error('agent down'));
     const chat = await session(api);
     chat.draft.value = 'Hi';
     await chat.send();
     emit(done(IDS[0] as string));
-    await chat.clear();
+    expect(await chat.clear()).toBe(false);
+    expect(chat.openId.value).toBe('c1');
     expect(chat.messages.value).toHaveLength(2);
     expect(chat.startError.value?.detail).toContain('agent down');
-  });
-
-  it('a start that resolves after Clear is stopped and shows nothing', async () => {
-    let resolveStart!: (value: Awaited<ReturnType<ChatApi['start']>>) => void;
-    const { api, stops } = fakeApi();
-    vi.mocked(api.start).mockImplementationOnce(
-      () => new Promise((resolve) => (resolveStart = resolve)),
-    );
-    const chat = await session(api);
-    chat.draft.value = 'Hi';
-    const sending = chat.send();
-    await chat.clear();
-    resolveStart({ status: 'started', streamId: IDS[0] as string, model: 'qwen3:8b' });
-    await sending;
-    expect(stops).toEqual([IDS[0]]);
-    expect(chat.messages.value).toEqual([]);
-    expect(chat.phase.value).toBe('idle');
   });
 
   it('unsubscribes and stops on dispose', async () => {
@@ -355,6 +377,132 @@ describe('chat session', () => {
     chat.dispose();
     expect(isSubscribed()).toBe(false);
     expect(stops).toEqual([IDS[0]]);
+  });
+});
+
+describe('chat session: several conversations', () => {
+  const stored = (content: string): ChatHistory => ({
+    messages: [
+      {
+        role: 'user',
+        content,
+        status: 'complete',
+        model: null,
+        promptTokens: null,
+        completionTokens: null,
+      },
+    ],
+  });
+
+  it('opens the newest-updated conversation; an empty database opens nothing', async () => {
+    const two = fakeApi({
+      conversations: [item('b', 'Newest'), item('a', 'Older')],
+      history: async (id) => stored(`question in ${id}`),
+    });
+    const chat = await session(two.api);
+    expect(chat.openId.value).toBe('b');
+    expect(chat.messages.value.map((m) => m.content)).toEqual(['question in b']);
+
+    const empty = fakeApi({ conversations: [] });
+    const none = await session(empty.api);
+    expect(none.initialized.value).toBe(true);
+    expect(none.openId.value).toBeNull();
+    expect(empty.api.create).not.toHaveBeenCalled();
+    expect(empty.api.history).not.toHaveBeenCalled();
+    none.draft.value = 'Hi';
+    expect(none.canSend.value).toBe(false);
+  });
+
+  it('New creates and opens a conversation; start, history and clear carry the open id', async () => {
+    const { api, emit, requests } = fakeApi({ history: async (id) => stored(`in ${id}`) });
+    const chat = await session(api);
+    expect(await chat.create()).toBe(true);
+    expect(chat.openId.value).toBe('new-1');
+    expect(api.history).toHaveBeenLastCalledWith('new-1');
+    expect(chat.conversations.value.map((c) => c.id)).toEqual(['new-1', 'c1']);
+
+    chat.draft.value = 'In the new one';
+    await chat.send();
+    emit(done(IDS[0] as string));
+    expect(requests.at(-1)).toEqual({ conversationId: 'new-1', text: 'In the new one' });
+
+    expect(await chat.open('c1')).toBe(true);
+    expect(api.history).toHaveBeenLastCalledWith('c1');
+    expect(chat.messages.value.map((m) => m.content)).toEqual(['in c1']);
+    chat.draft.value = 'Back in c1';
+    await chat.send();
+    expect(requests.at(-1)).toEqual({ conversationId: 'c1', text: 'Back in c1' });
+    emit(done(IDS[1] as string));
+
+    await chat.clear();
+    expect(api.clear).toHaveBeenLastCalledWith('c1');
+    expect(chat.conversations.value.map((c) => c.id)).toEqual(['new-1']);
+  });
+
+  it('refuses switching, creating and deleting while a reply is streaming', async () => {
+    const { api, emit } = fakeApi({ conversations: [item('c1'), item('c2')] });
+    const chat = await session(api);
+    chat.draft.value = 'Hi';
+    await chat.send();
+    expect(chat.busy.value).toBe(true);
+
+    expect(await chat.open('c2')).toBe(false);
+    expect(await chat.create()).toBe(false);
+    expect(await chat.remove('c2')).toBe(false);
+    expect(await chat.clear()).toBe(false);
+    expect(api.create).not.toHaveBeenCalled();
+    expect(api.clear).not.toHaveBeenCalled();
+    expect(api.history).toHaveBeenCalledTimes(1); // only the initial load of c1
+    // The reply's bubbles stay on the conversation that started it.
+    expect(chat.openId.value).toBe('c1');
+    emit({ type: 'delta', streamId: IDS[0] as string, content: 'Answer' });
+    emit(done(IDS[0] as string));
+    expect(chat.messages.value.map((m) => m.content)).toEqual(['Hi', 'Answer']);
+
+    expect(await chat.open('c2')).toBe(true);
+    expect(chat.messages.value).toEqual([]);
+  });
+
+  it('deleting another conversation keeps the open one', async () => {
+    const { api } = fakeApi({
+      conversations: [item('c1'), item('c2')],
+      history: async (id) => stored(`in ${id}`),
+    });
+    const chat = await session(api);
+    expect(await chat.remove('c2')).toBe(true);
+    expect(api.clear).toHaveBeenCalledWith('c2');
+    expect(chat.openId.value).toBe('c1');
+    expect(chat.messages.value.map((m) => m.content)).toEqual(['in c1']);
+    expect(chat.conversations.value.map((c) => c.id)).toEqual(['c1']);
+  });
+
+  it('a slow history load for a conversation the user left is ignored', async () => {
+    let resolveFirst!: (history: ChatHistory) => void;
+    const { api } = fakeApi({
+      conversations: [item('c1'), item('c2')],
+      history: (id) =>
+        id === 'c1'
+          ? new Promise((resolve) => (resolveFirst = resolve))
+          : Promise.resolve(stored('in c2')),
+    });
+    const chat = createChatSession(api, { model: () => 'qwen3:8b' });
+    await vi.waitFor(() => expect(api.history).toHaveBeenCalledWith('c1'));
+    await chat.open('c2');
+    resolveFirst(stored('in c1'));
+    await chat.whenLoaded;
+    expect(chat.openId.value).toBe('c2');
+    expect(chat.messages.value.map((m) => m.content)).toEqual(['in c2']);
+    expect(chat.loaded.value).toBe(true);
+  });
+
+  it('refreshes the list when a reply ends (its title and order change)', async () => {
+    const { api, emit } = fakeApi();
+    const chat = await session(api);
+    const before = vi.mocked(api.list).mock.calls.length;
+    chat.draft.value = 'Hi';
+    await chat.send();
+    emit(done(IDS[0] as string));
+    expect(vi.mocked(api.list).mock.calls.length).toBe(before + 1);
   });
 });
 

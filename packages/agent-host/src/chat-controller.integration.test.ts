@@ -55,12 +55,9 @@ function wire(host = `127.0.0.1:${port}`) {
   });
   const events: ChatEvent[] = [];
   const sink: ChatEventSink = { id: 1, isDestroyed: () => false, send: (e) => events.push(e) };
-  return {
-    chat: new ChatController({ runtime, conversations: storage.conversations }),
-    sink,
-    events,
-    storage,
-  };
+  const chat = new ChatController({ runtime, conversations: storage.conversations });
+  const { conversationId } = chat.create();
+  return { chat, sink, events, storage, conversationId };
 }
 
 async function streamReply(res: ServerResponse, words: string[], delayMs = 15): Promise<void> {
@@ -79,9 +76,9 @@ const text = (events: ChatEvent[]) =>
 describe('chat over the real Ollama provider', () => {
   it('streams a reply and continues the stored conversation (only the new text is sent)', async () => {
     handler = (_req, res) => void streamReply(res, ['Hello', ' there', '!']);
-    const { chat, sink, events, storage } = wire();
+    const { chat, sink, events, storage, conversationId } = wire();
 
-    chat.start(sink, { text: 'Hi' });
+    chat.start(sink, { conversationId, text: 'Hi' });
     await chat.whenIdle();
     expect(text(events)).toBe('Hello there!');
     expect(events.at(-1)).toMatchObject({
@@ -93,13 +90,12 @@ describe('chat over the real Ollama provider', () => {
     events.length = 0;
     requests.length = 0;
     handler = (_req, res) => void streamReply(res, ['Second', ' answer']);
-    chat.start(sink, { text: 'And again?' });
+    chat.start(sink, { conversationId, text: 'And again?' });
     await chat.whenIdle();
     expect(text(events)).toBe('Second answer');
-    const conversation = storage.conversations.current();
     expect(
       storage.conversations
-        .listMessages(conversation?.id ?? '')
+        .listMessages(conversationId)
         .map((m) => [m.role, m.content, m.status, m.model, m.completionTokens]),
     ).toEqual([
       ['user', 'Hi', 'complete', null, null],
@@ -129,8 +125,8 @@ describe('chat over the real Ollama provider', () => {
         10,
       );
     };
-    const { chat, sink, events } = wire();
-    const result = chat.start(sink, { text: 'Long essay' });
+    const { chat, sink, events, conversationId } = wire();
+    const result = chat.start(sink, { conversationId, text: 'Long essay' });
     if (result.status !== 'started') throw new Error('not started');
 
     await sleep(80);
@@ -148,8 +144,8 @@ describe('chat over the real Ollama provider', () => {
       res
         .writeHead(404, { 'content-type': 'application/json' })
         .end(JSON.stringify({ error: "model 'qwen3:8b' not found" }));
-    const { chat, sink, events } = wire();
-    chat.start(sink, { text: 'Hi' });
+    const { chat, sink, events, conversationId } = wire();
+    chat.start(sink, { conversationId, text: 'Hi' });
     await chat.whenIdle();
     expect(events).toEqual([expect.objectContaining({ type: 'error', code: 'model-not-found' })]);
   });
@@ -160,8 +156,8 @@ describe('chat over the real Ollama provider', () => {
     const deadPort = (closed.address() as AddressInfo).port;
     await new Promise<void>((resolve) => closed.close(() => resolve()));
 
-    const { chat, sink, events } = wire(`127.0.0.1:${deadPort}`);
-    chat.start(sink, { text: 'Hi' });
+    const { chat, sink, events, conversationId } = wire(`127.0.0.1:${deadPort}`);
+    chat.start(sink, { conversationId, text: 'Hi' });
     await chat.whenIdle();
     expect(events).toEqual([
       expect.objectContaining({
@@ -178,8 +174,8 @@ describe('chat over the real Ollama provider', () => {
       res.write(`${JSON.stringify(chunk('Partial'))}\n`);
       res.end(`${JSON.stringify({ error: 'CUDA error: out of memory' })}\n`);
     };
-    const { chat, sink, events } = wire();
-    chat.start(sink, { text: 'Hi' });
+    const { chat, sink, events, conversationId } = wire();
+    chat.start(sink, { conversationId, text: 'Hi' });
     await chat.whenIdle();
     expect(text(events)).toBe('Partial');
     expect(events.at(-1)).toMatchObject({

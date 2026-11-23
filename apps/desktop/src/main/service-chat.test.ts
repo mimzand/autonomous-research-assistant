@@ -11,7 +11,7 @@ import {
 
 const S1 = '11111111-1111-4111-8111-111111111111';
 const S2 = '22222222-2222-4222-8222-222222222222';
-const hi = { text: 'Hi' };
+const hi = { conversationId: 'c1', text: 'Hi' };
 
 type RequestFn = (method: string, params: unknown, options?: unknown) => Promise<unknown>;
 
@@ -108,7 +108,9 @@ describe('createServiceChat (AGENT_TRANSPORT=service)', () => {
 
   it('rejects an invalid request locally, exactly like the in-process controller', async () => {
     const { chat, request } = setup();
-    await expect(chat.start(fakeSender(1).sender, { text: '' })).resolves.toMatchObject({
+    await expect(
+      chat.start(fakeSender(1).sender, { conversationId: 'c1', text: '' }),
+    ).resolves.toMatchObject({
       status: 'rejected',
       code: 'invalid-request',
       message: expect.any(String),

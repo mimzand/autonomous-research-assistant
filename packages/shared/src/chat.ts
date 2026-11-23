@@ -4,9 +4,10 @@ import { z } from 'zod';
  * Chat playground contract between renderer (via preload) and main.
  * Main validates every request; the preload validates every event.
  *
- * The transcript is stored by the agent (SQLite, one conversation). The renderer
- * sends only the new user text; the agent builds what the model receives from its
- * own rows (the last turns, see agent-host chat-context.ts).
+ * The agent stores the conversations (SQLite). The renderer picks one by id and
+ * sends only the new user text; the agent builds what the model receives from that
+ * conversation's own rows (the last turns plus a summary of older ones, see
+ * agent-host chat-context.ts). Nothing from one conversation reaches another.
  */
 
 export const CHAT_MAX_MESSAGES = 200;
@@ -18,8 +19,42 @@ export const ChatTurnSchema = z.strictObject({
 });
 export type ChatTurn = z.infer<typeof ChatTurnSchema>;
 
-/** The new user message only. The agent adds the earlier turns from the stored transcript. */
+/** A conversation id, as `chat.create` / `chat.list` return it. */
+export const ChatConversationIdSchema = z.string().min(1).max(100);
+
+/** Requests that name one conversation (`chat.history`, `chat.clear`). */
+export const ChatConversationRequestSchema = z.strictObject({
+  conversationId: ChatConversationIdSchema,
+});
+export type ChatConversationRequest = z.infer<typeof ChatConversationRequestSchema>;
+
+/** One row of the conversation list. No message bodies. */
+export const ChatConversationItemSchema = z.strictObject({
+  id: ChatConversationIdSchema,
+  title: z.string().max(200),
+  updatedAt: z.string(),
+});
+export type ChatConversationItem = z.infer<typeof ChatConversationItemSchema>;
+
+/** Most conversations `chat.list` returns. */
+export const CHAT_MAX_LISTED_CONVERSATIONS = 500;
+
+/** `chat.list`: conversations, newest-updated first. */
+export const ChatConversationListSchema = z.strictObject({
+  conversations: z.array(ChatConversationItemSchema).max(CHAT_MAX_LISTED_CONVERSATIONS),
+});
+export type ChatConversationList = z.infer<typeof ChatConversationListSchema>;
+
+/** `chat.create`: the new, empty conversation (titled `New chat`). */
+export const ChatCreateResultSchema = z.strictObject({ conversationId: ChatConversationIdSchema });
+export type ChatCreateResult = z.infer<typeof ChatCreateResultSchema>;
+
+/**
+ * The new user message for one conversation. The agent adds that conversation's
+ * earlier turns from its stored transcript.
+ */
 export const ChatStartRequestSchema = z.strictObject({
+  conversationId: ChatConversationIdSchema,
   text: z
     .string()
     .trim()
@@ -47,7 +82,7 @@ export const ChatHistoryMessageSchema = z.strictObject({
 });
 export type ChatHistoryMessage = z.infer<typeof ChatHistoryMessageSchema>;
 
-/** `chat.history`: the stored transcript (empty when there is none). */
+/** `chat.history`: one conversation's stored transcript (empty for an unknown id). */
 export const ChatHistorySchema = z.strictObject({
   messages: z.array(ChatHistoryMessageSchema).max(CHAT_MAX_MESSAGES),
 });
@@ -145,13 +180,17 @@ export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
 /** Chat surface exposed to the renderer as `window.api.chat`. */
 export interface ChatApi {
-  /** Sends the new user message; the agent adds the stored transcript as context. */
+  /** Conversations, newest-updated first. */
+  list(): Promise<ChatConversationList>;
+  /** A new empty conversation; returns its id. */
+  create(): Promise<ChatCreateResult>;
+  /** Sends the new user message to one conversation; the agent adds its stored turns. */
   start(request: ChatStartRequest): Promise<ChatStartResult>;
   stop(streamId: string): Promise<void>;
-  /** The stored transcript, oldest first. */
-  history(): Promise<ChatHistory>;
-  /** Stops the active reply (if any) and deletes the stored transcript. */
-  clear(): Promise<void>;
+  /** One conversation's stored transcript, oldest first. */
+  history(conversationId: string): Promise<ChatHistory>;
+  /** Deletes one conversation (stopping its running reply, if any). */
+  clear(conversationId: string): Promise<void>;
   /** Subscribes to chat events. Returns an unsubscribe function. */
   onEvent(listener: (event: ChatEvent) => void): () => void;
 }
